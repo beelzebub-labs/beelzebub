@@ -1,9 +1,12 @@
+{{- range $value := .Values.beelzebubServiceConfigs }}
+{{- $trimmed := trimSuffix ".yaml" $value.name }}
+{{- $safeName := regexReplaceAll "[^a-z0-9-]" (lower $trimmed) "-" | trimAll "-" | trunc 63 }}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: "beelzebub-services"
-  labels:
-    {{- include "beelzebub-chart.labels" . | nindent 4 }}
+  name: beelzebub-services-cm-{{ $safeName }}
 data:
-  service.yaml:
-    {{- toYaml .Values.beelsebubServiceConfigs | nindent 12 }}
+  {{ $value.name }}: |-
+    {{- toYaml $value.config | nindent 4 }}
+{{- end }}

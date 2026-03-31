@@ -7,9 +7,11 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    - port: {{ .Values.service.port }}
-      targetPort: http
+    {{- range $value := .Values.beelzebubServiceConfigs }}
+    - port: {{ trimPrefix ":" $value.config.address }}
+      targetPort: {{ trimPrefix ":" $value.config.address }}
       protocol: TCP
-      name: http
+      name: {{ trimSuffix ".yaml" $value.name }}
+    {{- end }}
   selector:
     {{- include "beelzebub-chart.selectorLabels" . | nindent 4 }}

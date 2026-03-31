@@ -8,8 +8,10 @@ metadata:
     "helm.sh/hook": test
 spec:
   containers:
+    {{- range $value := .Values.beelzebubServiceConfigs }}
     - name: wget
       image: busybox
       command: ['wget']
-      args: ['{{ include "beelzebub-chart.fullname" . }}:{{ .Values.service.port }}']
+      args: ['{{ include "beelzebub-chart.fullname" . }}:{{ trimPrefix ":" $value.config.address }}']
+    {{- end }}
   restartPolicy: Never

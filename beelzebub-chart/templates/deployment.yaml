@@ -37,15 +37,21 @@ spec:
               mountPath: /configurations/beelzebub.yaml
               subPath: beelzebub.yaml
               readOnly: true
-            - name: config-services-volume
-              mountPath: /configurations/services/service.yaml
-              subPath: service.yaml
+            {{- range $value := .Values.beelzebubServiceConfigs }}
+            {{- $trimmed := trimSuffix ".yaml" $value.name }}
+            {{- $safeName := regexReplaceAll "[^a-z0-9-]" (lower $trimmed) "-" | trimAll "-" | trunc 63 }}
+            - name: config-services-volume-{{ $safeName }}
+              mountPath: /configurations/services/{{ $value.name }}
+              subPath: {{ $value.name }}
               readOnly: true
+            {{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - name: http
-              containerPort: {{ .Values.service.port }}
+            {{- range $value := .Values.beelzebubServiceConfigs }}
+            - name: {{ trimSuffix ".yaml" $value.name }}
+              containerPort: {{ trimPrefix ":" $value.config.address | default $.Values.service.port }}
               protocol: TCP
+            {{- end }}  
           # livenessProbe:
           #   httpGet:
           #     path: /
@@ -60,9 +66,13 @@ spec:
         - name: config-core-volume
           configMap:
             name: beelzebub-configuration
-        - name: config-services-volume
+        {{- range $value := .Values.beelzebubServiceConfigs }}
+        {{- $trimmed := trimSuffix ".yaml" $value.name }}
+        {{- $safeName := regexReplaceAll "[^a-z0-9-]" (lower $trimmed) "-" | trimAll "-" | trunc 63 }}
+        - name: config-services-volume-{{ $safeName }}
           configMap:
-            name: beelzebub-services
+            name: beelzebub-services-cm-{{ $safeName }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
