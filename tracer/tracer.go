@@ -158,7 +158,7 @@ func (tracer *tracer) GetStrategy() Strategy {
 }
 
 func (tracer *tracer) TraceEvent(event Event) {
-	event.DateTime = time.Now().UTC().Format(time.RFC3339)
+	event.DateTime = time.Now().UTC().Format(time.RFC3339Nano)
 
 	tracer.eventsChan <- event
 
