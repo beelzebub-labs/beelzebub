@@ -7,7 +7,7 @@ require (
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/google/uuid v1.6.0
 	github.com/jarcoal/httpmock v1.4.1
-	github.com/mark3labs/mcp-go v0.52.0
+	github.com/mark3labs/mcp-go v0.53.0
 	github.com/melbahja/goph v1.5.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rabbitmq/amqp091-go v1.11.0
