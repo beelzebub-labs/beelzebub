@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/beelzebub-labs/beelzebub/v3/internal"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/historystore"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
@@ -80,6 +81,7 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 			if !utf8.Valid(buffer[:n]) {
 				commandRaw = hexEscapeNonPrintable(buffer[:n])
 			}
+			command = internal.PlainOrBase64([]byte(commandRaw))
 		}
 
 		tr.TraceEvent(tracer.Event{
@@ -132,8 +134,8 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		// protocols), so the forensic record survives string()'s U+FFFD
 		// substitution. Empty for UTF-8 traffic.
 		commandRaw := ""
-		if !utf8.Valid(buffer[:n]) {
-			commandRaw = hexEscapeNonPrintable(buffer[:n])
+		if !utf8.Valid([]byte(commandInput)) {
+			commandRaw = hexEscapeNonPrintable([]byte(commandInput))
 		}
 
 		// Match command against regexes
@@ -189,7 +191,7 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 					SourceIp:      host,
 					SourcePort:    port,
 					Status:        tracer.Interaction.String(),
-					Command:       commandInput,
+					Command:       internal.PlainOrBase64([]byte(commandInput)),
 					CommandRaw:    commandRaw,
 					CommandOutput: commandOutput,
 					ID:            sessionID.String(),
@@ -210,7 +212,7 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 				SourceIp:    host,
 				SourcePort:  port,
 				Status:      tracer.Interaction.String(),
-				Command:     commandInput,
+				Command:     internal.PlainOrBase64([]byte(commandInput)),
 				CommandRaw:  commandRaw,
 				ID:          sessionID.String(),
 				Protocol:    tracer.TCP.String(),
