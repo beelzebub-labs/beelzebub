@@ -50,9 +50,14 @@ func parseLLMHTTPResponse(completions string, resp *httpResponse) {
 		if lower == "content-length" || lower == "date" || lower == "transfer-encoding" || lower == "connection" {
 			continue
 		}
+		// Strip CR/LF from header values; net/http would panic if they reached Header().Add.
+		// A prompt-injected LLM is the realistic path for this to happen.
+		if strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+			continue
+		}
 		resp.Headers = append(resp.Headers, fmt.Sprintf("%s: %s", key, value))
 	}
-	if llmResp.StatusCode > 0 {
+	if llmResp.StatusCode >= 100 && llmResp.StatusCode < 600 {
 		resp.StatusCode = llmResp.StatusCode
 	}
 }
@@ -313,9 +318,10 @@ func mapCookiesToString(cookies []*http.Cookie) string {
 
 func setResponseHeaders(responseWriter http.ResponseWriter, headers []string, statusCode int) {
 	for _, headerStr := range headers {
-		keyValue := strings.Split(headerStr, ":")
-		if len(keyValue) > 1 {
-			responseWriter.Header().Add(keyValue[0], keyValue[1])
+		// SplitN(_, 2) preserves colons inside the value (Location URLs, CSP, Set-Cookie).
+		keyValue := strings.SplitN(headerStr, ":", 2)
+		if len(keyValue) == 2 {
+			responseWriter.Header().Add(strings.TrimSpace(keyValue[0]), strings.TrimSpace(keyValue[1]))
 		}
 	}
 	// http.StatusText(statusCode): empty string if the code is unknown.

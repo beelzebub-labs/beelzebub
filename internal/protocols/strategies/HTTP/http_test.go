@@ -1,6 +1,7 @@
 package HTTP
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -217,8 +218,7 @@ func TestSetResponseHeaders_ValidStatusCode(t *testing.T) {
 	setResponseHeaders(w, []string{"Content-Type: application/json"}, http.StatusOK)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	// The implementation splits on ":" and preserves the space, so the value has a leading space
-	assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 }
 
 func TestSetResponseHeaders_InvalidStatusCode(t *testing.T) {
@@ -699,4 +699,39 @@ func TestParseLLMHTTPResponsePreservesExistingHeaders(t *testing.T) {
 	assert.Equal(t, "test", resp.Body)
 	assert.Contains(t, resp.Headers, "X-Existing: keep-me")
 	assert.Contains(t, resp.Headers, "X-New: added")
+}
+
+func TestParseLLMHTTPResponseDropsCRLFHeaderValues(t *testing.T) {
+	resp := &httpResponse{StatusCode: 200}
+	completions := `{"headers":{"X-Safe":"ok","X-Injected":"bar\r\nSet-Cookie: pwn=1","X-LF":"line1\nline2","X-CR":"a\rb"},"body":"hi"}`
+
+	parseLLMHTTPResponse(completions, resp)
+
+	assert.Equal(t, "hi", resp.Body)
+	assert.Contains(t, resp.Headers, "X-Safe: ok")
+	for _, h := range resp.Headers {
+		assert.NotContains(t, h, "\r")
+		assert.NotContains(t, h, "\n")
+	}
+}
+
+func TestParseLLMHTTPResponseOutOfRangeStatusCodeKeepsDefault(t *testing.T) {
+	cases := []int{-1, 0, 99, 600, 999}
+	for _, code := range cases {
+		resp := &httpResponse{StatusCode: 201}
+		completions := fmt.Sprintf(`{"headers":{},"body":"x","statusCode":%d}`, code)
+		parseLLMHTTPResponse(completions, resp)
+		assert.Equal(t, 201, resp.StatusCode, "status code %d should be rejected", code)
+	}
+}
+
+func TestSetResponseHeaders_ValueWithColon(t *testing.T) {
+	w := httptest.NewRecorder()
+	setResponseHeaders(w, []string{
+		"Location: https://example.com/x",
+		"Content-Security-Policy: default-src 'self'; report-uri https://csp.example.com/report",
+	}, http.StatusFound)
+
+	assert.Equal(t, "https://example.com/x", w.Header().Get("Location"))
+	assert.Equal(t, "default-src 'self'; report-uri https://csp.example.com/report", w.Header().Get("Content-Security-Policy"))
 }
