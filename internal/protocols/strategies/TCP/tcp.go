@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/historystore"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -72,15 +73,20 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 	if len(servConf.Commands) == 0 {
 		buffer := make([]byte, 1024)
 		command := ""
+		commandRaw := ""
 
 		if n, err := conn.Read(buffer); err == nil {
 			command = string(buffer[:n])
+			if !utf8.Valid(buffer[:n]) {
+				commandRaw = hexEscapeNonPrintable(buffer[:n])
+			}
 		}
 
 		tr.TraceEvent(tracer.Event{
 			Msg:         "New TCP attempt",
 			Protocol:    tracer.TCP.String(),
 			Command:     command,
+			CommandRaw:  commandRaw,
 			Status:      tracer.Stateless.String(),
 			RemoteAddr:  conn.RemoteAddr().String(),
 			SourceIp:    host,
@@ -121,6 +127,14 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		}
 
 		commandInput := strings.TrimRight(string(buffer[:n]), "\r\n")
+
+		// Preserve the exact bytes when they are not valid UTF-8 (binary
+		// protocols), so the forensic record survives string()'s U+FFFD
+		// substitution. Empty for UTF-8 traffic.
+		commandRaw := ""
+		if !utf8.Valid(buffer[:n]) {
+			commandRaw = hexEscapeNonPrintable(buffer[:n])
+		}
 
 		// Match command against regexes
 		matched := false
@@ -176,6 +190,7 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 					SourcePort:    port,
 					Status:        tracer.Interaction.String(),
 					Command:       commandInput,
+					CommandRaw:    commandRaw,
 					CommandOutput: commandOutput,
 					ID:            sessionID.String(),
 					Protocol:      tracer.TCP.String(),
@@ -196,6 +211,7 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 				SourcePort:  port,
 				Status:      tracer.Interaction.String(),
 				Command:     commandInput,
+				CommandRaw:  commandRaw,
 				ID:          sessionID.String(),
 				Protocol:    tracer.TCP.String(),
 				Description: servConf.Description,
@@ -211,4 +227,21 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		ID:       sessionID.String(),
 		Protocol: tracer.TCP.String(),
 	})
+}
+
+// hexEscapeNonPrintable renders b as printable ASCII, emitting every
+// non-printable byte (and the backslash itself) as \xNN. The result is safe to
+// store in trace events, JSON, and TEXT columns while remaining reversible to
+// the original bytes.
+func hexEscapeNonPrintable(b []byte) string {
+	var sb strings.Builder
+	sb.Grow(len(b))
+	for _, c := range b {
+		if c >= 32 && c <= 126 && c != '\\' {
+			sb.WriteByte(c)
+		} else {
+			fmt.Fprintf(&sb, "\\x%02x", c)
+		}
+	}
+	return sb.String()
 }

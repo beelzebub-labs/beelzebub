@@ -17,6 +17,13 @@ type Event struct {
 	RemoteAddr      string
 	Protocol        string
 	Command         string
+	// CommandRaw is a hex-escaped (\xNN) rendering of the exact bytes the
+	// client sent. It is populated only when Command's UTF-8 string form would
+	// lose data (i.e. the input is not valid UTF-8, as happens with binary
+	// protocols), so the original bytes remain recoverable downstream. Empty —
+	// and omitted from JSON — for UTF-8 traffic, leaving existing events
+	// unchanged.
+	CommandRaw      string `json:",omitempty"`
 	CommandOutput   string
 	Status          string
 	Msg             string
