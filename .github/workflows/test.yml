@@ -52,7 +52,7 @@ jobs:
             'BEGIN { exit !(total > threshold) }'
 
       - name: Upload Coverage Reports To Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
 
         with:
           files: ./coverage.out
