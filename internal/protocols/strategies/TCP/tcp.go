@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -109,7 +110,28 @@ func applyPatches(buf []byte, patches []parser.Patch) []byte {
 
 type TCPStrategy struct {
 	Sessions *historystore.HistoryStore
+	tlsMu    sync.Mutex
 	tlsCert  *tls.Certificate // generated at Init when any command has tlsUpgrade:true
+	tlsCN    string           // common name used to (re)generate tlsCert
+}
+
+// currentTLSCert returns the self-signed cert for TLS upgrade, lazily
+// regenerating it if it has expired (a honeypot may run longer than the cert's
+// validity). Returns nil if no cert is available and regeneration fails.
+func (tcpStrategy *TCPStrategy) currentTLSCert() *tls.Certificate {
+	tcpStrategy.tlsMu.Lock()
+	defer tcpStrategy.tlsMu.Unlock()
+	if tcpStrategy.tlsCert == nil {
+		return nil
+	}
+	if leaf := tcpStrategy.tlsCert.Leaf; leaf != nil && time.Now().After(leaf.NotAfter) {
+		if cert, err := generateSelfSignedCert(tcpStrategy.tlsCN); err != nil {
+			log.Errorf("TLS cert regeneration failed: %v", err)
+		} else {
+			tcpStrategy.tlsCert = cert
+		}
+	}
+	return tcpStrategy.tlsCert
 }
 
 // generateSelfSignedCert creates an ephemeral P-256 ECDSA self-signed certificate
@@ -138,7 +160,12 @@ func generateSelfSignedCert(commonName string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+	// Populate Leaf so callers can check NotAfter without re-parsing the DER.
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, nil
 }
 
 func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
@@ -149,6 +176,7 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 
 	for _, cmd := range servConf.Commands {
 		if cmd.TLSUpgrade {
+			tcpStrategy.tlsCN = servConf.ServerName
 			cert, err := generateSelfSignedCert(servConf.ServerName)
 			if err != nil {
 				log.Errorf("TLS cert generation failed: %v", err)
@@ -256,7 +284,11 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 
 	// Load history for LLM context, capped to avoid context overflow.
 	// Each entry is a user+assistant pair, so 20 entries = 10 exchanges.
-	const maxHistoryEntries = 20
+	// Configurable per service via maxHistory; defaults to 20.
+	maxHistoryEntries := servConf.MaxHistory
+	if maxHistoryEntries <= 0 {
+		maxHistoryEntries = 20
+	}
 	var histories []plugins.Message
 	if tcpStrategy.Sessions.HasKey(sessionKey) {
 		all := tcpStrategy.Sessions.Query(sessionKey)
@@ -299,14 +331,16 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 				}
 
 				// Plugin dispatch via the registry. outputIsUTF8 means the output
-				// came from a CommandPlugin and is already real UTF-8 text (e.g.
-				// LLM output), so it must NOT be Latin-1 decoded or byte-patched.
-				// Static YAML handlers, by contrast, carry \xHH escapes parsed as
-				// Latin-1 codepoints and need latin1ToRawBytes + applyPatches.
+				// is already real UTF-8 text (e.g. LLM output), so it must NOT be
+				// Latin-1 decoded or byte-patched. A plugin can opt out by setting
+				// binaryOutput: true (its output is then treated like a static
+				// handler: Latin-1 encoded + patched). Static YAML handlers carry
+				// \xHH escapes parsed as Latin-1 codepoints and always need
+				// latin1ToRawBytes + applyPatches.
 				outputIsUTF8 := false
 				if command.Plugin != "" {
 					if cp, ok := plugin.GetCommand(command.Plugin); ok {
-						outputIsUTF8 = true
+						outputIsUTF8 = !command.BinaryOutput
 						output, err := cp.Execute(context.Background(), plugin.CommandRequest{
 							Command:  commandInput,
 							ClientIP: host,
@@ -384,7 +418,8 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 				tr.TraceEvent(ev)
 
 				if command.TLSUpgrade {
-					if tcpStrategy.tlsCert == nil {
+					cert := tcpStrategy.currentTLSCert()
+					if cert == nil {
 						// Cert generation failed at Init: the connection would
 						// otherwise continue in cleartext, silently defeating
 						// tlsUpgrade. Surface it and close instead.
@@ -392,7 +427,7 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 						return
 					}
 					tlsConn := tls.Server(conn, &tls.Config{
-						Certificates: []tls.Certificate{*tcpStrategy.tlsCert},
+						Certificates: []tls.Certificate{*cert},
 						MinVersion:   tls.VersionTLS12,
 					})
 					conn.SetDeadline(time.Now().Add(time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second))

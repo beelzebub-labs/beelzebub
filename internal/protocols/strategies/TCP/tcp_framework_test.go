@@ -238,3 +238,65 @@ func TestHandleTCPConnection_PluginDispatch(t *testing.T) {
 		t.Error("no interaction event with plugin output")
 	}
 }
+
+func TestCurrentTLSCert_RegeneratesOnExpiry(t *testing.T) {
+	s := &TCPStrategy{tlsCN: "DC01.company.local"}
+	cert, err := generateSelfSignedCert("DC01.company.local")
+	if err != nil {
+		t.Fatalf("gen: %v", err)
+	}
+	cert.Leaf.NotAfter = time.Now().Add(-time.Hour) // force expired
+	s.tlsCert = cert
+
+	got := s.currentTLSCert()
+	if got == nil {
+		t.Fatal("nil cert")
+	}
+	if !got.Leaf.NotAfter.After(time.Now()) {
+		t.Error("expected a regenerated, non-expired certificate")
+	}
+	// a still-valid cert must be returned unchanged (not regenerated)
+	if again := s.currentTLSCert(); again != got {
+		t.Error("valid cert should not be regenerated")
+	}
+}
+
+// mockBinaryPlugin returns output with a high byte (rune 0xFE) to verify
+// binaryOutput: the byte must survive as 0xFE, not be UTF-8 encoded to 0xC3 0xBE.
+type mockBinaryPlugin struct{}
+
+func (mockBinaryPlugin) Metadata() plugin.Metadata { return plugin.Metadata{Name: "MockBinaryPlugin"} }
+func (mockBinaryPlugin) Execute(_ context.Context, _ plugin.CommandRequest) (string, error) {
+	return string([]rune{0xFE, 'O', 'K'}), nil // Latin-1 bytes FE 4F 4B
+}
+
+func init() {
+	if _, ok := plugin.Get("MockBinaryPlugin"); !ok {
+		plugin.Register(mockBinaryPlugin{})
+	}
+}
+
+func TestHandleTCPConnection_BinaryPluginOutput(t *testing.T) {
+	addr, _ := startCfg(t, parser.BeelzebubServiceConfiguration{
+		Commands: []parser.Command{{
+			Regex:        regexp.MustCompile(`(?s).*`),
+			Plugin:       "MockBinaryPlugin",
+			BinaryOutput: true,
+			Name:         "bin",
+		}},
+	})
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	conn.Write([]byte("x"))
+	buf := make([]byte, 8)
+	n, _ := conn.Read(buf)
+	// binaryOutput → raw Latin-1 bytes FE 4F 4B (3 bytes), not UTF-8 (which
+	// would encode 0xFE as C3 BE, giving 4 bytes).
+	if n != 3 || buf[0] != 0xFE || buf[1] != 'O' || buf[2] != 'K' {
+		t.Errorf("got % x (n=%d), want fe 4f 4b", buf[:n], n)
+	}
+}

@@ -89,6 +89,9 @@ type BeelzebubServiceConfiguration struct {
 	Plugin                 Plugin    `yaml:"plugin" json:"plugin,omitempty"`
 	TLSCertPath            string    `yaml:"tlsCertPath" json:"tlsCertPath,omitempty"`
 	TLSKeyPath             string    `yaml:"tlsKeyPath" json:"tlsKeyPath,omitempty"`
+	// MaxHistory caps how many session history entries are kept for LLM context
+	// on interactive TCP sessions. Zero means use the built-in default.
+	MaxHistory int `yaml:"maxHistory,omitempty" json:"maxHistory,omitempty"`
 	// TrustedProxies is a list of CIDRs (or bare IPs) of upstream proxies whose
 	// X-Forwarded-For / X-Real-IP headers can be trusted. When empty, those
 	// headers are ignored and the immediate TCP peer is used as source IP.
@@ -137,6 +140,9 @@ type Command struct {
 	CloseAfter bool           `yaml:"closeAfter" json:"closeAfter,omitempty"`
 	TLSUpgrade bool           `yaml:"tlsUpgrade" json:"tlsUpgrade,omitempty"`
 	Patches    []Patch        `yaml:"patches" json:"patches,omitempty"`
+	// BinaryOutput marks a plugin's output as raw (Latin-1 encoded) bytes rather
+	// than UTF-8 text, so it is written byte-for-byte like a static handler.
+	BinaryOutput bool `yaml:"binaryOutput" json:"binaryOutput,omitempty"`
 }
 
 // Tool is the struct that contains the configurations of the MCP Honeypot
