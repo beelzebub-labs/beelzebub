@@ -189,13 +189,17 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 }
 
 func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, tcpStrategy *TCPStrategy) {
-	defer func() { conn.Close() }() // closure captures conn by reference to support TLS upgrade
+	// Closure form (not `defer conn.Close()`): conn is reassigned to the
+	// TLS-wrapped connection on upgrade, and the closure captures it by
+	// reference, so this closes the encrypted connection, not the original.
+	defer func() { conn.Close() }()
 
 	conn.SetDeadline(time.Now().Add(time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second))
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
-	// Send banner if configured. Binary banners use Latin-1 encoding (no trailing newline).
+	// Send banner if configured. Encoded via Latin-1 so binary (\xHH) banners
+	// survive; trailing "\n" preserves upstream line-based banner behavior.
 	if servConf.Banner != "" {
 		// Preserve upstream behavior (banner + "\n") but binary-safe: the banner
 		// may contain \xHH escapes, so encode via Latin-1 rather than %s.
@@ -234,6 +238,11 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 	sessionID := uuid.New()
 	sessionKey := "TCP" + host
 
+	// Release any per-session wire-plugin state when the connection ends, so
+	// incomplete handshakes (e.g. a scanner that only sends a challenge request)
+	// don't leak entries in plugin challenge stores.
+	defer closeWireSessions(sessionKey)
+
 	tr.TraceEvent(tracer.Event{
 		Msg:         "New TCP Session",
 		Protocol:    tracer.TCP.String(),
@@ -252,6 +261,7 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 	if tcpStrategy.Sessions.HasKey(sessionKey) {
 		all := tcpStrategy.Sessions.Query(sessionKey)
 		if len(all) > maxHistoryEntries {
+			log.Debugf("session %s: history truncated from %d to %d entries", sessionKey, len(all), maxHistoryEntries)
 			all = all[len(all)-maxHistoryEntries:]
 		}
 		histories = all
@@ -288,11 +298,15 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 					handlerName = "configured_regex"
 				}
 
-				// Plugin dispatch via the registry.
-				isLLMResponse := false
+				// Plugin dispatch via the registry. outputIsUTF8 means the output
+				// came from a CommandPlugin and is already real UTF-8 text (e.g.
+				// LLM output), so it must NOT be Latin-1 decoded or byte-patched.
+				// Static YAML handlers, by contrast, carry \xHH escapes parsed as
+				// Latin-1 codepoints and need latin1ToRawBytes + applyPatches.
+				outputIsUTF8 := false
 				if command.Plugin != "" {
 					if cp, ok := plugin.GetCommand(command.Plugin); ok {
-						isLLMResponse = true
+						outputIsUTF8 = true
 						output, err := cp.Execute(context.Background(), plugin.CommandRequest{
 							Command:  commandInput,
 							ClientIP: host,
@@ -311,18 +325,15 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 				}
 
 				// Build response bytes.
-				// LLM responses are real UTF-8 text — send as-is.
-				// Static YAML handlers use \xHH escapes parsed as Latin-1 codepoints
-				// by the YAML library — convert back to raw bytes before writing.
 				var outputBytes []byte
 				if commandOutput != "" {
-					if isLLMResponse {
+					if outputIsUTF8 {
 						outputBytes = []byte(commandOutput)
 					} else {
 						outputBytes = latin1ToRawBytes(commandOutput)
 					}
 				}
-				if !isLLMResponse {
+				if !outputIsUTF8 {
 					outputBytes = applyPatches(outputBytes, command.Patches)
 				}
 
@@ -372,7 +383,14 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 
 				tr.TraceEvent(ev)
 
-				if command.TLSUpgrade && tcpStrategy.tlsCert != nil {
+				if command.TLSUpgrade {
+					if tcpStrategy.tlsCert == nil {
+						// Cert generation failed at Init: the connection would
+						// otherwise continue in cleartext, silently defeating
+						// tlsUpgrade. Surface it and close instead.
+						log.Warnf("tlsUpgrade requested but no TLS cert available; closing connection")
+						return
+					}
 					tlsConn := tls.Server(conn, &tls.Config{
 						Certificates: []tls.Certificate{*tcpStrategy.tlsCert},
 						MinVersion:   tls.VersionTLS12,

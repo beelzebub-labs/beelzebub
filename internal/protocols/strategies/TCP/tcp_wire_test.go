@@ -70,3 +70,25 @@ func TestWirePlugin_EmptyRegistryIsNoop(t *testing.T) {
 		t.Errorf("Metadata set by empty registry: %v", ev.Metadata)
 	}
 }
+
+// sessionAwarePlugin records OnSessionClose calls to verify the teardown hook.
+type sessionAwarePlugin struct{ closed []string }
+
+func (p *sessionAwarePlugin) OnExchange(_ *WireContext)        {}
+func (p *sessionAwarePlugin) OnSessionClose(sessionKey string) { p.closed = append(p.closed, sessionKey) }
+
+// TestWirePlugin_SessionClose verifies closeWireSessions calls OnSessionClose
+// on SessionAware plugins (and is a harmless no-op for plain ones).
+func TestWirePlugin_SessionClose(t *testing.T) {
+	saved := wirePlugins
+	t.Cleanup(func() { wirePlugins = saved })
+
+	sa := &sessionAwarePlugin{}
+	wirePlugins = []WirePlugin{mockWirePlugin{}, sa} // mockWirePlugin is NOT SessionAware
+
+	closeWireSessions("TCP1.2.3.4")
+
+	if len(sa.closed) != 1 || sa.closed[0] != "TCP1.2.3.4" {
+		t.Errorf("OnSessionClose calls = %v, want [TCP1.2.3.4]", sa.closed)
+	}
+}

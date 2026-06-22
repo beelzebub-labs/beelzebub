@@ -46,6 +46,15 @@ type WirePlugin interface {
 	OnExchange(ctx *WireContext)
 }
 
+// SessionAware is an optional interface a WirePlugin may implement to release
+// per-session state when a connection ends. The TCP strategy calls
+// OnSessionClose for every registered plugin that implements it when
+// handleTCPConnection returns, so plugins that keep per-session maps (e.g.
+// challenge stores) don't leak entries for incomplete handshakes.
+type SessionAware interface {
+	OnSessionClose(sessionKey string)
+}
+
 var wirePlugins []WirePlugin
 
 // RegisterWirePlugin appends p to the list of wire-plugins invoked on each
@@ -59,5 +68,16 @@ func RegisterWirePlugin(p WirePlugin) {
 func runWirePlugins(ctx *WireContext) {
 	for _, p := range wirePlugins {
 		p.OnExchange(ctx)
+	}
+}
+
+// closeWireSessions notifies every SessionAware wire-plugin that the session
+// identified by sessionKey has ended, so they can release per-session state.
+// Safe to call with an empty registry (no-op).
+func closeWireSessions(sessionKey string) {
+	for _, p := range wirePlugins {
+		if sa, ok := p.(SessionAware); ok {
+			sa.OnSessionClose(sessionKey)
+		}
 	}
 }

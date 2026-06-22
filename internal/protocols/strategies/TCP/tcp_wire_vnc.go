@@ -67,6 +67,12 @@ func (vncWirePlugin) OnExchange(ctx *WireContext) {
 	}
 }
 
+// OnSessionClose purges any stored challenge for the ended session, so an
+// incomplete handshake (challenge sent, response never received) does not leak.
+func (vncWirePlugin) OnSessionClose(sessionKey string) {
+	vncChallengeStore.Delete(sessionKey)
+}
+
 func init() {
 	RegisterWirePlugin(vncWirePlugin{})
 }

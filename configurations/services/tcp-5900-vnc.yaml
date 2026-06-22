@@ -4,6 +4,13 @@ address: ":5900"
 description: "VNC Server (RFB Protocol) with VNC Authentication credential capture"
 banner: "RFB 003.008"
 commands:
+  # NOTE: handler order matters — commands are matched top-to-bottom, first
+  # match wins. The version regex must come before vnc_auth_response, and
+  # vnc_auth_response before the catch-all. The 16-byte match below is
+  # intentionally broad (it matches any 16-byte message) to capture brute-force
+  # auth attempts; for a honeypot, capturing unexpected 16-byte traffic as an
+  # auth response is acceptable.
+
   # Client echoes the ProtocolVersion → offer a single security type:
   # VNC Authentication (type 2, the DES challenge-response scheme).
   - regex: "RFB 003.008"
@@ -13,6 +20,7 @@ commands:
   # Client sends its 16-byte DES-encrypted response to our challenge.
   # The vnc wire-plugin extracts it (correlated with the stored challenge);
   # we reply SecurityResult=failed so the client retries with more passwords.
+  # Intentionally broad: matches any exactly-16-byte message (see note above).
   - regex: "(?s)^.{16}$"
     handler: "\x00\x00\x00\x01"
     name: "vnc_auth_response"
