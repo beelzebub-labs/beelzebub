@@ -263,7 +263,7 @@ func TestBuildExecuteModelFailValidationStrategyType(t *testing.T) {
 
 	_, err := openAIGPTVirtualTerminal.ExecuteModel("test", "127.0.0.1")
 
-	assert.Equal(t, "no prompt for protocol selected", err.Error())
+	assert.Equal(t, "TCP protocol requires a custom prompt in plugin configuration", err.Error())
 }
 
 func TestBuildExecuteModelFailValidationModelType(t *testing.T) {

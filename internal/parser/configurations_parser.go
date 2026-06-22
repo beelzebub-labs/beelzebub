@@ -110,6 +110,20 @@ func (bsc BeelzebubServiceConfiguration) HashCode() (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
+// Patch describes a binary patch to apply to a static handler response before
+// it is written to the TCP connection. The generic patch engine supports:
+//
+//   - "random"   — write Length cryptographically random bytes at Offset
+//   - "filetime" — write 8-byte Windows FILETIME (current UTC time) at Offset
+//
+// Additional patch types may be defined by wire-plugins and are interpreted
+// by those plugins rather than the generic engine.
+type Patch struct {
+	Type   string `yaml:"type"`
+	Offset int    `yaml:"offset"`
+	Length int    `yaml:"length"`
+}
+
 // Command is the struct that contains the configurations of the commands
 type Command struct {
 	RegexStr   string         `yaml:"regex" json:"regex,omitempty"`
@@ -120,6 +134,9 @@ type Command struct {
 	StatusCode int            `yaml:"statusCode" json:"statusCode,omitempty"`
 	Plugin     string         `yaml:"plugin" json:"plugin,omitempty"`
 	Name       string         `yaml:"name" json:"name,omitempty"`
+	CloseAfter bool           `yaml:"closeAfter" json:"closeAfter,omitempty"`
+	TLSUpgrade bool           `yaml:"tlsUpgrade" json:"tlsUpgrade,omitempty"`
+	Patches    []Patch        `yaml:"patches" json:"patches,omitempty"`
 }
 
 // Tool is the struct that contains the configurations of the MCP Honeypot

@@ -1,6 +1,7 @@
 package TCP
 
 import (
+	"io"
 	"net"
 	"regexp"
 	"strings"
@@ -269,4 +270,68 @@ func TestHandleTCPConnection_SessionStart(t *testing.T) {
 	}
 	assert.True(t, hasStart, "expected session start event")
 	assert.True(t, hasEnd, "expected session end event")
+}
+
+// TestHandleTCPConnection_CommandRaw verifies that binary (non-UTF-8) client
+// input is preserved byte-exact in Event.CommandRaw on the matched-command
+// interactive path (complementing tcp_rawbytes_test.go, which covers the
+// not_found path), while UTF-8 input leaves CommandRaw empty.
+func TestHandleTCPConnection_CommandRaw(t *testing.T) {
+	run := func(t *testing.T, input []byte) []tracer.Event {
+		client, server := net.Pipe()
+		defer client.Close()
+
+		mt := &mockTracer{}
+		servConf := parser.BeelzebubServiceConfiguration{
+			Description:            "test",
+			DeadlineTimeoutSeconds: 5,
+			Commands: []parser.Command{
+				{Regex: regexp.MustCompile(`(?s).*`), Handler: "ok"},
+			},
+		}
+		strategy := newStrategyWithSessions()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			handleTCPConnection(server, servConf, mt, strategy)
+		}()
+
+		// Drain the server's response so its conn.Write does not block on the
+		// synchronous net.Pipe, allowing the interaction event to be emitted.
+		go io.Copy(io.Discard, client)
+
+		client.Write(input)
+		time.Sleep(100 * time.Millisecond)
+		client.Close()
+
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout")
+		}
+		return mt.events
+	}
+
+	t.Run("binary input populates CommandRaw byte-exact", func(t *testing.T) {
+		// Arbitrary non-UTF-8 bytes (0xfe is never valid UTF-8).
+		events := run(t, []byte{0xfe, 0x01, 0x80, 0xff, 0x00, 0x41})
+		var found bool
+		for _, e := range events {
+			if e.Status == tracer.Interaction.String() {
+				assert.Equal(t, "\\xfe\\x01\\x80\\xff\\x00A", e.CommandRaw)
+				found = true
+			}
+		}
+		assert.True(t, found, "expected an interaction event with CommandRaw")
+	})
+
+	t.Run("utf8 input leaves CommandRaw empty", func(t *testing.T) {
+		events := run(t, []byte("hello\n"))
+		for _, e := range events {
+			if e.Status == tracer.Interaction.String() {
+				assert.Empty(t, e.CommandRaw, "CommandRaw must be empty for UTF-8 input")
+			}
+		}
+	})
 }

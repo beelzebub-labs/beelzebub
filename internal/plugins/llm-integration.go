@@ -189,6 +189,17 @@ func (llmHoneypot *LLMHoneypot) buildPrompt(command string) ([]Message, error) {
 			Role:    ASSISTANT.String(),
 			Content: "<html><body>Hello, World!</body></html>",
 		})
+	case tracer.TCP:
+		if llmHoneypot.CustomPrompt == "" {
+			return nil, errors.New("TCP protocol requires a custom prompt in plugin configuration")
+		}
+		messages = append(messages, Message{
+			Role:    SYSTEM.String(),
+			Content: llmHoneypot.CustomPrompt,
+		})
+		for _, history := range llmHoneypot.Histories {
+			messages = append(messages, history)
+		}
 	default:
 		return nil, errors.New("no prompt for protocol selected")
 	}

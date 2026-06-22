@@ -45,6 +45,10 @@ type Event struct {
 	SourcePort      string
 	TLSServerName   string
 	Handler         string
+	// Metadata carries arbitrary protocol-specific key/value pairs contributed
+	// by plugins (e.g. extracted credentials, protocol fingerprints). The core
+	// makes no assumptions about its contents.
+	Metadata map[string]string `json:",omitempty"`
 }
 
 type (

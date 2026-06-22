@@ -1,13 +1,33 @@
 apiVersion: "v1"
 protocol: "tcp"
 address: ":5900"
-description: "VNC Server (RFB Protocol)"
-banner: "RFB 003.008\n"
+description: "VNC Server (RFB Protocol) with VNC Authentication credential capture"
+banner: "RFB 003.008"
 commands:
+  # Client echoes the ProtocolVersion → offer a single security type:
+  # VNC Authentication (type 2, the DES challenge-response scheme).
   - regex: "RFB 003.008"
-    handler: "\x01"
-    name: "security_type_none"
-  - regex: "^(.+)$"
+    handler: "\x01\x02"
+    name: "vnc_security_types"
+
+  # Client sends its 16-byte DES-encrypted response to our challenge.
+  # The vnc wire-plugin extracts it (correlated with the stored challenge);
+  # we reply SecurityResult=failed so the client retries with more passwords.
+  - regex: "(?s)^.{16}$"
+    handler: "\x00\x00\x00\x01"
+    name: "vnc_auth_response"
+
+  # Client selects security type 2 → send a 16-byte random challenge.
+  # The random patch fills the challenge; the wire-plugin captures it.
+  - regex: "(?s)^\\x02$"
+    handler: "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    name: "vnc_challenge"
+    patches:
+      - type: "random"
+        offset: 0
+        length: 16
+
+  - regex: "(?s)^(.+)$"
     handler: ""
     name: "catch_all"
 deadlineTimeoutSeconds: 30
