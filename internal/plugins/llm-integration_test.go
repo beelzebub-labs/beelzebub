@@ -106,6 +106,38 @@ func TestBuildPromptTelnet(t *testing.T) {
 	assert.Equal(t, SystemPromptLen, len(prompt))
 }
 
+func TestBuildPromptTCPWithCustomPrompt(t *testing.T) {
+	honeypot := LLMHoneypot{
+		Histories: []Message{
+			{Role: USER.String(), Content: "prev"},
+		},
+		Protocol:     tracer.TCP,
+		CustomPrompt: "act as a PostgreSQL server",
+	}
+
+	prompt, err := honeypot.buildPrompt("SELECT 1")
+
+	assert.Nil(t, err)
+	// system custom prompt + 1 history entry + user command
+	assert.Equal(t, "act as a PostgreSQL server", prompt[0].Content)
+	assert.Equal(t, SYSTEM.String(), prompt[0].Role)
+	assert.Equal(t, "prev", prompt[1].Content)
+	assert.Equal(t, "SELECT 1", prompt[len(prompt)-1].Content)
+	assert.Equal(t, USER.String(), prompt[len(prompt)-1].Role)
+}
+
+func TestBuildPromptTCPRequiresCustomPrompt(t *testing.T) {
+	honeypot := LLMHoneypot{
+		Histories: []Message{},
+		Protocol:  tracer.TCP,
+		// no CustomPrompt
+	}
+
+	_, err := honeypot.buildPrompt("SELECT 1")
+
+	assert.Error(t, err)
+}
+
 func TestBuildInputValidationPromptDefault(t *testing.T) {
 	llmHoneypot := LLMHoneypot{
 		Protocol: tracer.SSH,
