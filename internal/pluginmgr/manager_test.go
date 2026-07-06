@@ -1,0 +1,181 @@
+package pluginmgr
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func fakeManager(t *testing.T, module, manifest string) (*Manager, *fakeCalls) {
+	t.Helper()
+	root := t.TempDir()
+	calls := &fakeCalls{}
+
+	run := func(_ context.Context, dir, name string, args ...string) (string, error) {
+		switch {
+		case name == "git" && len(args) > 0 && args[0] == "clone":
+			dst := args[len(args)-1]
+			require.NoError(t, os.MkdirAll(filepath.Join(dst, ".git"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dst, "go.mod"),
+				[]byte("module "+module+"\n\ngo 1.25\n"), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(dst, ManifestFile), []byte(manifest), 0o644))
+			return "", nil
+		case name == "git" && args[0] == "rev-parse":
+			return "cafebabecafebabecafebabecafebabecafebabe\n", nil
+		case name == "git":
+			return "", nil // fetch / checkout
+		case name == "go" && len(args) >= 2 && args[0] == "mod" && args[1] == "edit":
+			calls.goModEdits = append(calls.goModEdits, strings.Join(args, " "))
+			return "", nil
+		case name == "go" && len(args) >= 2 && args[0] == "mod" && args[1] == "tidy":
+			calls.tidied++
+			return "", nil
+		case name == "go" && len(args) >= 1 && args[0] == "build":
+			calls.built++
+			return "", nil
+		case name == "docker" || name == "docker-compose":
+			calls.dockerCmds = append(calls.dockerCmds, strings.Join(args, " "))
+			return "", nil
+		default:
+			return "", fmt.Errorf("unexpected command: %s %v", name, args)
+		}
+	}
+
+	m := &Manager{
+		moduleRoot:  root,
+		coreModule:  "github.com/beelzebub-labs/beelzebub/v3",
+		coreVersion: "dev",
+		run:         run,
+	}
+	return m, calls
+}
+
+type fakeCalls struct {
+	goModEdits []string
+	tidied     int
+	built      int
+	dockerCmds []string
+}
+
+func TestApply_LocalBuilds(t *testing.T) {
+	m, calls := fakeManager(t, "github.com/acme/scanner", validManifest)
+	mode, err := m.Apply(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "local", mode)
+	assert.Equal(t, 1, calls.built)
+	assert.Empty(t, calls.dockerCmds)
+}
+
+func TestApply_DockerRebuilds(t *testing.T) {
+	m, calls := fakeManager(t, "github.com/acme/scanner", validManifest)
+	require.NoError(t, os.WriteFile(filepath.Join(m.moduleRoot, ModeFileName), []byte("docker\n"), 0o644))
+
+	mode, err := m.Apply(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "docker", mode)
+	assert.Equal(t, 0, calls.built)
+	assert.Contains(t, strings.Join(calls.dockerCmds, "\n"), "up -d --build")
+}
+
+func TestInstallMode_DefaultsLocal(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	assert.Equal(t, "local", m.installMode())
+}
+
+const validManifest = `
+name: scanner
+version: 1.2.0
+module: github.com/acme/scanner
+`
+
+func TestManager_InstallRemove(t *testing.T) {
+	m, calls := fakeManager(t, "github.com/acme/scanner", validManifest)
+	ctx := context.Background()
+
+	locked, err := m.Install(ctx, "github.com/acme/scanner", "", false)
+	require.NoError(t, err)
+	assert.Equal(t, "scanner", locked.Name)
+	assert.Equal(t, "github.com/acme/scanner", locked.Import)
+	assert.Equal(t, "plugins/scanner", locked.Dir)
+	assert.NotEmpty(t, locked.Commit)
+
+	// Plugin vendored, .git stripped.
+	dest := filepath.Join(m.moduleRoot, "plugins", "scanner")
+	assert.DirExists(t, dest)
+	assert.NoDirExists(t, filepath.Join(dest, ".git"))
+	assert.FileExists(t, filepath.Join(dest, "go.mod"))
+
+	// Generated imports blank-import the plugin.
+	gen, err := os.ReadFile(filepath.Join(m.moduleRoot, "plugins", generatedFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(gen), `_ "github.com/acme/scanner"`)
+
+	// go.mod replace added and tidied.
+	assert.Contains(t, strings.Join(calls.goModEdits, "\n"), "-replace=github.com/acme/scanner=./plugins/scanner")
+	assert.GreaterOrEqual(t, calls.tidied, 1)
+
+	// Lockfile recorded it.
+	lf, err := LoadLockFile(m.lockPath())
+	require.NoError(t, err)
+	require.Len(t, lf.Plugins, 1)
+	assert.Equal(t, "scanner", lf.Plugins[0].Name)
+
+	// --- Remove reverses everything ---
+	_, err = m.Remove(ctx, "scanner")
+	require.NoError(t, err)
+	assert.NoDirExists(t, dest)
+	assert.Contains(t, strings.Join(calls.goModEdits, "\n"), "-dropreplace=github.com/acme/scanner")
+
+	gen, err = os.ReadFile(filepath.Join(m.moduleRoot, "plugins", generatedFileName))
+	require.NoError(t, err)
+	assert.NotContains(t, string(gen), "github.com/acme/scanner")
+
+	lf, err = LoadLockFile(m.lockPath())
+	require.NoError(t, err)
+	assert.Empty(t, lf.Plugins)
+}
+
+func TestManager_Install_AlreadyInstalled(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	ctx := context.Background()
+
+	_, err := m.Install(ctx, "github.com/acme/scanner", "", false)
+	require.NoError(t, err)
+
+	// Second install without --force fails.
+	_, err = m.Install(ctx, "github.com/acme/scanner", "", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already installed")
+
+	// With --force it succeeds.
+	_, err = m.Install(ctx, "github.com/acme/scanner", "", true)
+	require.NoError(t, err)
+}
+
+func TestManager_Install_ManifestMismatch(t *testing.T) {
+	// Manifest module disagrees with the (faked) go.mod module.
+	m, _ := fakeManager(t, "github.com/acme/other", validManifest)
+	_, err := m.Install(context.Background(), "github.com/acme/scanner", "", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not match go.mod")
+
+	// Nothing should have been vendored.
+	assert.NoDirExists(t, filepath.Join(m.moduleRoot, "plugins", "scanner"))
+}
+
+func TestManager_List(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	_, err := m.Install(context.Background(), "github.com/acme/scanner", "", false)
+	require.NoError(t, err)
+
+	list, err := m.List()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "scanner", list[0].Name)
+}

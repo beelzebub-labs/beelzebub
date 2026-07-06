@@ -9,3 +9,6 @@ integration_test/certs/tls.key
 .env
 .codex
 .local
+/beelzebub
+/.beelzebub-mode
+/plugins/*/

@@ -1,0 +1,15 @@
+# Plugins to compile into this build — one per line.
+#
+# Add a plugin by writing its repository here, or run:
+#     beelzebub plugin install <github-link>
+# which appends it to this file for you.
+#
+# Syntax (same as `plugin install`):
+#     github.com/org/repo
+#     github.com/org/repo@v1.2.0
+#     git@github.com:org/repo.git
+#
+# Leave empty for a plain runtime with no plugins.
+# Then build + start the whole stack with a single command:
+#     make start     (local, needs Go)
+#     make docker    (containerized, needs Docker)
