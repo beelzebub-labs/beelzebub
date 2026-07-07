@@ -27,7 +27,7 @@ func TestWirePlugin_SeamDispatch(t *testing.T) {
 	t.Cleanup(func() { wirePlugins = saved })
 	wirePlugins = nil
 
-	RegisterWirePlugin(mockWirePlugin{})
+	RegisterWirePlugin("mock", mockWirePlugin{})
 
 	resp := []byte("original")
 	ev := &tracer.Event{}
@@ -71,11 +71,71 @@ func TestWirePlugin_EmptyRegistryIsNoop(t *testing.T) {
 	}
 }
 
+// funcWirePlugin adapts a func to the WirePlugin interface for tests.
+type funcWirePlugin func(*WireContext)
+
+func (f funcWirePlugin) OnExchange(ctx *WireContext) { f(ctx) }
+
+// TestWirePlugin_PerServiceSelection verifies a service only runs the wire-plugins
+// named in its config, and runs all of them when the list is empty.
+func TestWirePlugin_PerServiceSelection(t *testing.T) {
+	saved := wirePlugins
+	t.Cleanup(func() { wirePlugins = saved })
+
+	run := func(enabled []string) []string {
+		var ran []string
+		wirePlugins = []registeredWirePlugin{
+			{name: "a", plugin: funcWirePlugin(func(*WireContext) { ran = append(ran, "a") })},
+			{name: "b", plugin: funcWirePlugin(func(*WireContext) { ran = append(ran, "b") })},
+		}
+		resp := []byte("x")
+		runWirePlugins(&WireContext{
+			Command:       &parser.Command{Name: "c"},
+			Response:      &resp,
+			Event:         &tracer.Event{},
+			ServiceConfig: parser.BeelzebubServiceConfiguration{WirePlugins: enabled},
+		})
+		return ran
+	}
+
+	if got := run([]string{"b"}); len(got) != 1 || got[0] != "b" {
+		t.Errorf("selection [b] ran %v, want [b]", got)
+	}
+	if got := run(nil); len(got) != 2 {
+		t.Errorf("empty selection ran %v, want both", got)
+	}
+}
+
+// TestWirePlugin_SessionCloseRespectsSelection verifies OnSessionClose is only
+// dispatched to plugins enabled for the service.
+func TestWirePlugin_SessionCloseRespectsSelection(t *testing.T) {
+	saved := wirePlugins
+	t.Cleanup(func() { wirePlugins = saved })
+
+	sa := &sessionAwarePlugin{}
+	other := &sessionAwarePlugin{}
+	wirePlugins = []registeredWirePlugin{
+		{name: "wanted", plugin: sa},
+		{name: "skip", plugin: other},
+	}
+
+	closeWireSessions("conn-1", []string{"wanted"})
+
+	if len(sa.closed) != 1 || sa.closed[0] != "conn-1" {
+		t.Errorf("enabled plugin closed = %v, want [conn-1]", sa.closed)
+	}
+	if len(other.closed) != 0 {
+		t.Errorf("disabled plugin should not be closed, got %v", other.closed)
+	}
+}
+
 // sessionAwarePlugin records OnSessionClose calls to verify the teardown hook.
 type sessionAwarePlugin struct{ closed []string }
 
-func (p *sessionAwarePlugin) OnExchange(_ *WireContext)        {}
-func (p *sessionAwarePlugin) OnSessionClose(sessionKey string) { p.closed = append(p.closed, sessionKey) }
+func (p *sessionAwarePlugin) OnExchange(_ *WireContext) {}
+func (p *sessionAwarePlugin) OnSessionClose(sessionKey string) {
+	p.closed = append(p.closed, sessionKey)
+}
 
 // TestWirePlugin_SessionClose verifies closeWireSessions calls OnSessionClose
 // on SessionAware plugins (and is a harmless no-op for plain ones).
@@ -84,9 +144,12 @@ func TestWirePlugin_SessionClose(t *testing.T) {
 	t.Cleanup(func() { wirePlugins = saved })
 
 	sa := &sessionAwarePlugin{}
-	wirePlugins = []WirePlugin{mockWirePlugin{}, sa} // mockWirePlugin is NOT SessionAware
+	wirePlugins = []registeredWirePlugin{
+		{name: "mock", plugin: mockWirePlugin{}}, // NOT SessionAware
+		{name: "sa", plugin: sa},
+	}
 
-	closeWireSessions("TCP1.2.3.4")
+	closeWireSessions("TCP1.2.3.4", nil)
 
 	if len(sa.closed) != 1 || sa.closed[0] != "TCP1.2.3.4" {
 		t.Errorf("OnSessionClose calls = %v, want [TCP1.2.3.4]", sa.closed)

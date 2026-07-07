@@ -12,10 +12,17 @@ import (
 //
 // All fields are non-nil unless noted; pointer fields are mutable.
 type WireContext struct {
-	// SessionKey uniquely identifies the connection for cross-exchange
-	// correlation (e.g. a value stored on one exchange and consumed on a
-	// later exchange within the same session).
+	// SessionKey groups exchanges by source for cross-connection state such as
+	// LLM conversation history. It is derived from the peer address, so two
+	// simultaneous connections from the same source share it — do NOT use it to
+	// key per-connection handshake state (use ConnID for that).
 	SessionKey string
+
+	// ConnID uniquely identifies a single TCP connection (a fresh UUID per
+	// accept). Wire-plugins that correlate state across exchanges within one
+	// handshake (e.g. challenge/response stores) must key on ConnID so
+	// concurrent connections from the same source IP don't clobber each other.
+	ConnID string
 
 	// Command is the matched command configuration for this exchange.
 	Command *parser.Command
@@ -47,37 +54,65 @@ type WirePlugin interface {
 }
 
 // SessionAware is an optional interface a WirePlugin may implement to release
-// per-session state when a connection ends. The TCP strategy calls
-// OnSessionClose for every registered plugin that implements it when
-// handleTCPConnection returns, so plugins that keep per-session maps (e.g.
-// challenge stores) don't leak entries for incomplete handshakes.
+// per-connection state when a connection ends. The TCP strategy calls
+// OnSessionClose with the connection's ConnID for every registered plugin that
+// implements it when handleTCPConnection returns, so plugins that keep
+// per-connection maps (e.g. challenge stores) don't leak entries for incomplete
+// handshakes.
 type SessionAware interface {
-	OnSessionClose(sessionKey string)
+	OnSessionClose(connID string)
 }
 
-var wirePlugins []WirePlugin
-
-// RegisterWirePlugin appends p to the list of wire-plugins invoked on each
-// exchange. Order matters: plugins run in registration order.
-func RegisterWirePlugin(p WirePlugin) {
-	wirePlugins = append(wirePlugins, p)
+type registeredWirePlugin struct {
+	name   string
+	plugin WirePlugin
 }
 
-// runWirePlugins invokes every registered wire-plugin in registration order.
+var wirePlugins []registeredWirePlugin
+
+// RegisterWirePlugin registers p under name, to be invoked on each exchange.
+// A service runs a plugin only if its config's `wirePlugins` list contains the
+// name (or the list is empty — then all registered plugins run). Order matters:
+// plugins run in registration order.
+func RegisterWirePlugin(name string, p WirePlugin) {
+	wirePlugins = append(wirePlugins, registeredWirePlugin{name: name, plugin: p})
+}
+
+// wirePluginEnabled reports whether a plugin named `name` should run for a
+// service whose config declares `enabled`. An empty list means "run all",
+// preserving behavior for configs that don't opt into per-service selection.
+func wirePluginEnabled(name string, enabled []string) bool {
+	if len(enabled) == 0 {
+		return true
+	}
+	for _, e := range enabled {
+		if e == name {
+			return true
+		}
+	}
+	return false
+}
+
+// runWirePlugins invokes every enabled wire-plugin in registration order.
 // Safe to call with an empty registry (no-op).
 func runWirePlugins(ctx *WireContext) {
-	for _, p := range wirePlugins {
-		p.OnExchange(ctx)
+	for _, rp := range wirePlugins {
+		if wirePluginEnabled(rp.name, ctx.ServiceConfig.WirePlugins) {
+			rp.plugin.OnExchange(ctx)
+		}
 	}
 }
 
-// closeWireSessions notifies every SessionAware wire-plugin that the session
-// identified by sessionKey has ended, so they can release per-session state.
-// Safe to call with an empty registry (no-op).
-func closeWireSessions(sessionKey string) {
-	for _, p := range wirePlugins {
-		if sa, ok := p.(SessionAware); ok {
-			sa.OnSessionClose(sessionKey)
+// closeWireSessions notifies every enabled SessionAware wire-plugin that the
+// connection identified by connID has ended, so they can release per-connection
+// state. Safe to call with an empty registry (no-op).
+func closeWireSessions(connID string, enabled []string) {
+	for _, rp := range wirePlugins {
+		if !wirePluginEnabled(rp.name, enabled) {
+			continue
+		}
+		if sa, ok := rp.plugin.(SessionAware); ok {
+			sa.OnSessionClose(connID)
 		}
 	}
 }

@@ -68,6 +68,48 @@ func vncStartService(t *testing.T, yamlPath string) (string, *vncTracer) {
 	return cfg.Address, tr
 }
 
+// TestVNC_ConnIDIsolation verifies two concurrent connections sharing a source
+// IP (same SessionKey) keep independent challenge state, keyed by ConnID. Before
+// the ConnID fix, the second connection's challenge clobbered the first's.
+func TestVNC_ConnIDIsolation(t *testing.T) {
+	p := vncWirePlugin{}
+	challengeHandler := &parser.Command{Name: vncChallengeHandler}
+	responseHandler := &parser.Command{Name: vncResponseHandler}
+
+	chA := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	chB := []byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
+	respA := make([]byte, 16)
+	respB := make([]byte, 16)
+	for i := range respA {
+		respA[i] = byte(0xA0 + i)
+		respB[i] = byte(0xB0 + i)
+	}
+
+	store := func(connID string, ch []byte) {
+		out := append([]byte(nil), ch...)
+		p.OnExchange(&WireContext{ConnID: connID, SessionKey: "TCP9.9.9.9", Command: challengeHandler, Response: &out, Event: &tracer.Event{}})
+	}
+	capture := func(connID string, resp []byte) *tracer.Event {
+		ev := &tracer.Event{}
+		out := []byte{}
+		p.OnExchange(&WireContext{ConnID: connID, SessionKey: "TCP9.9.9.9", Command: responseHandler, Request: resp, Response: &out, Event: ev})
+		return ev
+	}
+
+	// Interleave two connections from the same source IP.
+	store("conn-A", chA)
+	store("conn-B", chB)
+	evB := capture("conn-B", respB)
+	evA := capture("conn-A", respA)
+
+	if evA.Metadata["vnc_challenge"] != hex.EncodeToString(chA) {
+		t.Errorf("conn-A challenge = %s, want %s (cross-connection clobber)", evA.Metadata["vnc_challenge"], hex.EncodeToString(chA))
+	}
+	if evB.Metadata["vnc_challenge"] != hex.EncodeToString(chB) {
+		t.Errorf("conn-B challenge = %s, want %s (cross-connection clobber)", evB.Metadata["vnc_challenge"], hex.EncodeToString(chB))
+	}
+}
+
 // TestVNCCompat_AuthCredentialCapture drives the full RFB 3.8 VNC Authentication
 // handshake against the shipped tcp-5900-vnc.yaml and asserts the wire-plugin
 // captured the challenge/response pair into Event.Metadata.
@@ -121,6 +163,26 @@ func TestVNCCompat_AuthCredentialCapture(t *testing.T) {
 	secResult := make([]byte, 4)
 	if _, err := io.ReadFull(conn, secResult); err != nil {
 		t.Fatalf("read SecurityResult: %v", err)
+	}
+	if secResult[3] != 0x01 {
+		t.Fatalf("SecurityResult = % x, want 00 00 00 01 (failed)", secResult)
+	}
+	// RFB 3.8: a failed SecurityResult is followed by a 4-byte reason length and
+	// the reason text. A conformant client requires this.
+	reasonLen := make([]byte, 4)
+	if _, err := io.ReadFull(conn, reasonLen); err != nil {
+		t.Fatalf("read reason length: %v", err)
+	}
+	n := int(reasonLen[0])<<24 | int(reasonLen[1])<<16 | int(reasonLen[2])<<8 | int(reasonLen[3])
+	if n <= 0 || n > 256 {
+		t.Fatalf("implausible reason length %d", n)
+	}
+	reason := make([]byte, n)
+	if _, err := io.ReadFull(conn, reason); err != nil {
+		t.Fatalf("read reason text: %v", err)
+	}
+	if string(reason) != "Authentication failed" {
+		t.Errorf("reason = %q, want \"Authentication failed\"", reason)
 	}
 
 	// Allow the trace event to be recorded.

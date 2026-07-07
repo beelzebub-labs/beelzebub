@@ -5,6 +5,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,11 +16,24 @@ import (
 )
 
 type mockTracer struct {
+	mu     sync.Mutex
 	events []tracer.Event
 }
 
 func (m *mockTracer) TraceEvent(event tracer.Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.events = append(m.events, event)
+}
+
+// snapshot returns a copy of the recorded events, safe to read while the
+// connection handler goroutine is still running.
+func (m *mockTracer) snapshot() []tracer.Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]tracer.Event, len(m.events))
+	copy(out, m.events)
+	return out
 }
 
 func newStrategyWithSessions() *TCPStrategy {
@@ -53,8 +67,9 @@ func TestHandleTCPConnection_NoCommands_Legacy(t *testing.T) {
 		t.Fatal("timeout waiting for connection handler")
 	}
 
-	assert.GreaterOrEqual(t, len(mt.events), 1)
-	assert.Equal(t, tracer.Stateless.String(), mt.events[0].Status)
+	events := mt.snapshot()
+	assert.GreaterOrEqual(t, len(events), 1)
+	assert.Equal(t, tracer.Stateless.String(), events[0].Status)
 }
 
 func TestHandleTCPConnection_WithBanner(t *testing.T) {
@@ -146,7 +161,7 @@ func TestHandleTCPConnection_UnmatchedCommand(t *testing.T) {
 	}
 
 	foundNotFound := false
-	for _, e := range mt.events {
+	for _, e := range mt.snapshot() {
 		if e.Handler == "not_found" {
 			foundNotFound = true
 			break
@@ -216,7 +231,7 @@ func TestHandleTCPConnection_CommandWithEmptyHandler(t *testing.T) {
 	}
 
 	found := false
-	for _, e := range mt.events {
+	for _, e := range mt.snapshot() {
 		if strings.Contains(e.Msg, "Interaction") || e.Status == tracer.Interaction.String() {
 			found = true
 			break
@@ -260,7 +275,7 @@ func TestHandleTCPConnection_SessionStart(t *testing.T) {
 	// Should have at minimum session start and end events
 	hasStart := false
 	hasEnd := false
-	for _, e := range mt.events {
+	for _, e := range mt.snapshot() {
 		if e.Status == tracer.Start.String() {
 			hasStart = true
 		}
@@ -310,7 +325,7 @@ func TestHandleTCPConnection_CommandRaw(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("timeout")
 		}
-		return mt.events
+		return mt.snapshot()
 	}
 
 	t.Run("binary input populates CommandRaw byte-exact", func(t *testing.T) {

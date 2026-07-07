@@ -66,9 +66,10 @@ func TestHandleTCPConnection_NonUTF8_PopulatesCommandRaw(t *testing.T) {
 	}
 
 	var got *tracer.Event
-	for i := range mt.events {
-		if mt.events[i].CommandRaw != "" {
-			got = &mt.events[i]
+	events := mt.snapshot()
+	for i := range events {
+		if events[i].CommandRaw != "" {
+			got = &events[i]
 			break
 		}
 	}
@@ -111,8 +112,9 @@ func TestHandleTCPConnection_ASCII_LeavesCommandRawEmpty(t *testing.T) {
 		t.Fatal("timeout waiting for connection handler")
 	}
 
-	assert.NotEmpty(t, mt.events, "expected at least one traced event")
-	for _, e := range mt.events {
+	events := mt.snapshot()
+	assert.NotEmpty(t, events, "expected at least one traced event")
+	for _, e := range events {
 		assert.Empty(t, e.CommandRaw, "ASCII traffic must not populate CommandRaw")
 	}
 }

@@ -3,6 +3,10 @@ protocol: "tcp"
 address: ":5900"
 description: "VNC Server (RFB Protocol) with VNC Authentication credential capture"
 banner: "RFB 003.008"
+# Only the VNC wire-plugin runs for this service (avoids unrelated plugins
+# scanning VNC traffic). Empty/absent would run every registered plugin.
+wirePlugins:
+  - "vnc"
 commands:
   # NOTE: handler order matters — commands are matched top-to-bottom, first
   # match wins. The version regex must come before vnc_auth_response, and
@@ -19,10 +23,16 @@ commands:
 
   # Client sends its 16-byte DES-encrypted response to our challenge.
   # The vnc wire-plugin extracts it (correlated with the stored challenge);
-  # we reply SecurityResult=failed so the client retries with more passwords.
+  # we reply SecurityResult=failed. RFB 3.8 requires a failure reason after the
+  # 4-byte result: a 4-byte big-endian length followed by the reason text, so a
+  # conformant client (e.g. RealVNC/TigerVNC) shows the auth error rather than
+  # treating the short reply as a malformed packet (a honeypot tell).
+  #   00 00 00 01            SecurityResult = failed
+  #   00 00 00 15            reason length = 21
+  #   "Authentication failed"
   # Intentionally broad: matches any exactly-16-byte message (see note above).
   - regex: "(?s)^.{16}$"
-    handler: "\x00\x00\x00\x01"
+    handler: "\x00\x00\x00\x01\x00\x00\x00\x15Authentication failed"
     name: "vnc_auth_response"
 
   # Client selects security type 2 → send a 16-byte random challenge.

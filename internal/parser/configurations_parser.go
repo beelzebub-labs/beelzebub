@@ -92,6 +92,16 @@ type BeelzebubServiceConfiguration struct {
 	// MaxHistory caps how many session history entries are kept for LLM context
 	// on interactive TCP sessions. Zero means use the built-in default.
 	MaxHistory int `yaml:"maxHistory,omitempty" json:"maxHistory,omitempty"`
+	// Framing, when set, tells the TCP read loop how to delimit one message
+	// using a length-prefix field, so length-prefixed binary protocols are read
+	// one frame at a time (handling split reads and pipelined messages). When
+	// nil, the loop accumulates bytes opportunistically until a handler matches.
+	Framing *Framing `yaml:"framing,omitempty" json:"framing,omitempty"`
+	// WirePlugins names the protocol wire-plugins this service should run (e.g.
+	// "vnc", "ntlm", "smb", "ldap"). Empty means run every registered plugin
+	// (backward compatible). Scoping plugins per service avoids, e.g., the NTLM
+	// signature scanner running on unrelated text services.
+	WirePlugins []string `yaml:"wirePlugins,omitempty" json:"wirePlugins,omitempty"`
 	// TrustedProxies is a list of CIDRs (or bare IPs) of upstream proxies whose
 	// X-Forwarded-For / X-Real-IP headers can be trusted. When empty, those
 	// headers are ignored and the immediate TCP peer is used as source IP.
@@ -111,6 +121,21 @@ func (bsc BeelzebubServiceConfiguration) HashCode() (string, error) {
 	}
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:]), nil
+}
+
+// Framing describes a generic length-prefixed message boundary, protocol-agnostic.
+// The total message length is read from a big/little-endian integer field of
+// LengthSize bytes at LengthOffset; HeaderSize is the number of bytes before the
+// payload the length value refers to. If LengthIncludesHeader is true the length
+// field counts the header bytes as well (e.g. SMB/NetBIOS), otherwise the total
+// frame is HeaderSize + length (e.g. TPKT counts itself, TDS does too — tune per
+// protocol in the config).
+type Framing struct {
+	LengthOffset         int  `yaml:"lengthOffset"`
+	LengthSize           int  `yaml:"lengthSize"`
+	HeaderSize           int  `yaml:"headerSize"`
+	BigEndian            bool `yaml:"bigEndian"`
+	LengthIncludesHeader bool `yaml:"lengthIncludesHeader"`
 }
 
 // Patch describes a binary patch to apply to a static handler response before

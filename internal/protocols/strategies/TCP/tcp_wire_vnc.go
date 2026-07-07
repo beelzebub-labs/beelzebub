@@ -26,7 +26,9 @@ const (
 	vncResponseHandler  = "vnc_auth_response"
 )
 
-// vncChallengeStore maps sessionKey → 16-byte challenge sent to the client.
+// vncChallengeStore maps ConnID → 16-byte challenge sent to the client. Keyed
+// per-connection (not per-source) so concurrent VNC handshakes from the same
+// client IP don't clobber each other's challenge.
 var vncChallengeStore sync.Map
 
 type vncWirePlugin struct{}
@@ -42,18 +44,21 @@ func (vncWirePlugin) OnExchange(ctx *WireContext) {
 		if ctx.Response != nil && len(*ctx.Response) >= 16 {
 			challenge := make([]byte, 16)
 			copy(challenge, (*ctx.Response)[:16])
-			vncChallengeStore.Store(ctx.SessionKey, challenge)
+			vncChallengeStore.Store(ctx.ConnID, challenge)
 		}
 	case vncResponseHandler:
 		// The inbound request is the 16-byte DES-encrypted response.
 		if len(ctx.Request) < 16 {
 			return
 		}
-		v, ok := vncChallengeStore.Load(ctx.SessionKey)
+		v, ok := vncChallengeStore.Load(ctx.ConnID)
 		if !ok {
 			return
 		}
-		challenge := v.([]byte)
+		challenge, ok := v.([]byte)
+		if !ok {
+			return
+		}
 		response := ctx.Request[:16]
 		if ctx.Event.Metadata == nil {
 			ctx.Event.Metadata = map[string]string{}
@@ -63,16 +68,16 @@ func (vncWirePlugin) OnExchange(ctx *WireContext) {
 		// John the Ripper VNC format (--format=vnc).
 		ctx.Event.Metadata["vnc_john"] = fmt.Sprintf("$vnc$*%s*%s",
 			hex.EncodeToString(challenge), hex.EncodeToString(response))
-		vncChallengeStore.Delete(ctx.SessionKey)
+		vncChallengeStore.Delete(ctx.ConnID)
 	}
 }
 
-// OnSessionClose purges any stored challenge for the ended session, so an
+// OnSessionClose purges any stored challenge for the ended connection, so an
 // incomplete handshake (challenge sent, response never received) does not leak.
-func (vncWirePlugin) OnSessionClose(sessionKey string) {
-	vncChallengeStore.Delete(sessionKey)
+func (vncWirePlugin) OnSessionClose(connID string) {
+	vncChallengeStore.Delete(connID)
 }
 
 func init() {
-	RegisterWirePlugin(vncWirePlugin{})
+	RegisterWirePlugin("vnc", vncWirePlugin{})
 }
