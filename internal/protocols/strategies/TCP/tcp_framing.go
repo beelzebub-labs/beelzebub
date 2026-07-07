@@ -145,8 +145,15 @@ func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error
 		r.conn.SetReadDeadline(grace)
 		before := len(r.buf)
 		err := r.fill()
-		r.conn.SetReadDeadline(r.cutoff)        // restore absolute cutoff (zero = none)
-		if len(r.buf) == before || err != nil { // no new bytes within the grace window
+		r.conn.SetReadDeadline(r.cutoff) // restore absolute cutoff (zero = none)
+		if len(r.buf) == before {
+			// No progress within the grace window; deliver the bytes already
+			// buffered to the caller's not_found/catch-all path.
+			break
+		}
+		if err != nil {
+			// The peer may have closed after sending final unmatched bytes.
+			// Keep those bytes and let the caller decide how to handle them.
 			break
 		}
 	}

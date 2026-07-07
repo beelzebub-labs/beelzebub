@@ -90,7 +90,8 @@ type BeelzebubServiceConfiguration struct {
 	TLSCertPath            string    `yaml:"tlsCertPath" json:"tlsCertPath,omitempty"`
 	TLSKeyPath             string    `yaml:"tlsKeyPath" json:"tlsKeyPath,omitempty"`
 	// MaxHistory caps how many session history entries are kept for LLM context
-	// on interactive TCP sessions. Zero means use the built-in default.
+	// on interactive TCP sessions. Zero or negative means use the built-in
+	// default of 20 entries.
 	MaxHistory int `yaml:"maxHistory,omitempty" json:"maxHistory,omitempty"`
 	// Framing, when set, tells the TCP read loop how to delimit one message
 	// using a length-prefix field, so length-prefixed binary protocols are read

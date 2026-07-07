@@ -56,7 +56,8 @@ func latin1ToRawBytes(s string) []byte {
 // store in trace events, JSON, and TEXT columns while remaining reversible to
 // the original bytes. The \xNN form matches the escape syntax already used in
 // handler/regex fields of the service YAML, so logs read consistently with
-// configuration.
+// configuration. A literal backslash is also escaped as \x5c, so decoding the
+// emitted \xNN stream recovers the exact original byte sequence.
 func hexEscapeNonPrintable(b []byte) string {
 	var sb strings.Builder
 	sb.Grow(len(b))
