@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const LockFileName = "beelzebub-plugins.yaml"
+const LockFileName = "lockfile.yaml"
 
 type LockedPlugin struct {
 	Name       string `yaml:"name"`
@@ -19,7 +19,7 @@ type LockedPlugin struct {
 	Import     string `yaml:"import"`
 	Dir        string `yaml:"dir"`
 	Source     string `yaml:"source"`
-	Declared   string `yaml:"declared,omitempty"` // the raw string as written in beelzebub.plugins
+	Declared   string `yaml:"declared,omitempty"` // the raw source as written in configurations/plugins.yaml
 	Ref        string `yaml:"ref,omitempty"`      // requested tag/branch/commit ("" = default branch)
 	Commit     string `yaml:"commit"`
 	Entrypoint string `yaml:"entrypoint,omitempty"`
@@ -42,6 +42,16 @@ func LoadLockFile(path string) (*LockFile, error) {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return lf, nil
+}
+
+func (lf *LockFile) Clone() *LockFile {
+	if lf == nil {
+		return &LockFile{}
+	}
+
+	out := &LockFile{Plugins: make([]LockedPlugin, len(lf.Plugins))}
+	copy(out.Plugins, lf.Plugins)
+	return out
 }
 
 func (lf *LockFile) Save(path string) error {

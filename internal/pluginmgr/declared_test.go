@@ -12,12 +12,18 @@ import (
 
 func writeDeclared(t *testing.T, m *Manager, content string) {
 	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(m.declaredPath()), 0o755))
 	require.NoError(t, os.WriteFile(m.declaredPath(), []byte(content), 0o644))
 }
 
-func TestDeclaredSources_ParsesAndSkipsComments(t *testing.T) {
+func TestDeclaredSources_ParsesYAML(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
-	writeDeclared(t, m, "# a comment\n\ngithub.com/acme/scanner\n  github.com/acme/other  \n")
+
+	writeDeclared(t, m, `
+plugins:
+  - source: github.com/acme/scanner
+  - source: " github.com/acme/other "
+`)
 
 	got, err := m.declaredSources()
 	require.NoError(t, err)
@@ -31,6 +37,29 @@ func TestDeclaredSources_MissingFile(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+func TestDeclaredSources_EmptyFile(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	writeDeclared(t, m, "")
+
+	got, err := m.declaredSources()
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestDeclaredSources_RejectsUnknownFieldsAndMissingSource(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	writeDeclared(t, m, "plugins:\n  - src: github.com/acme/scanner\n")
+
+	_, err := m.declaredSources()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "field src not found")
+
+	writeDeclared(t, m, "plugins:\n  - source: ''\n")
+	_, err = m.declaredSources()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "source is required")
+}
+
 func TestDeclare_AppendsAndDedupes(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
 
@@ -41,11 +70,60 @@ func TestDeclare_AppendsAndDedupes(t *testing.T) {
 	got, err := m.declaredSources()
 	require.NoError(t, err)
 	assert.Equal(t, []string{"github.com/acme/scanner", "github.com/acme/other"}, got)
+
+	raw, err := os.ReadFile(m.declaredPath())
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "Plugins to compile into this deployment.")
+}
+
+func TestDeclare_RejectsEmptySource(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	err := m.Declare(" ")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "plugin source is required")
+}
+
+func TestUndeclare_RemovesMatchingSourceAndPreservesComments(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+
+	writeDeclared(t, m, `
+plugins:
+  - source: github.com/acme/scanner
+  - source: github.com/acme/other
+`)
+
+	err := m.Undeclare(LockedPlugin{
+		Name:     "scanner",
+		Source:   "https://github.com/acme/scanner.git",
+		Declared: "github.com/acme/scanner",
+	})
+
+	require.NoError(t, err)
+	raw, err := os.ReadFile(m.declaredPath())
+	require.NoError(t, err)
+
+	assert.Contains(t, string(raw), "source: github.com/acme/other")
+	assert.NotContains(t, string(raw), "source: github.com/acme/scanner")
+}
+
+func TestRemove_UndeclaresPlugin(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	ctx := context.Background()
+	writeDeclared(t, m, "plugins:\n  - source: github.com/acme/scanner\n")
+
+	_, err := m.InstallDeclared(ctx, false)
+	require.NoError(t, err)
+	_, err = m.Remove(ctx, "scanner")
+	require.NoError(t, err)
+
+	got, err := m.declaredSources()
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 func TestInstallDeclared_InstallsThenIsIdempotent(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
-	writeDeclared(t, m, "github.com/acme/scanner\n")
+	writeDeclared(t, m, "plugins:\n  - source: github.com/acme/scanner\n")
 	ctx := context.Background()
 
 	// First run installs the declared plugin.
@@ -63,7 +141,7 @@ func TestInstallDeclared_InstallsThenIsIdempotent(t *testing.T) {
 
 func TestInstallDeclared_EmptyFile(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
-	writeDeclared(t, m, "# nothing here\n")
+	writeDeclared(t, m, "plugins: []\n")
 
 	installed, err := m.InstallDeclared(context.Background(), false)
 	require.NoError(t, err)
@@ -74,7 +152,7 @@ func TestInstallDeclared_ReinstallsOnRefChange(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
 	ctx := context.Background()
 
-	writeDeclared(t, m, "github.com/acme/scanner@v1.0.0\n")
+	writeDeclared(t, m, "plugins:\n  - source: github.com/acme/scanner@v1.0.0\n")
 	installed, err := m.InstallDeclared(ctx, false)
 	require.NoError(t, err)
 	require.Len(t, installed, 1)
@@ -86,7 +164,7 @@ func TestInstallDeclared_ReinstallsOnRefChange(t *testing.T) {
 	assert.Empty(t, installed)
 
 	// Bumped ref → re-installed at the new ref.
-	writeDeclared(t, m, "github.com/acme/scanner@v2.0.0\n")
+	writeDeclared(t, m, "plugins:\n  - source: github.com/acme/scanner@v2.0.0\n")
 	installed, err = m.InstallDeclared(ctx, false)
 	require.NoError(t, err)
 	require.Len(t, installed, 1)
@@ -96,7 +174,7 @@ func TestInstallDeclared_ReinstallsOnRefChange(t *testing.T) {
 func TestUpdate_AllAndByName(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
 	ctx := context.Background()
-	writeDeclared(t, m, "github.com/acme/scanner@main\n")
+	writeDeclared(t, m, "plugins:\n  - source: github.com/acme/scanner@main\n")
 	_, err := m.InstallDeclared(ctx, false)
 	require.NoError(t, err)
 
@@ -116,7 +194,7 @@ func TestUpdate_AllAndByName(t *testing.T) {
 func TestUpdate_UnknownName(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
 	ctx := context.Background()
-	writeDeclared(t, m, "github.com/acme/scanner\n")
+	writeDeclared(t, m, "plugins:\n  - source: github.com/acme/scanner\n")
 	_, err := m.InstallDeclared(ctx, false)
 	require.NoError(t, err)
 

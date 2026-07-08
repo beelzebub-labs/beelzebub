@@ -3,6 +3,7 @@ package pluginmgr
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +37,7 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 func (m *Manager) clone(ctx context.Context, src RepoSource, ref, dst string) error {
 	url := src.CloneURL
 	if !src.SSH && !src.Local && m.token != "" {
-		url = injectToken(src.CloneURL, m.token)
+		url = injectToken(src, m.token)
 	}
 
 	if _, err := m.git(ctx, "", "clone", "--depth", "1", url, dst); err != nil {
@@ -68,12 +69,22 @@ func stripGitDir(pluginDir string) error {
 	return os.RemoveAll(filepath.Join(pluginDir, ".git"))
 }
 
-func injectToken(httpsURL, token string) string {
-	const prefix = "https://"
-	if !strings.HasPrefix(httpsURL, prefix) {
-		return httpsURL
+func injectToken(src RepoSource, token string) string {
+	if token == "" || !isGitHubHost(src.Host) {
+		return src.CloneURL
 	}
-	return prefix + "x-access-token:" + token + "@" + strings.TrimPrefix(httpsURL, prefix)
+
+	u, err := url.Parse(src.CloneURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return src.CloneURL
+	}
+
+	u.User = url.UserPassword("x-access-token", token)
+	return u.String()
+}
+
+func isGitHubHost(host string) bool {
+	return strings.EqualFold(host, "github.com")
 }
 
 func redact(s, token string) string {

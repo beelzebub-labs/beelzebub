@@ -47,9 +47,12 @@ func writeFile(t *testing.T, dir, name, content string) {
 func gitInit(t *testing.T, dir string) {
 	t.Helper()
 	env := append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+
 	for _, args := range [][]string{
-		{"init", "-q"}, {"add", "-A"}, {"commit", "-qm", "init"},
+		{"init", "-q"}, {"add", "-A"}, {"-c", "commit.gpgsign=false", "commit", "-qm", "init"},
 	} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir

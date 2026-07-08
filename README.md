@@ -192,8 +192,8 @@ func init() {
 
 
 ```bash
-# Declare plugins in beelzebub.plugins (one per line), or:
-beelzebub plugin install github.com/your-org/myplugin   # also appends to the file
+# Declare plugins in configurations/plugins.yaml, or:
+beelzebub plugin install github.com/your-org/myplugin   # also appends to the config
 
 make start     # local:  install declared plugins → build → run   (needs Go)
 make docker    # docker:  image with plugins baked in → run        (needs Docker)
@@ -201,14 +201,25 @@ make docker    # docker:  image with plugins baked in → run        (needs Dock
 
 | Command | What it does |
 |---|---|
-| `plugin install <link>` | fetch a plugin, wire it in, rebuild; also adds it to `beelzebub.plugins` |
-| `plugin install` | install everything declared in `beelzebub.plugins` |
+| `plugin install <link>` | fetch a plugin, wire it in, rebuild; also adds it to `configurations/plugins.yaml` |
+| `plugin install` | install everything declared in `configurations/plugins.yaml` |
 | `plugin list` | show installed plugins vs. what's compiled into the binary |
 | `plugin update [name]` | re-fetch at the declared ref and re-pin the commit |
-| `plugin remove <name>` | unwire a plugin and rebuild |
+| `plugin remove <name>` | remove a plugin from `configurations/plugins.yaml`, unwire it, and print the rebuild step |
+
+Deployment plugin sources are configured in `configurations/plugins.yaml`:
+
+```yaml
+plugins:
+  - source: github.com/your-org/myplugin
+  - source: github.com/your-org/private-plugin@v1.2.0
+```
+
+Future per-plugin runtime configuration can live under `configurations/plugins/`
+as one YAML file per plugin.
 
 
-Each plugin repo must ship a `beelzebub.plugin.yaml` manifest and self-register in `init()`
+Each plugin repo must ship a `plugins.yaml` manifest and self-register in `init()`
 (see [Writing a Plugin](#writing-a-plugin)):
 
 ```yaml
@@ -217,7 +228,12 @@ version: 1.0.0
 module: github.com/your-org/myplugin   # must match its go.mod
 entrypoint: .                          # package that calls plugin.Register (default ".")
 min-core-version: v3.8.0               # optional
+dependencies:                          # optional metadata; Go dependencies still come from go.mod
+  - github.com/your-org/shared@v1.2.3
 ```
+
+Installed plugins are compiled into the Beelzebub binary and run in the same
+process as the runtime. Install plugins only from repositories you trust.
 
 ## Observability
 

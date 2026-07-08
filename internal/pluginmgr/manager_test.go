@@ -16,6 +16,8 @@ func fakeManager(t *testing.T, module, manifest string) (*Manager, *fakeCalls) {
 	t.Helper()
 	root := t.TempDir()
 	calls := &fakeCalls{}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module github.com/beelzebub-labs/beelzebub/v3\n\ngo 1.25\n"), 0o644))
 
 	run := func(_ context.Context, dir, name string, args ...string) (string, error) {
 		switch {
@@ -32,8 +34,14 @@ func fakeManager(t *testing.T, module, manifest string) (*Manager, *fakeCalls) {
 			return "", nil // fetch / checkout
 		case name == "go" && len(args) >= 2 && args[0] == "mod" && args[1] == "edit":
 			calls.goModEdits = append(calls.goModEdits, strings.Join(args, " "))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+				[]byte("module github.com/beelzebub-labs/beelzebub/v3\n\ngo 1.25\n\nreplace "+module+" => ./plugins/scanner\n"), 0o644))
 			return "", nil
 		case name == "go" && len(args) >= 2 && args[0] == "mod" && args[1] == "tidy":
+			if calls.failTidy {
+				return "", fmt.Errorf("tidy failed")
+			}
+
 			calls.tidied++
 			return "", nil
 		case name == "go" && len(args) >= 1 && args[0] == "build":
@@ -61,6 +69,7 @@ type fakeCalls struct {
 	tidied     int
 	built      int
 	dockerCmds []string
+	failTidy   bool
 }
 
 func TestApply_LocalBuilds(t *testing.T) {
@@ -156,6 +165,34 @@ func TestManager_Install_AlreadyInstalled(t *testing.T) {
 	// With --force it succeeds.
 	_, err = m.Install(ctx, "github.com/acme/scanner", "", true)
 	require.NoError(t, err)
+}
+
+func TestManager_InstallForce_RestoresExistingDirOnRegenerateFailure(t *testing.T) {
+	m, calls := fakeManager(t, "github.com/acme/scanner", validManifest)
+	ctx := context.Background()
+
+	_, err := m.Install(ctx, "github.com/acme/scanner", "", false)
+	require.NoError(t, err)
+
+	dest := filepath.Join(m.moduleRoot, "plugins", "scanner")
+	marker := filepath.Join(dest, "kept.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("old plugin"), 0o644))
+	goModPath := filepath.Join(m.moduleRoot, "go.mod")
+	goModBefore, readErr := os.ReadFile(goModPath)
+	require.NoError(t, readErr)
+
+	calls.failTidy = true
+	_, err = m.Install(ctx, "github.com/acme/scanner", "", true)
+	require.Error(t, err)
+	assert.FileExists(t, marker)
+
+	raw, readErr := os.ReadFile(marker)
+	require.NoError(t, readErr)
+	assert.Equal(t, "old plugin", string(raw))
+
+	goModAfter, readErr := os.ReadFile(goModPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, string(goModBefore), string(goModAfter))
 }
 
 func TestManager_Install_ManifestMismatch(t *testing.T) {

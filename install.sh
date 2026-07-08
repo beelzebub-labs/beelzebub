@@ -9,7 +9,7 @@
 #
 # Flags (all optional; missing values are prompted for on a terminal):
 #   --local | --docker      Install type (default: prompt, else local)
-#   --plugin LINK           Plugin to install (repeatable); added to beelzebub.plugins
+#   --plugin LINK           Plugin to install (repeatable); added to configurations/plugins.yaml
 #   --token TOKEN           Beelzebub Cloud token (BEELZEBUB_CLOUD_AUTH_TOKEN)
 #   --github-token TOKEN    Token for private plugin repos (BEELZEBUB_GITHUB_TOKEN)
 #   -y, --yes               Assume yes to prompts (auto-install prerequisites)
@@ -172,10 +172,32 @@ else
   need git "Install git from your package manager and re-run."
 fi
 
-# --- plugins (only via --plugin; add more anytime in beelzebub.plugins or the CLI) ---
+# --- plugins (only via --plugin; add more anytime in configurations/plugins.yaml or the CLI) ---
+PLUGIN_CONFIG="configurations/plugins.yaml"
+yaml_quote() {
+  printf "%s" "$1" | sed "s/'/''/g; s/^/'/; s/$/'/"
+}
+
+add_plugin_source() {
+  _plugin="$1"
+  mkdir -p configurations
+  [ -f "$PLUGIN_CONFIG" ] || printf 'plugins: []\n' > "$PLUGIN_CONFIG"
+  _quoted_plugin=$(yaml_quote "$_plugin")
+  grep -Eq "^[[:space:]]*-[[:space:]]*source:[[:space:]]*(['\"])?$(printf "%s" "$_plugin" | sed 's/[.[\*^$()+?{}|]/\\&/g')(['\"])?[[:space:]]*$" "$PLUGIN_CONFIG" 2>/dev/null && return 0
+
+  if grep -Eq '^plugins:[[:space:]]*\[\][[:space:]]*(#.*)?$' "$PLUGIN_CONFIG" 2>/dev/null; then
+    printf 'plugins:\n  - source: %s\n' "$_quoted_plugin" > "$PLUGIN_CONFIG"
+  elif grep -Eq '^plugins:[[:space:]]*$' "$PLUGIN_CONFIG" 2>/dev/null; then
+    printf '  - source: %s\n' "$_quoted_plugin" >> "$PLUGIN_CONFIG"
+  elif grep -Eq '^plugins:[[:space:]]*\[' "$PLUGIN_CONFIG" 2>/dev/null; then
+    die "$PLUGIN_CONFIG uses flow-style plugins. Use block style before adding --plugin entries."
+  else
+    { printf 'plugins:\n'; printf '  - source: %s\n' "$_quoted_plugin"; } >> "$PLUGIN_CONFIG"
+  fi
+}
+
 for p in $PLUGINS; do
-  [ -f beelzebub.plugins ] && grep -qxF "$p" beelzebub.plugins 2>/dev/null && continue
-  printf '%s\n' "$p" >> beelzebub.plugins
+  add_plugin_source "$p"
 done
 
 # --- cloud token -------------------------------------------------------------
@@ -207,7 +229,7 @@ if [ "$MODE" = "docker" ]; then
   # Also build the local CLI so `./beelzebub plugin ...` manages the container (needs Go).
   command -v go >/dev/null 2>&1 && ${MAKE:-make} -s build >/dev/null 2>&1 || true
   info ""
-  info "Manage plugins with: ./beelzebub plugin install <link>   (or edit beelzebub.plugins)"
+  info "Manage plugins with: ./beelzebub plugin install <link>   (or edit configurations/plugins.yaml)"
 else
   [ -n "$TOKEN" ] && export BEELZEBUB_CLOUD_AUTH_TOKEN="$TOKEN"
   spin_run "Plugins wired"     sh -c 'go run . plugin install --no-build'
@@ -219,5 +241,5 @@ else
   kill -0 "$_rpid" 2>/dev/null || { cat beelzebub.log >&2; die "runtime exited on startup — see beelzebub.log"; }
   ok "Runtime running (pid $_rpid) · logs: beelzebub.log · stop: kill $_rpid"
   info ""
-  info "Manage plugins with: ./beelzebub plugin install <link>   (or edit beelzebub.plugins)"
+  info "Manage plugins with: ./beelzebub plugin install <link>   (or edit configurations/plugins.yaml)"
 fi

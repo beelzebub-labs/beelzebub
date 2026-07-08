@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/pluginmgr"
 	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
+
 	// Blank imports ensure built-in plugins self-register before the command runs.
 	_ "github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
 	"github.com/spf13/cobra"
@@ -21,6 +23,20 @@ var (
 	pluginInstallNoBuild bool
 	pluginUpdateToken    string
 )
+
+type pluginManager interface {
+	Install(ctx context.Context, rawSource, ref string, force bool) (pluginmgr.LockedPlugin, error)
+	InstallDeclared(ctx context.Context, force bool) ([]pluginmgr.LockedPlugin, error)
+	Declare(source string) error
+	Apply(ctx context.Context) (string, error)
+	Update(ctx context.Context, name string) ([]pluginmgr.UpdateResult, error)
+	Remove(ctx context.Context, name string) (pluginmgr.LockedPlugin, error)
+	List() ([]pluginmgr.LockedPlugin, error)
+}
+
+var newPluginManager = func(coreVersion, token string) (pluginManager, error) {
+	return pluginmgr.NewManager(coreVersion, token)
+}
 
 var pluginCmd = &cobra.Command{
 	Use:   "plugin",
@@ -37,9 +53,9 @@ var pluginInstallCmd = &cobra.Command{
 	Use:   "install [github-link]",
 	Short: "Install plugins (rebuild to compile them in)",
 	Long: "Install a plugin from a git repository, or with no argument install every\n" +
-		"plugin declared in " + pluginmgr.DeclaredFileName + ". Installing by link also adds it to that file.",
+		"plugin declared in " + pluginmgr.DeclaredConfigPath + ". Installing by link also adds it to that file.",
 	Example: "  beelzebub plugin install github.com/acme/foo --token $GITHUB_TOKEN\n" +
-		"  beelzebub plugin install    # install everything in " + pluginmgr.DeclaredFileName,
+		"  beelzebub plugin install    # install everything in " + pluginmgr.DeclaredConfigPath,
 	Args: cobra.MaximumNArgs(1),
 	RunE: installPlugin,
 }
@@ -80,34 +96,42 @@ func resolveToken(flagValue string) string {
 }
 
 func installPlugin(cmd *cobra.Command, args []string) error {
-	mgr, err := pluginmgr.NewManager(Version, resolveToken(pluginInstallToken))
+	mgr, err := newPluginManager(Version, resolveToken(pluginInstallToken))
+
 	if err != nil {
 		return err
 	}
+
 	out := cmd.OutOrStdout()
 
-	// No argument: install everything declared in beelzebub.plugins.
+	// No argument: install everything declared in configurations/plugins.yaml.
 	if len(args) == 0 {
 		installed, err := mgr.InstallDeclared(cmd.Context(), pluginInstallForce)
+
 		if err != nil {
 			return err
 		}
+
 		if len(installed) == 0 {
-			fmt.Fprintf(out, "Nothing to install — %s is empty or all plugins are already installed.\n", pluginmgr.DeclaredFileName)
+			fmt.Fprintf(out, "Nothing to install — %s is empty or all plugins are already installed.\n", pluginmgr.DeclaredConfigPath)
 			return nil
 		}
+
 		for _, p := range installed {
 			printInstalled(out, p)
 		}
+
 		return finishInstall(cmd, mgr)
 	}
 
-	// A link: install it and record it in beelzebub.plugins.
+	// A link: install it and record it in configurations/plugins.yaml.
 	fmt.Fprintf(out, "%s Installing %s\n", purple("⏺"), args[0])
 	locked, err := mgr.Install(cmd.Context(), args[0], pluginInstallRef, pluginInstallForce)
+
 	if err != nil {
 		return calm(out, err) // expected conditions print calmly and exit 0
 	}
+
 	if err := mgr.Declare(args[0]); err != nil {
 		return err
 	}
@@ -123,6 +147,7 @@ func calm(out io.Writer, err error) error {
 		fmt.Fprintf(out, "%s %s\n", dim("•"), err)
 		return nil
 	}
+
 	return err
 }
 
@@ -134,30 +159,37 @@ func printInstalled(out io.Writer, p pluginmgr.LockedPlugin) {
 
 // finishInstall applies the newly wired plugins to the deployment (local build,
 // or Docker rebuild+restart), unless --no-build was given.
-func finishInstall(cmd *cobra.Command, mgr *pluginmgr.Manager) error {
+func finishInstall(cmd *cobra.Command, mgr pluginManager) error {
 	out := cmd.OutOrStdout()
+
 	if pluginInstallNoBuild {
 		fmt.Fprintln(out, dim("  rebuild to compile in:  make build"))
 		return nil
 	}
+
 	fmt.Fprintln(out, dim("  applying…"))
 	mode, err := mgr.Apply(cmd.Context())
+
 	if err != nil {
 		return err
 	}
+
 	if mode == "docker" {
 		fmt.Fprintf(out, "%s Rebuilt the image and restarted the container.\n", green("✓"))
 	} else {
 		fmt.Fprintf(out, "%s Built ./beelzebub %s\n", green("✓"), dim("— restart it to load the change"))
 	}
+
 	return nil
 }
 
 func updatePlugin(cmd *cobra.Command, args []string) error {
-	mgr, err := pluginmgr.NewManager(Version, resolveToken(pluginUpdateToken))
+	mgr, err := newPluginManager(Version, resolveToken(pluginUpdateToken))
+
 	if err != nil {
 		return err
 	}
+
 	var name string
 	if len(args) == 1 {
 		name = args[0]
@@ -167,11 +199,13 @@ func updatePlugin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return calm(cmd.OutOrStdout(), err)
 	}
+
 	out := cmd.OutOrStdout()
 	if len(results) == 0 {
 		fmt.Fprintln(out, "No installed plugins to update.")
 		return nil
 	}
+
 	changed := 0
 	for _, r := range results {
 		if r.Changed {
@@ -181,21 +215,25 @@ func updatePlugin(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(out, "%s %s already up to date %s\n", dim("•"), r.Name, dim("("+shortCommit(r.NewCommit)+")"))
 		}
 	}
+
 	if changed > 0 {
 		fmt.Fprintln(out, dim("  rebuild to apply:  make build"))
 	}
+
 	return nil
 }
 
 func removePlugin(cmd *cobra.Command, args []string) error {
-	mgr, err := pluginmgr.NewManager(Version, "")
+	mgr, err := newPluginManager(Version, "")
 	if err != nil {
 		return err
 	}
+
 	locked, err := mgr.Remove(cmd.Context(), args[0])
 	if err != nil {
 		return calm(cmd.OutOrStdout(), err)
 	}
+
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "%s Removed %s\n", green("✓"), bold(locked.Name))
 	fmt.Fprintln(out, dim("  rebuild to drop it from the binary:  make build"))
@@ -210,7 +248,7 @@ func listPlugins(cmd *cobra.Command, _ []string) {
 
 	// Installed plugins: recorded in the lockfile ( compiled in only after rebuild)
 	var installed []pluginmgr.LockedPlugin
-	if mgr, err := pluginmgr.NewManager(Version, ""); err == nil {
+	if mgr, err := newPluginManager(Version, ""); err == nil {
 		installed, _ = mgr.List()
 	}
 
@@ -222,18 +260,22 @@ func listPlugins(cmd *cobra.Command, _ []string) {
 	fmt.Fprintln(out, bold("Compiled into this binary:"))
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "  NAME\tVERSION\tAUTHOR\tDESCRIPTION")
+
 	for _, m := range metas {
 		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", m.Name, m.Version, m.Author, m.Description)
 	}
+
 	tw.Flush()
 
 	if len(installed) > 0 {
 		fmt.Fprintln(out, "\n"+bold("Installed from git")+dim(" (rebuild with `make build` to compile in):"))
 		itw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(itw, "  NAME\tVERSION\tMODULE\tCOMMIT")
+
 		for _, p := range installed {
 			fmt.Fprintf(itw, "  %s\t%s\t%s\t%s\n", p.Name, p.Version, p.Module, shortCommit(p.Commit))
 		}
+
 		itw.Flush()
 	}
 }
@@ -242,5 +284,6 @@ func shortCommit(c string) string {
 	if len(c) > 8 {
 		return c[:8]
 	}
+
 	return c
 }

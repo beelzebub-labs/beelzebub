@@ -50,7 +50,9 @@ func NewManager(coreVersion, token string) (*Manager, error) {
 }
 
 func (m *Manager) pluginsDir() string { return filepath.Join(m.moduleRoot, PluginsDirName) }
-func (m *Manager) lockPath() string   { return filepath.Join(m.pluginsDir(), LockFileName) }
+func (m *Manager) lockPath() string {
+	return filepath.Join(m.moduleRoot, ConfigurationsDirName, LockFileName)
+}
 
 // Install clones rawSource, validates its manifest, vendors it under plugins/<name> and wires it in.
 func (m *Manager) Install(ctx context.Context, rawSource, ref string, force bool) (LockedPlugin, error) {
@@ -98,22 +100,36 @@ func (m *Manager) Install(ctx context.Context, rawSource, ref string, force bool
 		return LockedPlugin{}, err
 	}
 
-	dest := filepath.Join(m.pluginsDir(), manifest.Name)
-	if _, statErr := os.Stat(dest); statErr == nil {
-		if !force {
-			return LockedPlugin{}, fmt.Errorf("plugin %q is %w — pass --force to replace", manifest.Name, ErrAlreadyInstalled)
-		}
-		if err := os.RemoveAll(dest); err != nil {
-			return LockedPlugin{}, fmt.Errorf("removing existing plugin dir: %w", err)
-		}
-	}
-
 	if err := stripGitDir(checkout); err != nil {
 		return LockedPlugin{}, fmt.Errorf("stripping .git: %w", err)
 	}
-	if err := os.Rename(checkout, dest); err != nil {
-		return LockedPlugin{}, fmt.Errorf("moving plugin into place: %w", err)
+
+	lf, err := LoadLockFile(m.lockPath())
+	if err != nil {
+		return LockedPlugin{}, err
 	}
+
+	oldLF := lf.Clone()
+	dest := filepath.Join(m.pluginsDir(), manifest.Name)
+	rollback, commitDir, err := replacePluginDir(checkout, dest, staging, force)
+
+	if err != nil {
+		return LockedPlugin{}, err
+	}
+
+	committed := false
+	moduleSnapshot, err := snapshotModuleFiles(m.moduleRoot)
+	if err != nil {
+		_ = rollback()
+		return LockedPlugin{}, err
+	}
+	defer func() {
+		if !committed {
+			_ = rollback()
+			_ = writeImportsFile(m.pluginsDir(), oldLF)
+			_ = moduleSnapshot.restore()
+		}
+	}()
 
 	locked := LockedPlugin{
 		Name:       manifest.Name,
@@ -127,11 +143,6 @@ func (m *Manager) Install(ctx context.Context, rawSource, ref string, force bool
 		Commit:     commit,
 		Entrypoint: manifest.EntrypointDir(),
 	}
-
-	lf, err := LoadLockFile(m.lockPath())
-	if err != nil {
-		return LockedPlugin{}, err
-	}
 	lf.Upsert(locked)
 
 	if err := m.regenerate(ctx, lf); err != nil {
@@ -140,6 +151,12 @@ func (m *Manager) Install(ctx context.Context, rawSource, ref string, force bool
 	if err := lf.Save(m.lockPath()); err != nil {
 		return LockedPlugin{}, err
 	}
+
+	committed = true
+	if err := commitDir(); err != nil {
+		return LockedPlugin{}, err
+	}
+
 	return locked, nil
 }
 
@@ -168,6 +185,11 @@ func (m *Manager) Remove(ctx context.Context, name string) (LockedPlugin, error)
 	if err := lf.Save(m.lockPath()); err != nil {
 		return LockedPlugin{}, err
 	}
+
+	if err := m.Undeclare(locked); err != nil {
+		return LockedPlugin{}, err
+	}
+
 	return locked, nil
 }
 
@@ -238,6 +260,105 @@ func (m *Manager) regenerate(ctx context.Context, lf *LockFile) error {
 	if _, err := m.run(ctx, m.moduleRoot, "go", "mod", "tidy"); err != nil {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
+	return nil
+}
+
+func replacePluginDir(src, dest, staging string, force bool) (rollback func() error, commit func() error, err error) {
+	backup := filepath.Join(staging, "previous")
+	existed := false
+
+	if _, statErr := os.Stat(dest); statErr == nil {
+		if !force {
+			return nil, nil, fmt.Errorf("plugin %q is %w — pass --force to replace", filepath.Base(dest), ErrAlreadyInstalled)
+		}
+
+		if err := os.Rename(dest, backup); err != nil {
+			return nil, nil, fmt.Errorf("moving existing plugin aside: %w", err)
+		}
+
+		existed = true
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return nil, nil, fmt.Errorf("checking existing plugin dir: %w", statErr)
+	}
+
+	if err := os.Rename(src, dest); err != nil {
+		if existed {
+			_ = os.Rename(backup, dest)
+		}
+
+		return nil, nil, fmt.Errorf("moving plugin into place: %w", err)
+	}
+
+	rollback = func() error {
+		_ = os.RemoveAll(dest)
+
+		if existed {
+			return os.Rename(backup, dest)
+		}
+
+		return nil
+	}
+	commit = func() error {
+		if existed {
+			return os.RemoveAll(backup)
+		}
+
+		return nil
+	}
+
+	return rollback, commit, nil
+}
+
+type moduleFileSnapshot struct {
+	root  string
+	files map[string]*[]byte
+}
+
+func snapshotModuleFiles(root string) (*moduleFileSnapshot, error) {
+	s := &moduleFileSnapshot{
+		root:  root,
+		files: make(map[string]*[]byte, 2),
+	}
+
+	for _, name := range []string{"go.mod", "go.sum"} {
+		path := filepath.Join(root, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				s.files[name] = nil
+				continue
+			}
+
+			return nil, fmt.Errorf("snapshotting %s: %w", name, err)
+		}
+
+		copyRaw := append([]byte(nil), raw...)
+		s.files[name] = &copyRaw
+	}
+
+	return s, nil
+}
+
+func (s *moduleFileSnapshot) restore() error {
+	if s == nil {
+		return nil
+	}
+
+	for name, raw := range s.files {
+		path := filepath.Join(s.root, name)
+		if raw == nil {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("restoring %s: %w", name, err)
+			}
+
+			continue
+		}
+
+		if err := os.WriteFile(path, *raw, 0o644); err != nil {
+			return fmt.Errorf("restoring %s: %w", name, err)
+		}
+	}
+
 	return nil
 }
 
