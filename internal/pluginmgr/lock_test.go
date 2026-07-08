@@ -1,6 +1,7 @@
 package pluginmgr
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -28,6 +29,27 @@ func TestLoadLockFile_Missing(t *testing.T) {
 	lf, err := LoadLockFile(filepath.Join(t.TempDir(), "nope.yaml"))
 	require.NoError(t, err)
 	assert.Empty(t, lf.Plugins)
+}
+
+func TestLoadLockFile_InvalidYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), LockFileName)
+	require.NoError(t, os.WriteFile(path, []byte("plugins:\n  - name: [bad\n"), 0o644))
+
+	_, err := LoadLockFile(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing")
+}
+
+func TestLockFile_CloneNilAndCopy(t *testing.T) {
+	var nilLock *LockFile
+	assert.Empty(t, nilLock.Clone().Plugins)
+
+	lf := &LockFile{Plugins: []LockedPlugin{{Name: "scanner"}}}
+	clone := lf.Clone()
+	clone.Plugins[0].Name = "changed"
+
+	assert.Equal(t, "scanner", lf.Plugins[0].Name)
+	assert.Equal(t, "changed", clone.Plugins[0].Name)
 }
 
 func TestLockFile_UpsertReplaces(t *testing.T) {

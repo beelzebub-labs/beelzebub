@@ -15,6 +15,12 @@ func TestInjectToken(t *testing.T) {
 
 	assert.Equal(t, "https://gitlab.com/acme/foo.git",
 		injectToken(RepoSource{CloneURL: "https://gitlab.com/acme/foo.git", Host: "gitlab.com"}, "secret123"))
+
+	assert.Equal(t, "https://github.com/acme/foo.git",
+		injectToken(RepoSource{CloneURL: "https://github.com/acme/foo.git", Host: "github.com"}, ""))
+
+	assert.Equal(t, "://bad-url",
+		injectToken(RepoSource{CloneURL: "://bad-url", Host: "github.com"}, "secret123"))
 }
 
 func TestRedact(t *testing.T) {

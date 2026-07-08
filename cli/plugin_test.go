@@ -194,6 +194,74 @@ func TestInstallPlugin_DeclaredAppliesDocker(t *testing.T) {
 	}
 }
 
+func TestInstallPlugin_DeclaredEmptyDoesNotApply(t *testing.T) {
+	mgr := &fakePluginManager{}
+	withFakePluginManager(t, mgr)
+
+	cmd, out := commandWithOutput()
+	err := installPlugin(cmd, nil)
+
+	if err != nil {
+		t.Fatalf("installPlugin declared empty returned error: %v", err)
+	}
+
+	if mgr.applied {
+		t.Fatal("Apply should not run when there is nothing to install")
+	}
+
+	if !strings.Contains(out.String(), "Nothing to install") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestInstallPlugin_ReturnsManagerAndDeclareErrors(t *testing.T) {
+	oldNew := newPluginManager
+	newPluginManager = func(string, string) (pluginManager, error) {
+		return nil, errors.New("manager failed")
+	}
+
+	t.Cleanup(func() { newPluginManager = oldNew })
+
+	cmd, _ := commandWithOutput()
+	err := installPlugin(cmd, []string{"github.com/acme/scanner"})
+	if err == nil || !strings.Contains(err.Error(), "manager failed") {
+		t.Fatalf("manager error = %v", err)
+	}
+
+	mgr := &fakePluginManager{installResult: testLockedPlugin(), declareErr: errors.New("declare failed")}
+	withFakePluginManager(t, mgr)
+	cmd, _ = commandWithOutput()
+
+	err = installPlugin(cmd, []string{"github.com/acme/scanner"})
+	if err == nil || !strings.Contains(err.Error(), "declare failed") {
+		t.Fatalf("declare error = %v", err)
+	}
+}
+
+func TestFinishInstall_LocalAndApplyError(t *testing.T) {
+	mgr := &fakePluginManager{applyMode: "local"}
+	withFakePluginManager(t, mgr)
+
+	cmd, out := commandWithOutput()
+	err := finishInstall(cmd, mgr)
+
+	if err != nil {
+		t.Fatalf("finishInstall local returned error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "Built ./beelzebub") {
+		t.Fatalf("output = %q", out.String())
+	}
+
+	mgr = &fakePluginManager{applyErr: errors.New("apply failed")}
+	cmd, _ = commandWithOutput()
+	err = finishInstall(cmd, mgr)
+
+	if err == nil || !strings.Contains(err.Error(), "apply failed") {
+		t.Fatalf("apply error = %v", err)
+	}
+}
+
 func TestInstallPlugin_AlreadyInstalledIsCalm(t *testing.T) {
 	mgr := &fakePluginManager{installErr: pluginmgr.ErrAlreadyInstalled}
 	withFakePluginManager(t, mgr)
@@ -238,6 +306,54 @@ func TestUpdatePlugin(t *testing.T) {
 	}
 }
 
+func TestUpdatePlugin_NoInstalledAndUnchanged(t *testing.T) {
+	mgr := &fakePluginManager{}
+	withFakePluginManager(t, mgr)
+
+	cmd, out := commandWithOutput()
+	err := updatePlugin(cmd, nil)
+
+	if err != nil {
+		t.Fatalf("updatePlugin empty returned error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No installed plugins") {
+		t.Fatalf("output = %q", out.String())
+	}
+
+	mgr = &fakePluginManager{updateResult: []pluginmgr.UpdateResult{
+		{Name: "scanner", NewCommit: "cafebabecafebabe", Changed: false},
+	}}
+
+	withFakePluginManager(t, mgr)
+	cmd, out = commandWithOutput()
+	err = updatePlugin(cmd, nil)
+
+	if err != nil {
+		t.Fatalf("updatePlugin unchanged returned error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "already up to date") || strings.Contains(out.String(), "make build") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestUpdatePlugin_CalmExpectedError(t *testing.T) {
+	mgr := &fakePluginManager{updateErr: pluginmgr.ErrNotInstalled}
+	withFakePluginManager(t, mgr)
+
+	cmd, out := commandWithOutput()
+	err := updatePlugin(cmd, []string{"ghost"})
+
+	if err != nil {
+		t.Fatalf("updatePlugin expected error returned %v", err)
+	}
+
+	if !strings.Contains(out.String(), "not installed") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
 func TestRemovePlugin(t *testing.T) {
 	mgr := &fakePluginManager{removeResult: testLockedPlugin()}
 	withFakePluginManager(t, mgr)
@@ -254,6 +370,22 @@ func TestRemovePlugin(t *testing.T) {
 	}
 
 	if !strings.Contains(out.String(), "Removed scanner") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestRemovePlugin_CalmExpectedError(t *testing.T) {
+	mgr := &fakePluginManager{removeErr: pluginmgr.ErrNotInstalled}
+	withFakePluginManager(t, mgr)
+
+	cmd, out := commandWithOutput()
+	err := removePlugin(cmd, []string{"ghost"})
+
+	if err != nil {
+		t.Fatalf("removePlugin expected error returned %v", err)
+	}
+
+	if !strings.Contains(out.String(), "not installed") {
 		t.Fatalf("output = %q", out.String())
 	}
 }

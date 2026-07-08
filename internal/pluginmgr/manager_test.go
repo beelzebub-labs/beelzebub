@@ -206,6 +206,90 @@ func TestManager_Install_ManifestMismatch(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(m.moduleRoot, "plugins", "scanner"))
 }
 
+func TestReplacePluginDir_RollbackAndCommit(t *testing.T) {
+	staging := t.TempDir()
+	src := filepath.Join(staging, "src")
+	dest := filepath.Join(t.TempDir(), "scanner")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "new.txt"), []byte("new plugin"), 0o644))
+	require.NoError(t, os.MkdirAll(dest, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "old.txt"), []byte("old plugin"), 0o644))
+
+	rollback, commit, err := replacePluginDir(src, dest, staging, true)
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dest, "new.txt"))
+	assert.NoFileExists(t, filepath.Join(dest, "old.txt"))
+
+	require.NoError(t, rollback())
+	assert.FileExists(t, filepath.Join(dest, "old.txt"))
+	assert.NoFileExists(t, filepath.Join(dest, "new.txt"))
+
+	src = filepath.Join(staging, "src2")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "new.txt"), []byte("new plugin"), 0o644))
+	rollback, commit, err = replacePluginDir(src, dest, staging, true)
+	require.NoError(t, err)
+	require.NoError(t, commit())
+	assert.FileExists(t, filepath.Join(dest, "new.txt"))
+	assert.NoFileExists(t, filepath.Join(staging, "previous", "old.txt"))
+	_ = rollback
+}
+
+func TestReplacePluginDir_RejectsExistingWithoutForce(t *testing.T) {
+	staging := t.TempDir()
+	src := filepath.Join(staging, "src")
+	dest := filepath.Join(t.TempDir(), "scanner")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.MkdirAll(dest, 0o755))
+
+	_, _, err := replacePluginDir(src, dest, staging, false)
+	require.ErrorIs(t, err, ErrAlreadyInstalled)
+}
+
+func TestModuleFileSnapshot_Restore(t *testing.T) {
+	root := t.TempDir()
+	goMod := filepath.Join(root, "go.mod")
+	goSum := filepath.Join(root, "go.sum")
+	require.NoError(t, os.WriteFile(goMod, []byte("module before\n"), 0o644))
+
+	snapshot, err := snapshotModuleFiles(root)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(goMod, []byte("module after\n"), 0o644))
+	require.NoError(t, os.WriteFile(goSum, []byte("new checksum\n"), 0o644))
+	require.NoError(t, snapshot.restore())
+
+	raw, err := os.ReadFile(goMod)
+	require.NoError(t, err)
+	assert.Equal(t, "module before\n", string(raw))
+	assert.NoFileExists(t, goSum)
+	assert.NoError(t, (*moduleFileSnapshot)(nil).restore())
+}
+
+func TestFindModuleRootAndReadModulePath(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	goMod := filepath.Join(root, "go.mod")
+	require.NoError(t, os.WriteFile(goMod, []byte("module github.com/acme/root\n\ngo 1.25\n"), 0o644))
+
+	got, err := findModuleRoot(nested)
+	require.NoError(t, err)
+	assert.Equal(t, root, got)
+
+	module, err := readModulePath(goMod)
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/acme/root", module)
+
+	_, err = readModulePath(filepath.Join(root, "missing.mod"))
+	require.Error(t, err)
+
+	badMod := filepath.Join(root, "bad.mod")
+	require.NoError(t, os.WriteFile(badMod, []byte("go 1.25\n"), 0o644))
+	_, err = readModulePath(badMod)
+	require.Error(t, err)
+}
+
 func TestManager_List(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
 	_, err := m.Install(context.Background(), "github.com/acme/scanner", "", false)

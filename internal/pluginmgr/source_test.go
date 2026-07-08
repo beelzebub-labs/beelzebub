@@ -1,6 +1,10 @@
 package pluginmgr
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseSource(t *testing.T) {
 	tests := []struct {
@@ -60,9 +64,19 @@ func TestParseSource(t *testing.T) {
 			wantRepo: "scanner",
 			wantSSH:  true,
 		},
+		{
+			name:     "ssh:// url with ref",
+			in:       "ssh://git@github.com/beelzebub-labs/scanner.git@main",
+			wantURL:  "ssh://git@github.com/beelzebub-labs/scanner.git",
+			wantRepo: "scanner",
+			wantRef:  "main",
+			wantSSH:  true,
+		},
 		{name: "empty", in: "", wantErr: true},
 		{name: "no repo", in: "github.com/owner", wantErr: true},
 		{name: "ssh missing colon", in: "git@github.com/owner/repo", wantErr: true},
+		{name: "bad repo name", in: "github.com/owner/-bad", wantErr: true},
+		{name: "missing host path", in: "github.com", wantErr: true},
 		{name: "local path does not exist", in: "/no/such/plugin/dir", wantErr: true},
 	}
 
@@ -108,6 +122,36 @@ func TestParseSource_Local(t *testing.T) {
 	}
 	if got.Repo != filepathBase(dir) {
 		t.Errorf("Repo = %q, want %q", got.Repo, filepathBase(dir))
+	}
+}
+
+func TestParseSource_LocalFileAndHome(t *testing.T) {
+	dir := t.TempDir()
+	got, err := ParseSource("file://" + dir)
+
+	if err != nil {
+		t.Fatalf("file local unexpected error: %v", err)
+	}
+
+	if got.CloneURL != "file://"+dir {
+		t.Fatalf("CloneURL = %q, want file://%s", got.CloneURL, dir)
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	pluginDir := filepath.Join(home, "plugin")
+
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin: %v", err)
+	}
+
+	got, err = ParseSource("~/plugin")
+	if err != nil {
+		t.Fatalf("home local unexpected error: %v", err)
+	}
+
+	if got.CloneURL != "file://"+pluginDir {
+		t.Fatalf("CloneURL = %q, want file://%s", got.CloneURL, pluginDir)
 	}
 }
 

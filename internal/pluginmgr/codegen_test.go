@@ -48,6 +48,16 @@ func TestWriteImportsFile(t *testing.T) {
 	assertParses(t, raw)
 }
 
+func TestWriteImportsFile_CreateDirError(t *testing.T) {
+	parent := t.TempDir()
+	blocker := filepath.Join(parent, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("not a dir"), 0o644))
+
+	err := writeImportsFile(filepath.Join(blocker, "plugins"), &LockFile{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating plugins dir")
+}
+
 func assertParses(t *testing.T, src []byte) {
 	t.Helper()
 	_, err := parser.ParseFile(token.NewFileSet(), "imports_gen.go", src, parser.AllErrors)

@@ -60,6 +60,21 @@ func TestDeclaredSources_RejectsUnknownFieldsAndMissingSource(t *testing.T) {
 	assert.Contains(t, err.Error(), "source is required")
 }
 
+func TestDeclaredSources_ReadAndParseErrors(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	require.NoError(t, os.MkdirAll(m.declaredPath(), 0o755))
+
+	_, err := m.declaredSources()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reading")
+
+	require.NoError(t, os.RemoveAll(m.declaredPath()))
+	writeDeclared(t, m, "plugins:\n  - source: [unterminated\n")
+	_, err = m.declaredSources()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing")
+}
+
 func TestDeclare_AppendsAndDedupes(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
 
@@ -106,6 +121,31 @@ plugins:
 	assert.NotContains(t, string(raw), "source: github.com/acme/scanner")
 }
 
+func TestUndeclare_MatchesByParsedSourceAndNoopWhenMissing(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+
+	writeDeclared(t, m, `
+plugins:
+  - source: github.com/acme/scanner@main
+  - source: bad source
+`)
+
+	err := m.Undeclare(LockedPlugin{
+		Name:   "scanner",
+		Source: "https://github.com/acme/scanner.git",
+	})
+
+	require.NoError(t, err)
+	got, err := m.declaredSources()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bad source"}, got)
+
+	require.NoError(t, m.Undeclare(LockedPlugin{Name: "ghost", Source: "https://github.com/acme/ghost.git"}))
+	got, err = m.declaredSources()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bad source"}, got)
+}
+
 func TestRemove_UndeclaresPlugin(t *testing.T) {
 	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
 	ctx := context.Background()
@@ -119,6 +159,21 @@ func TestRemove_UndeclaresPlugin(t *testing.T) {
 	got, err := m.declaredSources()
 	require.NoError(t, err)
 	assert.Empty(t, got)
+}
+
+func TestInstallDeclared_InvalidSourceReturnsPartialResults(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+
+	writeDeclared(t, m, `
+plugins:
+  - source: github.com/acme/scanner
+  - source: github.com/acme
+`)
+
+	installed, err := m.InstallDeclared(context.Background(), false)
+	require.Error(t, err)
+	require.Len(t, installed, 1)
+	assert.Contains(t, err.Error(), "configurations/plugins.yaml")
 }
 
 func TestInstallDeclared_InstallsThenIsIdempotent(t *testing.T) {
