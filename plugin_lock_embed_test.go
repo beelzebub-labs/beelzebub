@@ -53,3 +53,14 @@ func TestPersistEmbeddedPluginLockfileSkipsMissingEmbeddedFile(t *testing.T) {
 		t.Fatalf("lockfile stat error = %v, want not exist", err)
 	}
 }
+
+func TestPersistEmbeddedPluginLockfileIgnoresWriteError(t *testing.T) {
+	dst := t.TempDir()
+	t.Setenv("BEELZEBUB_PLUGIN_LOCKFILE", dst)
+
+	persistEmbeddedPluginLockfile()
+
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("target directory should remain: %v", err)
+	}
+}

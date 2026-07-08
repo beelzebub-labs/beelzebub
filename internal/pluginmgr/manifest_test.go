@@ -76,6 +76,10 @@ func TestManifestValidate(t *testing.T) {
 		{name: "backslash entrypoint", mutate: func(m *Manifest) { m.Entrypoint = `cmd\plugin` }, goMod: "github.com/acme/scanner", wantErr: "forward slashes"},
 		{name: "valid dependency", mutate: func(m *Manifest) { m.Dependencies = []string{"github.com/acme/shared@v1.2.3"} }, goMod: "github.com/acme/scanner"},
 		{name: "invalid dependency", mutate: func(m *Manifest) { m.Dependencies = []string{"github.com/acme/shared@"} }, goMod: "github.com/acme/scanner", wantErr: "empty version"},
+		{name: "empty dependency", mutate: func(m *Manifest) { m.Dependencies = []string{""} }, goMod: "github.com/acme/scanner", wantErr: "must not contain empty"},
+		{name: "dependency with whitespace", mutate: func(m *Manifest) { m.Dependencies = []string{"github.com/acme/shared bad"} }, goMod: "github.com/acme/scanner", wantErr: "module path"},
+		{name: "bad dependency module", mutate: func(m *Manifest) { m.Dependencies = []string{"../shared"} }, goMod: "github.com/acme/scanner", wantErr: "invalid module path"},
+		{name: "git entrypoint", mutate: func(m *Manifest) { m.Entrypoint = ".git/hooks" }, goMod: "github.com/acme/scanner", wantErr: "not allowed"},
 		{
 			name:        "min-core too new",
 			mutate:      func(m *Manifest) { m.MinCoreVersion = "v3.5.0" },

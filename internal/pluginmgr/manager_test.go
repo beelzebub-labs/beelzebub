@@ -72,6 +72,26 @@ type fakeCalls struct {
 	failTidy   bool
 }
 
+func TestNewManager_SuccessAndNoModuleRoot(t *testing.T) {
+	root := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"),
+		[]byte("module github.com/beelzebub-labs/beelzebub/v3\n"), 0o644))
+	t.Chdir(root)
+
+	m, err := NewManager("dev", "token")
+	require.NoError(t, err)
+	assert.Equal(t, root, m.moduleRoot)
+	assert.Equal(t, "github.com/beelzebub-labs/beelzebub/v3", m.coreModule)
+	assert.Equal(t, "token", m.token)
+
+	empty := t.TempDir()
+	t.Chdir(empty)
+	_, err = NewManager("dev", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no go.mod")
+}
+
 func TestApply_LocalBuilds(t *testing.T) {
 	m, calls := fakeManager(t, "github.com/acme/scanner", validManifest)
 	mode, err := m.Apply(context.Background())
@@ -90,6 +110,51 @@ func TestApply_DockerRebuilds(t *testing.T) {
 	assert.Equal(t, "docker", mode)
 	assert.Equal(t, 0, calls.built)
 	assert.Contains(t, strings.Join(calls.dockerCmds, "\n"), "up -d --build")
+}
+
+func TestApply_DockerFallbackAndErrors(t *testing.T) {
+	m, calls := fakeManager(t, "github.com/acme/scanner", validManifest)
+	require.NoError(t, os.WriteFile(filepath.Join(m.moduleRoot, ModeFileName), []byte("docker\n"), 0o644))
+
+	m.run = func(_ context.Context, _ string, name string, args ...string) (string, error) {
+		switch {
+		case name == "docker" && strings.Join(args, " ") == "compose version":
+			return "", fmt.Errorf("compose v2 missing")
+
+		case name == "docker-compose":
+			calls.dockerCmds = append(calls.dockerCmds, strings.Join(args, " "))
+			return "", nil
+
+		default:
+			return "", fmt.Errorf("unexpected command: %s %v", name, args)
+		}
+	}
+
+	mode, err := m.Apply(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "docker", mode)
+	assert.Contains(t, strings.Join(calls.dockerCmds, "\n"), "up -d --build")
+
+	m.run = func(context.Context, string, string, ...string) (string, error) {
+		return "", fmt.Errorf("compose failed")
+	}
+
+	mode, err = m.Apply(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, "docker", mode)
+	assert.Contains(t, err.Error(), "docker compose up")
+}
+
+func TestBuild_Error(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+
+	m.run = func(context.Context, string, string, ...string) (string, error) {
+		return "", fmt.Errorf("build failed")
+	}
+
+	err := m.Build(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "go build")
 }
 
 func TestInstallMode_DefaultsLocal(t *testing.T) {
@@ -204,6 +269,75 @@ func TestManager_Install_ManifestMismatch(t *testing.T) {
 
 	// Nothing should have been vendored.
 	assert.NoDirExists(t, filepath.Join(m.moduleRoot, "plugins", "scanner"))
+}
+
+func TestManager_Install_ParseAndCloneErrors(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	_, err := m.Install(context.Background(), "github.com/acme", "", false)
+	require.Error(t, err)
+
+	m.run = func(context.Context, string, string, ...string) (string, error) {
+		return "", fmt.Errorf("clone failed")
+	}
+
+	_, err = m.Install(context.Background(), "github.com/acme/scanner", "", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "clone failed")
+}
+
+func TestManager_Remove_ErrorPaths(t *testing.T) {
+	m, calls := fakeManager(t, "github.com/acme/scanner", validManifest)
+	ctx := context.Background()
+
+	_, err := m.Remove(ctx, "ghost")
+	require.ErrorIs(t, err, ErrNotInstalled)
+
+	_, err = m.Install(ctx, "github.com/acme/scanner", "", false)
+	require.NoError(t, err)
+
+	m.run = func(_ context.Context, dir, name string, args ...string) (string, error) {
+		if name == "go" && len(args) >= 2 && args[0] == "mod" && args[1] == "edit" {
+			return "", fmt.Errorf("edit failed")
+		}
+
+		return calls.runOriginal(t, dir, name, args...)
+	}
+
+	_, err = m.Remove(ctx, "scanner")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "editing go.mod")
+}
+
+func (f *fakeCalls) runOriginal(t *testing.T, dir, name string, args ...string) (string, error) {
+	t.Helper()
+	return "", fmt.Errorf("unexpected command: %s %v in %s", name, args, dir)
+}
+
+func TestManager_List_InvalidLockfile(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	require.NoError(t, os.MkdirAll(filepath.Dir(m.lockPath()), 0o755))
+	require.NoError(t, os.WriteFile(m.lockPath(), []byte("plugins:\n  - name: [bad\n"), 0o644))
+
+	_, err := m.List()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing")
+}
+
+func TestManager_Regenerate_GoModEditError(t *testing.T) {
+	m, _ := fakeManager(t, "github.com/acme/scanner", validManifest)
+	m.run = func(context.Context, string, string, ...string) (string, error) {
+		return "", fmt.Errorf("edit failed")
+	}
+
+	err := m.regenerate(context.Background(), &LockFile{Plugins: []LockedPlugin{{
+		Name:   "scanner",
+		Module: "github.com/acme/scanner",
+		Dir:    "plugins/scanner",
+		Import: "github.com/acme/scanner",
+	}}})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "adding go.mod replace")
 }
 
 func TestReplacePluginDir_RollbackAndCommit(t *testing.T) {
