@@ -9,6 +9,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		persistEmbeddedPluginLockfile()
+	}
+
 	if err := cli.Execute(); err != nil {
 		log.Error(err)
 		os.Exit(1)
