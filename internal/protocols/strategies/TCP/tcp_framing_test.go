@@ -1,6 +1,8 @@
 package TCP
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"net"
 	"regexp"
@@ -217,5 +219,18 @@ func TestOpportunistic_AccumulatesUntilMatch(t *testing.T) {
 	}
 	if string(msg) != "ABCDEFGH" {
 		t.Fatalf("accumulated msg = %q, want ABCDEFGH", msg)
+	}
+}
+
+func TestOpportunistic_BufferCap(t *testing.T) {
+	r := &connReader{buf: bytes.Repeat([]byte("A"), maxOpportunisticBufferSize+1)}
+	cmds := []parser.Command{{Regex: regexp.MustCompile(`^never$`)}}
+
+	msg, err := r.nextMessage(cmds)
+	if !errors.Is(err, errOpportunisticBufferExceeded) {
+		t.Fatalf("err = %v, want %v", err, errOpportunisticBufferExceeded)
+	}
+	if msg != nil {
+		t.Fatalf("msg = %d bytes, want nil on buffer cap", len(msg))
 	}
 }

@@ -759,17 +759,23 @@ func TestRegisterAndResetServiceValidators(t *testing.T) {
 }
 
 func TestValidateTLSConfig(t *testing.T) {
+	existingTLSFile := func(t *testing.T) string {
+		t.Helper()
+		path := t.TempDir() + "/tls.pem"
+		if err := os.WriteFile(path, []byte("test"), 0600); err != nil {
+			t.Fatalf("create TLS test file: %v", err)
+		}
+		return path
+	}
+
 	t.Run("both empty", func(t *testing.T) {
 		issues := ValidateTLSConfig("", "", "test.yaml")
 		assert.Empty(t, issues)
 	})
 
 	t.Run("both set and exist", func(t *testing.T) {
-		existingFile, _ := os.Executable()
-		if existingFile == "" {
-			existingFile = "/tmp"
-		}
-		issues := ValidateTLSConfig(existingFile, existingFile, "test.yaml")
+		path := existingTLSFile(t)
+		issues := ValidateTLSConfig(path, path, "test.yaml")
 		assert.Empty(t, issues)
 	})
 
@@ -798,11 +804,8 @@ func TestValidateTLSConfig(t *testing.T) {
 	})
 
 	t.Run("one file does not exist", func(t *testing.T) {
-		existingFile, _ := os.Executable()
-		if existingFile == "" {
-			existingFile = "/tmp"
-		}
-		issues := ValidateTLSConfig(existingFile, "/nonexistent/cert.key", "test.yaml")
+		path := existingTLSFile(t)
+		issues := ValidateTLSConfig(path, "/nonexistent/cert.key", "test.yaml")
 		assert.Len(t, issues, 1)
 		assert.Equal(t, LevelWarning, issues[0].Level)
 		assert.Contains(t, issues[0].Message, "tlsKeyPath file does not exist")

@@ -64,6 +64,11 @@ func vncStartService(t *testing.T, yamlPath string) (string, *vncTracer) {
 	if err := s.Init(cfg, tr); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := s.Shutdown(); err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+	})
 	time.Sleep(30 * time.Millisecond)
 	return cfg.Address, tr
 }

@@ -116,61 +116,57 @@ type tracer struct {
 	strategyMutex sync.RWMutex
 }
 
-var lock = &sync.Mutex{}
-var singleton *tracer
+var (
+	singletonOnce sync.Once
+	singleton     *tracer
+)
 
 func GetInstance(defaultStrategy Strategy) *tracer {
-	if singleton == nil {
-		lock.Lock()
-		defer lock.Unlock()
-		// This is to prevent expensive lock operations every time the GetInstance method is called
-		if singleton == nil {
-			singleton = &tracer{
-				strategy:   defaultStrategy,
-				eventsChan: make(chan Event, Workers),
-				eventsTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "events_total",
-					Help:      "The total number of events",
-				}),
-				eventsSSHTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "ssh_events_total",
-					Help:      "The total number of SSH events",
-				}),
-				eventsTCPTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "tcp_events_total",
-					Help:      "The total number of TCP events",
-				}),
-				eventsHTTPTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "http_events_total",
-					Help:      "The total number of HTTP events",
-				}),
-				eventsMCPTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "mcp_events_total",
-					Help:      "The total number of MCP events",
-				}),
-				eventsTelnetTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "telnet_events_total",
-					Help:      "The total number of TELNET events",
-				}),
-			}
-
-			for i := 0; i < Workers; i++ {
-				go func(i int) {
-					log.Debug("Trace worker: ", i)
-					for event := range singleton.eventsChan {
-						singleton.strategy(event)
-					}
-				}(i)
-			}
+	singletonOnce.Do(func() {
+		singleton = &tracer{
+			strategy:   defaultStrategy,
+			eventsChan: make(chan Event, Workers),
+			eventsTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "events_total",
+				Help:      "The total number of events",
+			}),
+			eventsSSHTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "ssh_events_total",
+				Help:      "The total number of SSH events",
+			}),
+			eventsTCPTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "tcp_events_total",
+				Help:      "The total number of TCP events",
+			}),
+			eventsHTTPTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "http_events_total",
+				Help:      "The total number of HTTP events",
+			}),
+			eventsMCPTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "mcp_events_total",
+				Help:      "The total number of MCP events",
+			}),
+			eventsTelnetTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "telnet_events_total",
+				Help:      "The total number of TELNET events",
+			}),
 		}
-	}
 
+		for i := 0; i < Workers; i++ {
+			go func(i int, tr *tracer) {
+				log.Debug("Trace worker: ", i)
+				for event := range tr.eventsChan {
+					tr.GetStrategy()(event)
+				}
+			}(i, singleton)
+		}
+	})
 	return singleton
 }
 

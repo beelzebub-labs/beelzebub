@@ -35,7 +35,12 @@ type Builder struct {
 	rabbitMQConnection             *amqp.Connection
 	logsFile                       *os.File
 	startedServices                []plugin.ServicePlugin
+	startedStrategies              []shutdownStrategy
 	servicesCancel                 context.CancelFunc
+}
+
+type shutdownStrategy interface {
+	Shutdown() error
 }
 
 func (b *Builder) setTraceStrategy(traceStrategy tracer.Strategy) {
@@ -89,6 +94,8 @@ func (b *Builder) buildRabbitMQ(rabbitMQURI string) error {
 }
 
 func (b *Builder) Close() error {
+	var err error
+
 	// Stop background service plugins first so their goroutines drain before
 	// other teardown.
 	if b.servicesCancel != nil {
@@ -98,23 +105,29 @@ func (b *Builder) Close() error {
 		svc.Stop()
 	}
 
+	for _, strategy := range b.startedStrategies {
+		if closeErr := strategy.Shutdown(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}
+
 	// Close log file if it was opened
 	if b.logsFile != nil {
-		if err := b.logsFile.Close(); err != nil {
-			return err
+		if closeErr := b.logsFile.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
 	}
 
 	// Close RabbitMQ connections
 	if b.rabbitMQConnection != nil {
-		if err := b.rabbitMQChannel.Close(); err != nil {
-			return err
+		if closeErr := b.rabbitMQChannel.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
-		if err := b.rabbitMQConnection.Close(); err != nil {
-			return err
+		if closeErr := b.rabbitMQConnection.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
 	}
-	return nil
+	return err
 }
 
 func (b *Builder) Run() error {
@@ -132,7 +145,7 @@ Deception runtime framework, happy hacking!`)
 			http.Handle(b.beelzebubCoreConfigurations.Core.Prometheus.Path, promhttp.Handler())
 
 			if err := http.ListenAndServe(b.beelzebubCoreConfigurations.Core.Prometheus.Port, nil); err != nil {
-				log.Fatalf("Error init Prometheus: %s", err.Error())
+				log.Errorf("Error init Prometheus: %s", err.Error())
 			}
 		}
 	}()
@@ -155,6 +168,7 @@ Deception runtime framework, happy hacking!`)
 	transmissionControlProtocolStrategy := &TCP.TCPStrategy{}
 	modelContextProtocolStrategy := &MCP.MCPStrategy{}
 	telnetStrategy := &TELNET.TelnetStrategy{}
+	b.startedStrategies = append(b.startedStrategies, transmissionControlProtocolStrategy)
 
 	// Init Tracer strategies, and set the trace strategy default HTTP
 	protocolManager := protocols.InitProtocolManager(b.traceStrategy, hypertextTransferProtocolStrategy)
@@ -187,11 +201,11 @@ Deception runtime framework, happy hacking!`)
 		case "telnet":
 			protocolManager.SetProtocolStrategy(telnetStrategy)
 		default:
-			log.Fatalf("protocol %s not managed", beelzebubServiceConfiguration.Protocol)
+			return fmt.Errorf("protocol %s not managed", beelzebubServiceConfiguration.Protocol)
 		}
 
 		if err := protocolManager.InitService(beelzebubServiceConfiguration); err != nil {
-			return fmt.Errorf("error during init protocol: %s, %s", beelzebubServiceConfiguration.Protocol, err.Error())
+			return fmt.Errorf("error during init protocol %s: %w", beelzebubServiceConfiguration.Protocol, err)
 		}
 	}
 

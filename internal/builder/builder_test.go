@@ -113,6 +113,9 @@ func TestBuilderRun_Empty(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error running empty builder, got %v", err)
 	}
+	t.Cleanup(func() {
+		assert.NoError(t, b.Close())
+	})
 
 	// Give a little time for the prometheus goroutine (which will just exit immediately since prometheus config is empty)
 	time.Sleep(10 * time.Millisecond)
@@ -137,13 +140,25 @@ func TestBuilderRun_AllProtocols(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error running builder with protocols, got %v", err)
 	}
+	t.Cleanup(func() {
+		assert.NoError(t, b.Close())
+	})
 
 	time.Sleep(100 * time.Millisecond) // Wait a bit to let go funcs run and cover lines inside
 }
 
 func TestBuilderRun_UnknownProtocol(t *testing.T) {
-	// We cannot easily test unknown protocol because it calls log.Fatalf
-	// which causes the test to exit.
+	b := NewBuilder()
+	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{}
+	b.beelzebubServicesConfiguration = []parser.BeelzebubServiceConfiguration{
+		{Protocol: "unknown", Address: "127.0.0.1:0"},
+	}
+	b.traceStrategy = func(event tracer.Event) {}
+
+	err := b.Run()
+	if err == nil {
+		t.Fatal("expected error for unknown protocol")
+	}
 }
 
 func TestBuildRabbitMQ_InvalidURI(t *testing.T) {

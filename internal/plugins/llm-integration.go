@@ -32,6 +32,7 @@ const (
 var ErrRateLimited = errors.New("rate limited")
 var globalRateLimiters = make(map[string]*rate.Limiter)
 var globalRateLimiterMutex sync.RWMutex
+var codeFenceMarkerRegexp = regexp.MustCompile("(```( *)?([a-z]*)?(\\n)?)")
 
 type LLMHoneypot struct {
 	Histories               []Message
@@ -302,11 +303,15 @@ func (llmHoneypot *LLMHoneypot) openAICaller(messages []Message) (string, error)
 	}
 	log.Debug(response)
 
-	if len(response.Result().(*Response).Choices) == 0 {
+	result, ok := response.Result().(*Response)
+	if !ok || result == nil {
+		return "", errors.New("unexpected OpenAI response type")
+	}
+	if len(result.Choices) == 0 {
 		return "", errors.New("no choices")
 	}
 
-	return removeQuotes(response.Result().(*Response).Choices[0].Message.Content), nil
+	return removeQuotes(result.Choices[0].Message.Content), nil
 }
 
 func (llmHoneypot *LLMHoneypot) ollamaCaller(messages []Message) (string, error) {
@@ -337,7 +342,11 @@ func (llmHoneypot *LLMHoneypot) ollamaCaller(messages []Message) (string, error)
 	}
 	log.Debug(response)
 
-	return removeQuotes(response.Result().(*Response).Message.Content), nil
+	result, ok := response.Result().(*Response)
+	if !ok || result == nil {
+		return "", errors.New("unexpected Ollama response type")
+	}
+	return removeQuotes(result.Message.Content), nil
 }
 
 // getRateLimiter returns a rate limiter for the given client IP and if it doesn't exist,
@@ -488,6 +497,5 @@ func (llmHoneypot *LLMHoneypot) isOutputValid(response string) error {
 }
 
 func removeQuotes(content string) string {
-	regex := regexp.MustCompile("(```( *)?([a-z]*)?(\\n)?)")
-	return regex.ReplaceAllString(content, "")
+	return codeFenceMarkerRegexp.ReplaceAllString(content, "")
 }

@@ -1,6 +1,7 @@
 package TCP
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"time"
@@ -16,6 +17,13 @@ const accumulationGrace = 150 * time.Millisecond
 // maxFrameSize bounds a single length-prefixed frame to avoid huge allocations
 // driven by a malicious/garbage length field.
 const maxFrameSize = 1 << 20 // 1 MiB
+
+// maxOpportunisticBufferSize bounds the non-framed accumulation path. Framed
+// protocols are already bounded by maxFrameSize; non-framed binary protocols
+// still need a ceiling so a client cannot drip unmatched bytes indefinitely.
+const maxOpportunisticBufferSize = 4 << 20 // 4 MiB
+
+var errOpportunisticBufferExceeded = errors.New("tcp opportunistic read buffer exceeded")
 
 // connReader reads one logical protocol message at a time from a TCP connection.
 // It keeps a buffer of bytes read past the current message (pipelined data) so
@@ -52,6 +60,12 @@ func (r *connReader) fill() error {
 		r.buf = append(r.buf, tmp[:n]...)
 	}
 	return err
+}
+
+func (r *connReader) takeBuffer() []byte {
+	msg := r.buf
+	r.buf = nil
+	return msg
 }
 
 // fillUntil reads until the buffer holds at least n bytes. It returns an error
@@ -131,8 +145,14 @@ func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error
 		if err := r.fill(); err != nil && len(r.buf) == 0 {
 			return nil, err
 		}
+		if len(r.buf) > maxOpportunisticBufferSize {
+			return nil, errOpportunisticBufferExceeded
+		}
 	}
 	for !matchesAny(r.buf, commands) {
+		if len(r.buf) > maxOpportunisticBufferSize {
+			return nil, errOpportunisticBufferExceeded
+		}
 		// Nothing matches yet: the message may be split across TCP segments, so
 		// briefly wait for more bytes before returning what we have (which then
 		// falls through to the not_found path). A config with a catch-all never
@@ -142,10 +162,17 @@ func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error
 		if !r.cutoff.IsZero() && r.cutoff.Before(grace) {
 			grace = r.cutoff
 		}
-		r.conn.SetReadDeadline(grace)
+		if err := r.conn.SetReadDeadline(grace); err != nil {
+			return r.takeBuffer(), err
+		}
 		before := len(r.buf)
 		err := r.fill()
-		r.conn.SetReadDeadline(r.cutoff) // restore absolute cutoff (zero = none)
+		if deadlineErr := r.conn.SetReadDeadline(r.cutoff); deadlineErr != nil && err == nil {
+			return r.takeBuffer(), deadlineErr
+		}
+		if len(r.buf) > maxOpportunisticBufferSize {
+			return nil, errOpportunisticBufferExceeded
+		}
 		if len(r.buf) == before {
 			// No progress within the grace window; deliver the bytes already
 			// buffered to the caller's not_found/catch-all path.
@@ -157,9 +184,7 @@ func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error
 			break
 		}
 	}
-	msg := r.buf
-	r.buf = nil
-	return msg, nil
+	return r.takeBuffer(), nil
 }
 
 // matchesAny reports whether any configured handler matches the bytes so far.

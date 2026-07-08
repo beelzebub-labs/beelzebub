@@ -313,7 +313,11 @@ func applyEnvOverrides(cfg *BeelzebubCoreConfigurations) error {
 }
 
 func parseBool(v string) bool {
-	b, _ := strconv.ParseBool(v)
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		log.Warnf("invalid boolean environment override %q: %v", v, err)
+		return false
+	}
 	return b
 }
 

@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -123,10 +124,14 @@ func applyPatches(buf []byte, patches []parser.Patch) []byte {
 }
 
 type TCPStrategy struct {
-	Sessions *historystore.HistoryStore
-	tlsMu    sync.Mutex
-	tlsCert  *tls.Certificate // generated at Init when any command has tlsUpgrade:true
-	tlsCN    string           // common name used to (re)generate tlsCert
+	Sessions    *historystore.HistoryStore
+	tlsMu       sync.Mutex
+	tlsCert     *tls.Certificate // generated at Init when any command has tlsUpgrade:true
+	tlsCN       string           // common name used to (re)generate tlsCert
+	lifecycleMu sync.Mutex
+	listeners   []net.Listener
+	acceptDone  []chan struct{}
+	cleanerOnce sync.Once
 }
 
 // currentTLSCert returns the self-signed cert for TLS upgrade, lazily
@@ -188,7 +193,6 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 	if tcpStrategy.Sessions == nil {
 		tcpStrategy.Sessions = historystore.NewHistoryStore()
 	}
-	go tcpStrategy.Sessions.HistoryCleaner()
 
 	for _, cmd := range servConf.Commands {
 		if cmd.TLSUpgrade {
@@ -205,22 +209,39 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 
 	listen, err := net.Listen("tcp", servConf.Address)
 	if err != nil {
-		log.Errorf("Error during init TCP Protocol: %s", err.Error())
+		log.Errorf("Error during init TCP Protocol: %v", err)
 		return err
 	}
 
+	acceptDone := make(chan struct{})
+	tcpStrategy.lifecycleMu.Lock()
+	tcpStrategy.listeners = append(tcpStrategy.listeners, listen)
+	tcpStrategy.acceptDone = append(tcpStrategy.acceptDone, acceptDone)
+	tcpStrategy.lifecycleMu.Unlock()
+
+	tcpStrategy.cleanerOnce.Do(func() {
+		tcpStrategy.Sessions.HistoryCleaner()
+	})
+
 	go func() {
+		defer close(acceptDone)
 		for {
-			if conn, err := listen.Accept(); err == nil {
-				go func(c net.Conn) {
-					defer func() {
-						if r := recover(); r != nil {
-							log.Errorf("panic in TCP handler: %v", r)
-						}
-					}()
-					handleTCPConnection(c, servConf, tr, tcpStrategy)
-				}(conn)
+			conn, err := listen.Accept()
+			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+				log.Errorf("Error accepting TCP connection: %v", err)
+				continue
 			}
+			go func(c net.Conn) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Errorf("panic in TCP handler: %v", r)
+					}
+				}()
+				handleTCPConnection(c, servConf, tr, tcpStrategy)
+			}(conn)
 		}
 	}()
 
@@ -230,6 +251,33 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 		"commands": len(servConf.Commands),
 	}).Infof("Init service %s", servConf.Protocol)
 	return nil
+}
+
+// Shutdown stops the listener accept loop and the session history cleaner owned
+// by this strategy. Existing accepted connections are allowed to finish through
+// their normal deadlines; closing active connections requires a broader protocol
+// strategy lifecycle contract.
+func (tcpStrategy *TCPStrategy) Shutdown() error {
+	tcpStrategy.lifecycleMu.Lock()
+	listeners := append([]net.Listener(nil), tcpStrategy.listeners...)
+	acceptDone := append([]chan struct{}(nil), tcpStrategy.acceptDone...)
+	tcpStrategy.listeners = nil
+	tcpStrategy.acceptDone = nil
+	tcpStrategy.lifecycleMu.Unlock()
+
+	var err error
+	for _, listen := range listeners {
+		if closeErr := listen.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			err = errors.Join(err, closeErr)
+		}
+	}
+	for _, done := range acceptDone {
+		<-done
+	}
+	if tcpStrategy.Sessions != nil {
+		tcpStrategy.Sessions.Close()
+	}
+	return err
 }
 
 // tcpSession holds the immutable per-connection context shared by the helpers
@@ -254,17 +302,27 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 	// A non-positive timeout means "no deadline"; setting SetDeadline(now+0)
 	// would pin the deadline to the current instant and break every read.
 	if d := time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second; d > 0 {
-		conn.SetDeadline(time.Now().Add(d))
+		if err := conn.SetDeadline(time.Now().Add(d)); err != nil {
+			log.Debugf("set connection deadline failed: %v", err)
+		}
 	}
 
-	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		log.Debugf("cannot split remote address %q: %v", conn.RemoteAddr().String(), err)
+		host = conn.RemoteAddr().String()
+		port = ""
+	}
 
 	// Send banner if configured. Encoded via Latin-1 so binary (\xHH) banners
 	// survive; trailing "\n" preserves upstream line-based banner behavior.
 	if servConf.Banner != "" {
 		// Preserve upstream behavior (banner + "\n") but binary-safe: the banner
 		// may contain \xHH escapes, so encode via Latin-1 rather than %s.
-		conn.Write(append(latin1ToRawBytes(servConf.Banner), '\n'))
+		if _, err := conn.Write(append(latin1ToRawBytes(servConf.Banner), '\n')); err != nil {
+			log.Debugf("banner write failed: %v", err)
+			return
+		}
 	}
 
 	// Backward compatibility: if no commands configured, use legacy behavior.
@@ -342,8 +400,11 @@ func (s *tcpSession) serve(conn net.Conn) {
 
 	for {
 		rawBuffer, err := reader.nextMessage(s.servConf.Commands)
-		if err != nil || len(rawBuffer) == 0 {
+		if len(rawBuffer) == 0 {
 			break
+		}
+		if err != nil {
+			log.Debugf("tcp read returned buffered data with terminal error: %v", err)
 		}
 
 		commandInput := strings.TrimRight(rawBytesToLatin1(rawBuffer), "\r\n")
@@ -535,7 +596,9 @@ func (s *tcpSession) upgradeTLS(conn net.Conn) (net.Conn, bool) {
 		MinVersion:   tls.VersionTLS12,
 	})
 	if d := time.Duration(s.servConf.DeadlineTimeoutSeconds) * time.Second; d > 0 {
-		conn.SetDeadline(time.Now().Add(d))
+		if err := conn.SetDeadline(time.Now().Add(d)); err != nil {
+			log.Debugf("set TLS handshake deadline failed: %v", err)
+		}
 	}
 	if err := tlsConn.Handshake(); err != nil {
 		log.Debugf("TLS handshake: %v", err)

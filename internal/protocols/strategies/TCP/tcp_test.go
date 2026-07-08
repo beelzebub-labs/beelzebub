@@ -183,6 +183,64 @@ func TestTCPStrategy_Init(t *testing.T) {
 	err := strategy.Init(servConf, mt)
 	assert.NoError(t, err)
 	assert.NotNil(t, strategy.Sessions)
+	t.Cleanup(func() {
+		assert.NoError(t, strategy.Shutdown())
+	})
+}
+
+func TestTCPStrategy_ShutdownStopsAcceptLoop(t *testing.T) {
+	strategy := &TCPStrategy{}
+	mt := &mockTracer{}
+
+	servConf := parser.BeelzebubServiceConfiguration{
+		Address:                "127.0.0.1:0",
+		Description:            "test",
+		DeadlineTimeoutSeconds: 2,
+	}
+
+	if err := strategy.Init(servConf, mt); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if len(strategy.listeners) != 1 {
+		t.Fatalf("listeners = %d, want 1", len(strategy.listeners))
+	}
+	addr := strategy.listeners[0].Addr().String()
+
+	if err := strategy.Shutdown(); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if err := strategy.Shutdown(); err != nil {
+		t.Fatalf("second Shutdown should be idempotent: %v", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		t.Fatalf("dial succeeded after Shutdown; listener still accepts on %s", addr)
+	}
+}
+
+func TestTCPStrategy_InitMultipleListeners(t *testing.T) {
+	strategy := &TCPStrategy{}
+	mt := &mockTracer{}
+
+	for i := 0; i < 2; i++ {
+		servConf := parser.BeelzebubServiceConfiguration{
+			Address:                "127.0.0.1:0",
+			Description:            "test",
+			DeadlineTimeoutSeconds: 2,
+		}
+		if err := strategy.Init(servConf, mt); err != nil {
+			t.Fatalf("Init %d: %v", i, err)
+		}
+	}
+
+	if len(strategy.listeners) != 2 {
+		t.Fatalf("listeners = %d, want 2", len(strategy.listeners))
+	}
+	if err := strategy.Shutdown(); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
 }
 
 func TestTCPStrategy_Init_InvalidAddress(t *testing.T) {

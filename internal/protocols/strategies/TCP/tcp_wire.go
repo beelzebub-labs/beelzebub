@@ -1,6 +1,8 @@
 package TCP
 
 import (
+	"sync"
+
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
@@ -68,14 +70,27 @@ type registeredWirePlugin struct {
 	plugin WirePlugin
 }
 
-var wirePlugins []registeredWirePlugin
+var (
+	wirePluginsMu sync.RWMutex
+	wirePlugins   []registeredWirePlugin
+)
 
 // RegisterWirePlugin registers p under name, to be invoked on each exchange.
 // A service runs a plugin only if its config's `wirePlugins` list contains the
 // name (or the list is empty — then all registered plugins run). Order matters:
 // plugins run in registration order.
 func RegisterWirePlugin(name string, p WirePlugin) {
+	wirePluginsMu.Lock()
+	defer wirePluginsMu.Unlock()
 	wirePlugins = append(wirePlugins, registeredWirePlugin{name: name, plugin: p})
+}
+
+func wirePluginSnapshot() []registeredWirePlugin {
+	wirePluginsMu.RLock()
+	defer wirePluginsMu.RUnlock()
+	out := make([]registeredWirePlugin, len(wirePlugins))
+	copy(out, wirePlugins)
+	return out
 }
 
 // wirePluginEnabled reports whether a plugin named `name` should run for a
@@ -96,7 +111,7 @@ func wirePluginEnabled(name string, enabled []string) bool {
 // runWirePlugins invokes every enabled wire-plugin in registration order.
 // Safe to call with an empty registry (no-op).
 func runWirePlugins(ctx *WireContext) {
-	for _, rp := range wirePlugins {
+	for _, rp := range wirePluginSnapshot() {
 		if wirePluginEnabled(rp.name, ctx.ServiceConfig.WirePlugins) {
 			rp.plugin.OnExchange(ctx)
 		}
@@ -107,7 +122,7 @@ func runWirePlugins(ctx *WireContext) {
 // connection identified by connID has ended, so they can release per-connection
 // state. Safe to call with an empty registry (no-op).
 func closeWireSessions(connID string, enabled []string) {
-	for _, rp := range wirePlugins {
+	for _, rp := range wirePluginSnapshot() {
 		if !wirePluginEnabled(rp.name, enabled) {
 			continue
 		}
