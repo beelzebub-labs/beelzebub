@@ -11,6 +11,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,17 +21,32 @@ import (
 )
 
 func main() {
-	configsDir := flag.String("configs", "configurations/services", "directory with YAML config files")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	// Keep the default help header compatible with flag.CommandLine.
+	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	configsDir := fs.String("configs", "configurations/services", "directory with YAML config files")
+
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
 
 	absConfigs, err := filepath.Abs(*configsDir)
 	if err != nil {
-		exit("resolving configs path: %v", err)
+		fmt.Fprintf(stderr, "error: resolving configs path: %v\n", err)
+		return 1
 	}
 
 	entries, err := os.ReadDir(absConfigs)
 	if err != nil {
-		exit("reading configs dir: %v", err)
+		fmt.Fprintf(stderr, "error: reading configs dir: %v\n", err)
+		return 1
 	}
 
 	type result struct {
@@ -78,25 +94,22 @@ func main() {
 
 	for _, r := range results {
 		if len(r.Errors) == 0 {
-			fmt.Printf("✓ %s\n", r.File)
+			fmt.Fprintf(stdout, "✓ %s\n", r.File)
 			passed++
 		} else {
-			fmt.Printf("✗ %s\n", r.File)
+			fmt.Fprintf(stdout, "✗ %s\n", r.File)
 			for _, e := range r.Errors {
-				fmt.Printf("    %s\n", e)
+				fmt.Fprintf(stdout, "    %s\n", e)
 			}
 			failed++
 		}
 	}
 
-	fmt.Printf("\n%d files: %d passed, %d failed\n", total, passed, failed)
+	fmt.Fprintf(stdout, "\n%d files: %d passed, %d failed\n", total, passed, failed)
 
 	if failed > 0 {
-		os.Exit(1)
+		return 1
 	}
-}
 
-func exit(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
-	os.Exit(1)
+	return 0
 }

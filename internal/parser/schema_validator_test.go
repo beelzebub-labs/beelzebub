@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -239,4 +240,40 @@ func TestFlattenSchemaErrors_NonValidationError(t *testing.T) {
 	assert.Len(t, issues, 1)
 	assert.Equal(t, LevelError, issues[0].Level)
 	assert.Contains(t, issues[0].Message, "schema:")
+}
+
+func TestLoadSchemaRaw_MissingFile(t *testing.T) {
+	value, err := loadSchemaRaw("does-not-exist.schema.json")
+	assert.Error(t, err)
+	assert.Nil(t, value)
+}
+
+func TestFlattenOutput_RootNestedChildren(t *testing.T) {
+	schemaDoc, err := jsonschema.UnmarshalJSON(strings.NewReader(`{
+		"type": "object",
+		"properties": {
+			"value": {"type": "string"}
+		},
+		"required": ["value"]
+	}`))
+	assert.NoError(t, err)
+
+	compiler := jsonschema.NewCompiler()
+	assert.NoError(t, compiler.AddResource("https://example.invalid/schema.json", schemaDoc))
+	validator, err := compiler.Compile("https://example.invalid/schema.json")
+	assert.NoError(t, err)
+
+	instance, err := jsonschema.UnmarshalJSON(strings.NewReader(`{
+		"value": true
+	}`))
+	assert.NoError(t, err)
+
+	validationErr := validator.Validate(instance)
+	assert.Error(t, validationErr)
+
+	output := validationErr.(*jsonschema.ValidationError).DetailedOutput()
+	issues := flattenOutput(output)
+	assert.NotEmpty(t, issues)
+	assert.Equal(t, LevelError, issues[0].Level)
+	assert.Contains(t, issues[0].Message, "/value")
 }
