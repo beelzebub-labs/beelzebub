@@ -33,11 +33,11 @@ var (
 
 // protocolSchemaURLs maps protocol name to the per-protocol schema $id.
 var protocolSchemaURLs = map[string]string{
-	"ssh":    "https://beelzebub-labs.github.io/specs/honeypot-ssh.schema.json",
-	"http":   "https://beelzebub-labs.github.io/specs/honeypot-http.schema.json",
-	"tcp":    "https://beelzebub-labs.github.io/specs/honeypot-tcp.schema.json",
-	"telnet": "https://beelzebub-labs.github.io/specs/honeypot-telnet.schema.json",
-	"mcp":    "https://beelzebub-labs.github.io/specs/honeypot-mcp.schema.json",
+	"ssh":    "https://beelzebub-labs.github.io/specs/runtime-ssh.schema.json",
+	"http":   "https://beelzebub-labs.github.io/specs/runtime-http.schema.json",
+	"tcp":    "https://beelzebub-labs.github.io/specs/runtime-tcp.schema.json",
+	"telnet": "https://beelzebub-labs.github.io/specs/runtime-telnet.schema.json",
+	"mcp":    "https://beelzebub-labs.github.io/specs/runtime-mcp.schema.json",
 }
 
 // ResetSchemaCache clears the compiled schema cache. Used in tests.
@@ -52,12 +52,12 @@ func compileAllSchemas() error {
 	compileSchemasOnce.Do(func() {
 		compiler := jsonschema.NewCompiler()
 
-		baseDoc, err := loadSchemaRaw("honeypot-config.schema.json")
+		baseDoc, err := loadSchemaRaw("runtime-config.schema.json")
 		if err != nil {
 			schemaInitErr = fmt.Errorf("loading base schema: %w", err)
 			return
 		}
-		baseURL := "https://beelzebub-labs.github.io/specs/honeypot-config.schema.json"
+		baseURL := "https://beelzebub-labs.github.io/specs/runtime-config.schema.json"
 		if err := compiler.AddResource(baseURL, baseDoc); err != nil {
 			schemaInitErr = fmt.Errorf("registering base schema: %w", err)
 			return
@@ -71,7 +71,7 @@ func compileAllSchemas() error {
 
 		schemas := make(map[string]*jsonschema.Schema, len(protocolSchemaURLs))
 		for proto, url := range protocolSchemaURLs {
-			fileName := fmt.Sprintf("honeypot-%s.schema.json", proto)
+			fileName := fmt.Sprintf("runtime-%s.schema.json", proto)
 			doc, err := loadSchemaRaw(fileName)
 			if err != nil {
 				schemaInitErr = fmt.Errorf("loading schema %s: %w", fileName, err)

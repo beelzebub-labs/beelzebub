@@ -1,9 +1,9 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://beelzebub-labs.github.io/specs/honeypot-tcp.schema.json",
+  "$id": "https://beelzebub-labs.github.io/specs/runtime-tcp.schema.json",
   "title": "Beelzebub TCP Honeypot Configuration",
   "allOf": [
-    { "$ref": "honeypot-config.schema.json" },
+    { "$ref": "runtime-config.schema.json" },
     {
       "properties": {
         "tools": false

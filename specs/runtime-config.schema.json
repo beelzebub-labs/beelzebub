@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://beelzebub-labs.github.io/specs/honeypot-config.schema.json",
-  "title": "Beelzebub Honeypot Service Configuration",
-  "description": "Base schema for Beelzebub honeypot service configurations. Extended per-protocol via allOf + $ref.",
+  "$id": "https://beelzebub-labs.github.io/specs/runtime-config.schema.json",
+  "title": "Beelzebub Runtime Service Configuration",
+  "description": "Base schema for Beelzebub runtime service configurations. Extended per-protocol via allOf + $ref.",
   "type": "object",
   "properties": {
     "apiVersion": {

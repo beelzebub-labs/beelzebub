@@ -162,12 +162,12 @@ This reads YAML files, parses them, and validates against the per-protocol JSON 
 
 | File | Description |
 |---|---|
-| `honeypot-config.schema.json` | Base schema with shared fields and `$defs` (Command, Tool, Plugin, ...) |
-| `honeypot-ssh.schema.json` | SSH: requires `passwordRegex`, `serverVersion`, `commands` |
-| `honeypot-http.schema.json` | HTTP: requires `commands`, disallows `tools` |
-| `honeypot-tcp.schema.json` | TCP: disallows `tools` |
-| `honeypot-telnet.schema.json` | TELNET: requires `passwordRegex`, `commands` |
-| `honeypot-mcp.schema.json` | MCP: requires `tools`, disallows `commands` |
+| `runtime-config.schema.json` | Base schema with shared fields and `$defs` (Command, Tool, Plugin, ...) |
+| `runtime-ssh.schema.json` | SSH: requires `passwordRegex`, `serverVersion`, `commands` |
+| `runtime-http.schema.json` | HTTP: requires `commands`, disallows `tools` |
+| `runtime-tcp.schema.json` | TCP: disallows `tools` |
+| `runtime-telnet.schema.json` | TELNET: requires `passwordRegex`, `commands` |
+| `runtime-mcp.schema.json` | MCP: requires `tools`, disallows `commands` |
 
 Per-protocol schemas extend the base via `allOf` + `$ref`. Conditional rules use `if/then`:
 
@@ -188,7 +188,7 @@ make validate-all          # validate-specs + beelzebub validate (full)
 ### How to add a new field
 
 1. Add or modify the field in the Go struct (`internal/parser/configurations_parser.go`)
-2. Add the corresponding property in `specs/honeypot-config.schema.json` (and per-protocol schemas if protocol-specific)
+2. Add the corresponding property in `specs/runtime-config.schema.json` (and per-protocol schemas if protocol-specific)
 3. Run `make validate-specs` to verify config files pass
 4. Run `make validate-all` for full validation + Go procedural checks
 5. If the new field needs a quality warning, add a Go procedural check
