@@ -19,14 +19,14 @@ func TestSchemaValidator_Validate(t *testing.T) {
 
 	v := &SchemaValidator{}
 	config := BeelzebubServiceConfiguration{
-		Protocol:       "ssh",
-		Address:        ":22",
-		ServerVersion:  "OpenSSH",
-		PasswordRegex:  "^(.+)$",
-		ServerName:     "test",
-		ApiVersion:     "v1",
-		Commands:       []Command{{RegexStr: "^ls$", Handler: "files"}},
-		Description:    "test",
+		Protocol:      "ssh",
+		Address:       ":22",
+		ServerVersion: "OpenSSH",
+		PasswordRegex: "^(.+)$",
+		ServerName:    "test",
+		ApiVersion:    "v1",
+		Commands:      []Command{{RegexStr: "^ls$", Handler: "files"}},
+		Description:   "test",
 	}
 	issues := v.Validate(config)
 	assert.Empty(t, issues)
@@ -103,8 +103,8 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 				ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
 				Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
 				Plugin: Plugin{
-					RateLimitEnabled:      true,
-					RateLimitRequests:     10,
+					RateLimitEnabled:       true,
+					RateLimitRequests:      10,
 					RateLimitWindowSeconds: 60,
 				},
 			},

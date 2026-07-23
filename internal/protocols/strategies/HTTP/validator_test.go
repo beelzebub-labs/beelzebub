@@ -166,7 +166,7 @@ func TestHTTPValidator_NoCommandsNoFallback(t *testing.T) {
 func TestHTTPValidator_NoCommandsWithFallback(t *testing.T) {
 	v := &HTTPValidator{}
 	config := parser.BeelzebubServiceConfiguration{
-		Protocol: "http",
+		Protocol:        "http",
 		FallbackCommand: parser.Command{Handler: "fallback"},
 	}
 	issues := v.Validate(config)

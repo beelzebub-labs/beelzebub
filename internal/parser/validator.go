@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +45,7 @@ type ServiceValidator interface {
 }
 
 var (
-	serviceValidators []ServiceValidator
+	serviceValidators   []ServiceValidator
 	serviceValidatorsMu sync.Mutex
 )
 
@@ -70,10 +69,6 @@ func GetServiceValidators() []ServiceValidator {
 	defer serviceValidatorsMu.Unlock()
 	return append([]ServiceValidator(nil), serviceValidators...)
 }
-
-var validCommandPlugins = []string{"", "LLMHoneypot", "MazeHoneypot"}
-
-var validCommandPluginsDisplay = []string{"(none)", "LLMHoneypot", "MazeHoneypot"}
 
 // Validate checks service configurations and returns all errors and warnings
 func Validate(services []BeelzebubServiceConfiguration, parseIssues []ValidationIssue) ValidateResult {
@@ -154,13 +149,6 @@ func validateCommands(svc BeelzebubServiceConfiguration) []ValidationIssue {
 			})
 		}
 
-		if !slices.Contains(validCommandPlugins, cmd.Plugin) {
-			issues = append(issues, ValidationIssue{
-				Level:   LevelError,
-				Message: fmt.Sprintf("command[%d] has invalid plugin %q, valid: %s", j, cmd.Plugin, strings.Join(validCommandPluginsDisplay, ", ")),
-			})
-		}
-
 		if cmd.Handler == "" && cmd.Plugin == "" {
 			issues = append(issues, ValidationIssue{
 				Level:   LevelWarning,
@@ -194,13 +182,6 @@ func validateFallbackCommand(svc BeelzebubServiceConfiguration) []ValidationIssu
 				Message: fmt.Sprintf("fallbackCommand has invalid regex: %v", err),
 			})
 		}
-	}
-
-	if !slices.Contains(validCommandPlugins, fb.Plugin) {
-		issues = append(issues, ValidationIssue{
-			Level:   LevelError,
-			Message: fmt.Sprintf("fallbackCommand has invalid plugin %q, valid: %s", fb.Plugin, strings.Join(validCommandPluginsDisplay, ", ")),
-		})
 	}
 	return issues
 }
