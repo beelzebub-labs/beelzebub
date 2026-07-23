@@ -71,8 +71,6 @@ func GetServiceValidators() []ServiceValidator {
 	return append([]ServiceValidator(nil), serviceValidators...)
 }
 
-var validProtocols = []string{"http", "ssh", "tcp", "mcp", "telnet"}
-
 var validCommandPlugins = []string{"", "LLMHoneypot", "MazeHoneypot"}
 
 var validCommandPluginsDisplay = []string{"(none)", "LLMHoneypot", "MazeHoneypot"}
@@ -94,7 +92,6 @@ func Validate(services []BeelzebubServiceConfiguration, parseIssues []Validation
 		r := getResult(resultMap, services[i].Filename)
 		services[i].Address = strings.TrimSpace(services[i].Address)
 
-		r.Issues = append(r.Issues, validateProtocol(services[i])...)
 		r.Issues = append(r.Issues, validateAddress(services[i])...)
 		r.Issues = append(r.Issues, validateCommands(services[i])...)
 		r.Issues = append(r.Issues, validateFallbackCommand(services[i])...)
@@ -117,17 +114,6 @@ func getResult(resultMap map[string]*ValidationResult, filename string) *Validat
 		resultMap[filename] = r
 	}
 	return r
-}
-
-func validateProtocol(svc BeelzebubServiceConfiguration) []ValidationIssue {
-	if slices.Contains(validProtocols, svc.Protocol) {
-		return nil
-	}
-
-	return []ValidationIssue{{
-		Level:   LevelError,
-		Message: fmt.Sprintf("invalid protocol %q, valid: %s", svc.Protocol, strings.Join(validProtocols, ", ")),
-	}}
 }
 
 func validateAddress(svc BeelzebubServiceConfiguration) []ValidationIssue {

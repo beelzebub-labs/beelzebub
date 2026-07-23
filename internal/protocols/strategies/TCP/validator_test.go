@@ -1,11 +1,20 @@
 package TCP
 
 import (
+	"os"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/stretchr/testify/assert"
 )
+
+func existingFile() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "/tmp"
+	}
+	return exe
+}
 
 func TestTCPValidator_Name(t *testing.T) {
 	v := &TCPValidator{}
@@ -23,10 +32,11 @@ func TestTCPValidator_NotTCPProtocol(t *testing.T) {
 
 func TestTCPValidator_BothTLSSet(t *testing.T) {
 	v := &TCPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "tcp",
-		TLSCertPath: "/proc/self/exe",
-		TLSKeyPath:  "/proc/self/exe",
+		TLSCertPath: existing,
+		TLSKeyPath:  existing,
 	}
 	issues := v.Validate(config)
 	assert.Empty(t, issues)
@@ -69,10 +79,11 @@ func TestTCPValidator_OnlyKey(t *testing.T) {
 
 func TestTCPValidator_TLSFilesExist(t *testing.T) {
 	v := &TCPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "tcp",
-		TLSCertPath: "/proc/self/exe",
-		TLSKeyPath:  "/proc/self/exe",
+		TLSCertPath: existing,
+		TLSKeyPath:  existing,
 	}
 	issues := v.Validate(config)
 	assert.Empty(t, issues)
@@ -95,9 +106,10 @@ func TestTCPValidator_TLSFilesNotExist(t *testing.T) {
 
 func TestTCPValidator_TLSOneFileNotExist(t *testing.T) {
 	v := &TCPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "tcp",
-		TLSCertPath: "/proc/self/exe",
+		TLSCertPath: existing,
 		TLSKeyPath:  "/nonexistent/cert.key",
 	}
 	issues := v.Validate(config)

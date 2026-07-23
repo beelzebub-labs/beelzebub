@@ -188,7 +188,7 @@ address: ":8080"
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "validation failed with 1 error(s)")
-	assert.Contains(t, output, "invalid protocol")
+	assert.Contains(t, output, "must be one of")
 }
 
 func TestValidateConfigurations_CoreConfigParseError(t *testing.T) {
