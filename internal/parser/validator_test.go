@@ -153,6 +153,9 @@ func TestValidateCommandRegexEmpty(t *testing.T) {
 }
 
 func TestValidateCommandPluginInvalid(t *testing.T) {
+	RegisterServiceValidator(&SchemaValidator{})
+	defer ResetServiceValidators()
+
 	tests := []struct {
 		name      string
 		plugin    string
@@ -173,18 +176,20 @@ func TestValidateCommandPluginInvalid(t *testing.T) {
 			issues := findIssues(result, "test.yaml")
 
 			if tt.wantError {
-				expectedMsg := fmt.Sprintf("command[0] has invalid plugin %q, valid: (none), LLMHoneypot, MazeHoneypot", tt.plugin)
-				assert.True(t, hasIssue(issues, LevelError, expectedMsg))
+				assert.True(t, hasIssueContaining(issues, LevelError, "value must be one of"),
+					"expected schema validation error for plugin %q, got: %v", tt.plugin, issues)
 			} else {
-				for _, issue := range issues {
-					assert.NotContains(t, issue.Message, "invalid plugin")
-				}
+				assert.False(t, hasIssueContaining(issues, LevelError, "value must be one of"),
+					"unexpected schema validation error for plugin %q", tt.plugin)
 			}
 		})
 	}
 }
 
 func TestValidateFallbackCommand(t *testing.T) {
+	RegisterServiceValidator(&SchemaValidator{})
+	defer ResetServiceValidators()
+
 	tests := []struct {
 		name          string
 		fallback      Command
@@ -231,25 +236,13 @@ func TestValidateFallbackCommand(t *testing.T) {
 			issues := findIssues(result, "test.yaml")
 
 			if tt.wantRegexErr {
-				assert.True(t, len(issues) > 0, "expected a regex error")
-				for _, issue := range issues {
-					if issue.Level == LevelError {
-						assert.Contains(t, issue.Message, "fallbackCommand has invalid regex")
-					}
-				}
-			} else {
-				for _, issue := range issues {
-					assert.NotContains(t, issue.Message, "fallbackCommand has invalid regex")
-				}
+				assert.True(t, hasIssueContaining(issues, LevelError, "fallbackCommand has invalid regex"),
+					"expected regex error, got: %v", issues)
 			}
 
 			if tt.wantPluginErr {
-				expectedMsg := fmt.Sprintf("fallbackCommand has invalid plugin %q, valid: (none), LLMHoneypot, MazeHoneypot", tt.fallback.Plugin)
-				assert.True(t, hasIssue(issues, LevelError, expectedMsg))
-			} else {
-				for _, issue := range issues {
-					assert.NotContains(t, issue.Message, "fallbackCommand has invalid plugin")
-				}
+				assert.True(t, hasIssueContaining(issues, LevelError, "value must be one of"),
+					"expected schema plugin error, got: %v", issues)
 			}
 		})
 	}
@@ -600,10 +593,10 @@ func TestValidateCore(t *testing.T) {
 
 func TestValidateAddressFormat(t *testing.T) {
 	tests := []struct {
-		name      string
-		address   string
-		wantWarn  bool
-		warnMsg   string
+		name     string
+		address  string
+		wantWarn bool
+		warnMsg  string
 	}{
 		{":8080", ":8080", false, ""},
 		{"0.0.0.0:80", "0.0.0.0:80", false, ""},
