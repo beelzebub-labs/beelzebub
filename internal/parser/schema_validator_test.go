@@ -277,3 +277,155 @@ func TestFlattenOutput_RootNestedChildren(t *testing.T) {
 	assert.Equal(t, LevelError, issues[0].Level)
 	assert.Contains(t, issues[0].Message, "/value")
 }
+
+type schemaCompilerStub struct {
+	addResourceErr error
+	compileErr     error
+}
+
+func (s *schemaCompilerStub) AddResource(string, any) error { return s.addResourceErr }
+
+func (s *schemaCompilerStub) Compile(string) (*jsonschema.Schema, error) {
+	if s.compileErr != nil {
+		return nil, s.compileErr
+	}
+	return &jsonschema.Schema{}, nil
+}
+
+type protocolErrorCompiler struct{ err error }
+
+func (c *protocolErrorCompiler) AddResource(url string, _ any) error {
+	if strings.Contains(url, "runtime-config") {
+		return nil
+	}
+	return c.err
+}
+
+func (c *protocolErrorCompiler) Compile(url string) (*jsonschema.Schema, error) {
+	if strings.Contains(url, "runtime-config") {
+		return &jsonschema.Schema{}, nil
+	}
+	return nil, c.err
+}
+
+func withSchemaDependencies(t *testing.T, loader func(string) (any, error), compiler schemaCompiler) {
+	t.Helper()
+	oldLoader := loadSchema
+	oldCompiler := newSchemaCompiler
+	oldConfigToRawJSON := configToRawJSON
+	loadSchema = loader
+	newSchemaCompiler = func() schemaCompiler { return compiler }
+	t.Cleanup(func() {
+		loadSchema = oldLoader
+		newSchemaCompiler = oldCompiler
+		configToRawJSON = oldConfigToRawJSON
+		ResetSchemaCache()
+	})
+	ResetSchemaCache()
+}
+
+func TestCompileAllSchemas_LoadAndCompileErrors(t *testing.T) {
+	validDocument := func(string) (any, error) {
+		return map[string]any{"type": "object"}, nil
+	}
+
+	t.Run("base schema load", func(t *testing.T) {
+		withSchemaDependencies(t, func(string) (any, error) {
+			return nil, errors.New("read failed")
+		}, &schemaCompilerStub{})
+		assert.EqualError(t, compileAllSchemas(), "loading base schema: read failed")
+	})
+
+	t.Run("protocol schema load", func(t *testing.T) {
+		withSchemaDependencies(t, func(fileName string) (any, error) {
+			if fileName != "runtime-config.schema.json" {
+				return nil, errors.New("read failed")
+			}
+			return validDocument(fileName)
+		}, &schemaCompilerStub{})
+		err := compileAllSchemas()
+		assert.Contains(t, err.Error(), "loading schema runtime-")
+	})
+
+	t.Run("base resource registration", func(t *testing.T) {
+		withSchemaDependencies(t, validDocument, &schemaCompilerStub{addResourceErr: errors.New("register failed")})
+		assert.EqualError(t, compileAllSchemas(), "registering base schema: register failed")
+	})
+
+	t.Run("protocol resource registration", func(t *testing.T) {
+		withSchemaDependencies(t, validDocument, &protocolErrorCompiler{err: errors.New("register failed")})
+		err := compileAllSchemas()
+		assert.Contains(t, err.Error(), "registering schema runtime-")
+	})
+
+	t.Run("base compilation", func(t *testing.T) {
+		withSchemaDependencies(t, validDocument, &schemaCompilerStub{compileErr: errors.New("compile failed")})
+		assert.EqualError(t, compileAllSchemas(), "compiling base schema: compile failed")
+	})
+
+	t.Run("protocol compilation", func(t *testing.T) {
+		withSchemaDependencies(t, validDocument, &protocolCompileErrorCompiler{err: errors.New("compile failed")})
+		err := compileAllSchemas()
+		assert.Contains(t, err.Error(), "compiling schema runtime-")
+	})
+}
+
+type protocolCompileErrorCompiler struct{ err error }
+
+func (c *protocolCompileErrorCompiler) AddResource(string, any) error { return nil }
+
+func (c *protocolCompileErrorCompiler) Compile(url string) (*jsonschema.Schema, error) {
+	if strings.Contains(url, "runtime-config") {
+		return &jsonschema.Schema{}, nil
+	}
+	return nil, c.err
+}
+
+func TestValidateConfigSchema_InitializationAndConversionErrors(t *testing.T) {
+	withSchemaDependencies(t, func(string) (any, error) {
+		return nil, errors.New("embedded schema unavailable")
+	}, &schemaCompilerStub{})
+	issues := ValidateConfigSchema(BeelzebubServiceConfiguration{})
+	assert.Contains(t, issues[0].Message, "schema initialization: loading base schema")
+
+	withSchemaDependencies(t, func(string) (any, error) {
+		return map[string]any{"type": "object"}, nil
+	}, &schemaCompilerStub{})
+	configToRawJSON = func(any) (any, error) { return nil, errors.New("conversion failed") }
+	issues = ValidateConfigSchema(BeelzebubServiceConfiguration{})
+	assert.Equal(t, "schema: converting config: conversion failed", issues[0].Message)
+}
+
+func TestStructToRawJSON_MarshalError(t *testing.T) {
+	value, err := structToRawJSON(func() {})
+	assert.Error(t, err)
+	assert.Nil(t, value)
+}
+
+func TestValidateConfigSchema_UnknownProtocolBaseSuccess(t *testing.T) {
+	withSchemaDependencies(t, func(fileName string) (any, error) {
+		if fileName == "runtime-config.schema.json" {
+			return map[string]any{
+				"type":     "object",
+				"required": []any{"address"},
+				"properties": map[string]any{
+					"address": map[string]any{"type": "string", "minLength": 1},
+				},
+			}, nil
+		}
+		return map[string]any{"type": "object"}, nil
+	}, jsonschema.NewCompiler())
+
+	assert.Empty(t, ValidateConfigSchema(BeelzebubServiceConfiguration{
+		Protocol: "unknown",
+		Address:  ":1",
+	}))
+	issues := ValidateConfigSchema(BeelzebubServiceConfiguration{Protocol: "unknown"})
+	assert.NotEmpty(t, issues)
+	assert.Contains(t, issues[0].Message, "minLength")
+}
+
+func TestFlattenSchemaErrors_DetailedOutputFallback(t *testing.T) {
+	issues := flattenDetailedSchemaErrors(errors.New("validation failed"), &jsonschema.OutputUnit{})
+	assert.Equal(t, []ValidationIssue{{Level: LevelError, Message: "validation failed"}}, issues)
+}

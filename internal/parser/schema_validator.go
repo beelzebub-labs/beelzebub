@@ -16,6 +16,11 @@ import (
 // runs automatically during Validate().
 type SchemaValidator struct{}
 
+type schemaCompiler interface {
+	AddResource(string, any) error
+	Compile(string) (*jsonschema.Schema, error)
+}
+
 func (v *SchemaValidator) Name() string {
 	return "schema"
 }
@@ -29,6 +34,9 @@ var (
 	baseSchema         *jsonschema.Schema
 	protocolSchemas    map[string]*jsonschema.Schema
 	schemaInitErr      error
+	newSchemaCompiler  = func() schemaCompiler { return jsonschema.NewCompiler() }
+	loadSchema         = loadSchemaRaw
+	configToRawJSON    = structToRawJSON
 )
 
 // protocolSchemaURLs maps protocol name to the per-protocol schema $id.
@@ -50,9 +58,9 @@ func ResetSchemaCache() {
 
 func compileAllSchemas() error {
 	compileSchemasOnce.Do(func() {
-		compiler := jsonschema.NewCompiler()
+		compiler := newSchemaCompiler()
 
-		baseDoc, err := loadSchemaRaw("runtime-config.schema.json")
+		baseDoc, err := loadSchema("runtime-config.schema.json")
 		if err != nil {
 			schemaInitErr = fmt.Errorf("loading base schema: %w", err)
 			return
@@ -72,7 +80,7 @@ func compileAllSchemas() error {
 		schemas := make(map[string]*jsonschema.Schema, len(protocolSchemaURLs))
 		for proto, url := range protocolSchemaURLs {
 			fileName := fmt.Sprintf("runtime-%s.schema.json", proto)
-			doc, err := loadSchemaRaw(fileName)
+			doc, err := loadSchema(fileName)
 			if err != nil {
 				schemaInitErr = fmt.Errorf("loading schema %s: %w", fileName, err)
 				return
@@ -116,7 +124,7 @@ func ValidateConfigSchema(config BeelzebubServiceConfiguration) []ValidationIssu
 		}}
 	}
 
-	doc, err := structToRawJSON(config)
+	doc, err := configToRawJSON(config)
 	if err != nil {
 		return []ValidationIssue{{
 			Level:   LevelError,
@@ -162,6 +170,10 @@ func flattenSchemaErrors(err error) []ValidationIssue {
 	}
 
 	out := ve.DetailedOutput()
+	return flattenDetailedSchemaErrors(err, out)
+}
+
+func flattenDetailedSchemaErrors(err error, out *jsonschema.OutputUnit) []ValidationIssue {
 	issues := flattenOutput(out)
 
 	if len(issues) == 0 {
