@@ -55,42 +55,42 @@ type Prometheus struct {
 }
 
 type Plugin struct {
-	OpenAISecretKey         string `yaml:"openAISecretKey"`
-	Host                    string `yaml:"host"`
-	LLMModel                string `yaml:"llmModel"`
-	LLMProvider             string `yaml:"llmProvider"`
-	Prompt                  string `yaml:"prompt"`
-	InputValidationEnabled  bool   `yaml:"inputValidationEnabled"`
-	InputValidationPrompt   string `yaml:"inputValidationPrompt"`
-	OutputValidationEnabled bool   `yaml:"outputValidationEnabled"`
-	OutputValidationPrompt  string `yaml:"outputValidationPrompt"`
-	RateLimitEnabled        bool   `yaml:"rateLimitEnabled"`
-	RateLimitRequests       int    `yaml:"rateLimitRequests"`
-	RateLimitWindowSeconds  int    `yaml:"rateLimitWindowSeconds"`
+	OpenAISecretKey         string `yaml:"openAISecretKey" json:"openAISecretKey,omitempty"`
+	Host                    string `yaml:"host" json:"host,omitempty"`
+	LLMModel                string `yaml:"llmModel" json:"llmModel,omitempty"`
+	LLMProvider             string `yaml:"llmProvider" json:"llmProvider,omitempty"`
+	Prompt                  string `yaml:"prompt" json:"prompt,omitempty"`
+	InputValidationEnabled  bool   `yaml:"inputValidationEnabled" json:"inputValidationEnabled,omitempty"`
+	InputValidationPrompt   string `yaml:"inputValidationPrompt" json:"inputValidationPrompt,omitempty"`
+	OutputValidationEnabled bool   `yaml:"outputValidationEnabled" json:"outputValidationEnabled,omitempty"`
+	OutputValidationPrompt  string `yaml:"outputValidationPrompt" json:"outputValidationPrompt,omitempty"`
+	RateLimitEnabled        bool   `yaml:"rateLimitEnabled" json:"rateLimitEnabled,omitempty"`
+	RateLimitRequests       int    `yaml:"rateLimitRequests" json:"rateLimitRequests,omitempty"`
+	RateLimitWindowSeconds  int    `yaml:"rateLimitWindowSeconds" json:"rateLimitWindowSeconds,omitempty"`
 }
 
 // BeelzebubServiceConfiguration is the struct that contains the configurations of the honeypot service
 type BeelzebubServiceConfiguration struct {
 	Filename               string    `yaml:"-" json:"-"`
-	ApiVersion             string    `yaml:"apiVersion"`
-	Protocol               string    `yaml:"protocol"`
-	Address                string    `yaml:"address"`
-	Commands               []Command `yaml:"commands"`
-	Tools                  []Tool    `yaml:"tools"`
-	FallbackCommand        Command   `yaml:"fallbackCommand"`
-	ServerVersion          string    `yaml:"serverVersion"`
-	ServerName             string    `yaml:"serverName"`
-	DeadlineTimeoutSeconds int       `yaml:"deadlineTimeoutSeconds"`
-	PasswordRegex          string    `yaml:"passwordRegex"`
-	Description            string    `yaml:"description"`
-	Banner                 string    `yaml:"banner"`
-	Plugin                 Plugin    `yaml:"plugin"`
-	TLSCertPath            string    `yaml:"tlsCertPath"`
-	TLSKeyPath             string    `yaml:"tlsKeyPath"`
+	ApiVersion             string    `yaml:"apiVersion" json:"apiVersion,omitempty"`
+	Protocol               string    `yaml:"protocol" json:"protocol"`
+	Address                string    `yaml:"address" json:"address"`
+	Commands               []Command `yaml:"commands" json:"commands,omitempty"`
+	Tools                  []Tool    `yaml:"tools" json:"tools,omitempty"`
+	FallbackCommand        Command   `yaml:"fallbackCommand" json:"fallbackCommand,omitempty"`
+	ServerVersion          string    `yaml:"serverVersion" json:"serverVersion,omitempty"`
+	ServerName             string    `yaml:"serverName" json:"serverName,omitempty"`
+	DeadlineTimeoutSeconds int       `yaml:"deadlineTimeoutSeconds" json:"deadlineTimeoutSeconds,omitempty"`
+	PasswordRegex          string    `yaml:"passwordRegex" json:"passwordRegex,omitempty"`
+	Description            string    `yaml:"description" json:"description,omitempty"`
+	Banner                 string    `yaml:"banner" json:"banner,omitempty"`
+	Plugin                 Plugin    `yaml:"plugin" json:"plugin,omitempty"`
+	TLSCertPath            string    `yaml:"tlsCertPath" json:"tlsCertPath,omitempty"`
+	TLSKeyPath             string    `yaml:"tlsKeyPath" json:"tlsKeyPath,omitempty"`
 	// TrustedProxies is a list of CIDRs (or bare IPs) of upstream proxies whose
 	// X-Forwarded-For / X-Real-IP headers can be trusted. When empty, those
 	// headers are ignored and the immediate TCP peer is used as source IP.
-	TrustedProxies     []string     `yaml:"trustedProxies,omitempty" json:",omitempty"`
+	TrustedProxies     []string     `yaml:"trustedProxies,omitempty" json:"trustedProxies,omitempty"`
 	TrustedProxiesNets []*net.IPNet `yaml:"-" json:"-"`
 }
 
@@ -105,37 +105,37 @@ func (bsc BeelzebubServiceConfiguration) HashCode() (string, error) {
 
 // Command is the struct that contains the configurations of the commands
 type Command struct {
-	RegexStr   string         `yaml:"regex"`
-	Regex      *regexp.Regexp `yaml:"-"` // This field is parsed, not stored in the config itself.
-	Handler    string         `yaml:"handler"`
-	Headers    []string       `yaml:"headers"`
-	StatusCode int            `yaml:"statusCode"`
-	Plugin     string         `yaml:"plugin"`
-	Name       string         `yaml:"name"`
+	RegexStr   string         `yaml:"regex" json:"regex,omitempty"`
+	Regex      *regexp.Regexp `yaml:"-" json:"-"` // This field is parsed, not stored in the config itself.
+	Handler    string         `yaml:"handler" json:"handler,omitempty"`
+	Headers    []string       `yaml:"headers" json:"headers,omitempty"`
+	StatusCode int            `yaml:"statusCode" json:"statusCode,omitempty"`
+	Plugin     string         `yaml:"plugin" json:"plugin,omitempty"`
+	Name       string         `yaml:"name" json:"name,omitempty"`
 }
 
 // Tool is the struct that contains the configurations of the MCP Honeypot
 type Tool struct {
-	Name        string           `yaml:"name" json:"Name"`
-	Description string           `yaml:"description" json:"Description"`
-	Params      []Param          `yaml:"params" json:"Params"`
-	Handler     string           `yaml:"handler" json:"Handler"`
-	Annotations *ToolAnnotations `yaml:"annotations,omitempty" json:"Annotations,omitempty"`
+	Name        string           `yaml:"name" json:"name"`
+	Description string           `yaml:"description" json:"description,omitempty"`
+	Params      []Param          `yaml:"params" json:"params,omitempty"`
+	Handler     string           `yaml:"handler" json:"handler,omitempty"`
+	Annotations *ToolAnnotations `yaml:"annotations,omitempty" json:"annotations,omitempty"`
 }
 
 // ToolAnnotations contains MCP tool annotation hints for LLM clients
 type ToolAnnotations struct {
-	Title           string `yaml:"title,omitempty" json:"Title,omitempty"`
-	ReadOnlyHint    *bool  `yaml:"readOnlyHint,omitempty" json:"ReadOnlyHint,omitempty"`
-	DestructiveHint *bool  `yaml:"destructiveHint,omitempty" json:"DestructiveHint,omitempty"`
-	IdempotentHint  *bool  `yaml:"idempotentHint,omitempty" json:"IdempotentHint,omitempty"`
-	OpenWorldHint   *bool  `yaml:"openWorldHint,omitempty" json:"OpenWorldHint,omitempty"`
+	Title           string `yaml:"title,omitempty" json:"title,omitempty"`
+	ReadOnlyHint    *bool  `yaml:"readOnlyHint,omitempty" json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `yaml:"destructiveHint,omitempty" json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `yaml:"idempotentHint,omitempty" json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `yaml:"openWorldHint,omitempty" json:"openWorldHint,omitempty"`
 }
 
 // Param is the struct that contains the configurations of the parameters of the tools
 type Param struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+	Name        string `yaml:"name" json:"name,omitempty"`
+	Description string `yaml:"description" json:"description,omitempty"`
 }
 
 type configurationsParser struct {

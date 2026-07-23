@@ -40,6 +40,17 @@ test.dependencies.start:
 test.dependencies.down:
 	${DOCKER_COMPOSE} -f ./integration_test/docker-compose.yml down
 
+# validate-specs validates all honeypot service configurations against the
+# per-protocol JSON Schemas in specs/. Exit code 1 on any failure.
+.PHONY: validate-specs
+validate-specs:
+	go run ./cmd/validate-specs
+
+# validate-all runs both schema validation and the full Go validator.
+.PHONY: validate-all
+validate-all: validate-specs
+	go run . validate
+
 .PHONY: test.integration
 test.integration:
 	INTEGRATION=1 go test ./...

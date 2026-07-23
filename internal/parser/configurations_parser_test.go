@@ -258,7 +258,7 @@ func TestReadConfigurationsServicesGenerateHashCode(t *testing.T) {
 
 	assert.Nil(t, err)
 	assert.Nil(t, errHashCode)
-	assert.Equal(t, hashCode, "528e52a4b7addc43ec887dba7913070c9fd9f2ec246723c4b6ee73de75426e24")
+	assert.Equal(t, "34c8a2e81787e09f9e24efd6f60b2ceb808e47d9fa180ea8af9f054797ad4e00", hashCode)
 }
 
 func TestReadConfigurationsPluginGuardrailsValid(t *testing.T) {
@@ -544,7 +544,7 @@ func TestToolAnnotationsHashCodeStability(t *testing.T) {
 	// the hash for configs that don't use annotations
 	hashCode, errHashCode := beelzebubServicesConfiguration[0].HashCode()
 	assert.Nil(t, errHashCode)
-	assert.Equal(t, "528e52a4b7addc43ec887dba7913070c9fd9f2ec246723c4b6ee73de75426e24", hashCode)
+	assert.Equal(t, "34c8a2e81787e09f9e24efd6f60b2ceb808e47d9fa180ea8af9f054797ad4e00", hashCode)
 }
 
 func TestReadConfigurationsCoreEnvOverridesFile(t *testing.T) {
@@ -669,9 +669,9 @@ func TestReadConfigurationsServicesDirectoryNotFound(t *testing.T) {
 }
 
 func TestReadConfigurationsServicesFromEnvInvalidRegex(t *testing.T) {
-	// Use the Go field name "RegexStr" as JSON key so that json.Unmarshal stores the value
+	// Use the Go field JSON tag "regex" so that json.Unmarshal stores the value
 	// as a plain string and leaves regex compilation to CompileCommandRegex.
-	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"protocol":"ssh","address":":22","commands":[{"RegexStr":"[invalid"}]}]`)
+	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"protocol":"ssh","address":":22","commands":[{"regex":"[invalid"}]}]`)
 
 	configurationsParser := Init("", "")
 
@@ -1099,7 +1099,7 @@ func TestReadConfigurationsServicesForValidationFromEnvRateLimitError(t *testing
 }
 
 func TestReadConfigurationsServicesForValidationFromEnvInvalidRegex(t *testing.T) {
-	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"protocol":"ssh","address":":22","commands":[{"RegexStr":"[invalid"}]}]`)
+	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"protocol":"ssh","address":":22","commands":[{"regex":"[invalid"}]}]`)
 
 	configurationsParser := Init("", "")
 

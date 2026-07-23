@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://beelzebub-labs.github.io/specs/honeypot-telnet.schema.json",
+  "title": "Beelzebub TELNET Honeypot Configuration",
+  "allOf": [
+    { "$ref": "honeypot-config.schema.json" },
+    {
+      "required": ["passwordRegex", "commands"],
+      "properties": {
+        "passwordRegex": { "minLength": 1 },
+        "commands": { "minItems": 1 },
+        "tools": false
+      }
+    }
+  ]
+}

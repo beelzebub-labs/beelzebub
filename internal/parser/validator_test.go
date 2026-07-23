@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,15 +43,27 @@ func hasIssue(issues []ValidationIssue, level, message string) bool {
 	return false
 }
 
+func hasIssueContaining(issues []ValidationIssue, level, substr string) bool {
+	for _, issue := range issues {
+		if issue.Level == level && strings.Contains(issue.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateProtocol(t *testing.T) {
+	ResetSchemaCache()
+	defer ResetSchemaCache()
+
 	tests := []struct {
 		name      string
 		protocol  string
 		wantError bool
 		errorMsg  string
 	}{
-		{"missing protocol", "", true, `invalid protocol "", valid: http, ssh, tcp, mcp, telnet`},
-		{"invalid protocol ftp", "ftp", true, `invalid protocol "ftp", valid: http, ssh, tcp, mcp, telnet`},
+		{"missing protocol", "", true, "value must be one of"},
+		{"invalid protocol ftp", "ftp", true, "value must be one of"},
 		{"valid http", "http", false, ""},
 		{"valid ssh", "ssh", false, ""},
 		{"valid tcp", "tcp", false, ""},
@@ -61,14 +74,19 @@ func TestValidateProtocol(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := makeService("test.yaml", tt.protocol, ":8080", nil)
-			result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
-			issues := findIssues(result, "test.yaml")
+			issues := ValidateConfigSchema(svc)
 
 			if tt.wantError {
-				assert.True(t, hasIssue(issues, LevelError, tt.errorMsg))
+				if !hasIssueContaining(issues, LevelError, tt.errorMsg) {
+					t.Logf("Issues (count=%d):", len(issues))
+					for i, iss := range issues {
+						t.Logf("  [%d] Level=%s Msg=%q", i, iss.Level, iss.Message)
+					}
+				}
+				assert.True(t, hasIssueContaining(issues, LevelError, tt.errorMsg))
 			} else {
 				for _, issue := range issues {
-					assert.NotContains(t, issue.Message, "invalid protocol")
+					assert.NotContains(t, issue.Message, "value must be one of")
 				}
 			}
 		})
@@ -708,7 +726,11 @@ func TestValidateTLSConfig(t *testing.T) {
 	})
 
 	t.Run("both set and exist", func(t *testing.T) {
-		issues := ValidateTLSConfig("/proc/self/exe", "/proc/self/exe", "test.yaml")
+		existingFile, _ := os.Executable()
+		if existingFile == "" {
+			existingFile = "/tmp"
+		}
+		issues := ValidateTLSConfig(existingFile, existingFile, "test.yaml")
 		assert.Empty(t, issues)
 	})
 
@@ -737,7 +759,11 @@ func TestValidateTLSConfig(t *testing.T) {
 	})
 
 	t.Run("one file does not exist", func(t *testing.T) {
-		issues := ValidateTLSConfig("/proc/self/exe", "/nonexistent/cert.key", "test.yaml")
+		existingFile, _ := os.Executable()
+		if existingFile == "" {
+			existingFile = "/tmp"
+		}
+		issues := ValidateTLSConfig(existingFile, "/nonexistent/cert.key", "test.yaml")
 		assert.Len(t, issues, 1)
 		assert.Equal(t, LevelWarning, issues[0].Level)
 		assert.Contains(t, issues[0].Message, "tlsKeyPath file does not exist")

@@ -1,11 +1,20 @@
 package HTTP
 
 import (
+	"os"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/stretchr/testify/assert"
 )
+
+func existingFile() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "/tmp"
+	}
+	return exe
+}
 
 func TestHTTPValidator_Name(t *testing.T) {
 	v := &HTTPValidator{}
@@ -23,10 +32,11 @@ func TestHTTPValidator_NotHTTPProtocol(t *testing.T) {
 
 func TestHTTPValidator_BothTLSSet(t *testing.T) {
 	v := &HTTPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "http",
-		TLSCertPath: "/proc/self/exe",
-		TLSKeyPath:  "/proc/self/exe",
+		TLSCertPath: existing,
+		TLSKeyPath:  existing,
 	}
 	issues := v.Validate(config)
 	assert.Empty(t, issues)
@@ -69,10 +79,11 @@ func TestHTTPValidator_OnlyKey(t *testing.T) {
 
 func TestHTTPValidator_TLSFilesExist(t *testing.T) {
 	v := &HTTPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "http",
-		TLSCertPath: "/proc/self/exe",
-		TLSKeyPath:  "/proc/self/exe",
+		TLSCertPath: existing,
+		TLSKeyPath:  existing,
 	}
 	issues := v.Validate(config)
 	assert.Empty(t, issues)
@@ -95,9 +106,10 @@ func TestHTTPValidator_TLSFileNotExist(t *testing.T) {
 
 func TestHTTPValidator_TLSOneFileNotExist(t *testing.T) {
 	v := &HTTPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "http",
-		TLSCertPath: "/proc/self/exe",
+		TLSCertPath: existing,
 		TLSKeyPath:  "/nonexistent/cert.key",
 	}
 	issues := v.Validate(config)
