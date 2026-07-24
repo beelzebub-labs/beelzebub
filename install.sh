@@ -7,23 +7,26 @@
 #   ./install.sh --docker                # containerized (Docker)
 #   ./install.sh --plugin github.com/org/x --plugin github.com/org/y --token TOK
 #
-# Flags (all optional; missing values are prompted for on a terminal):
+# Flags (all optional; the install mode and missing prerequisites may be prompted for on a terminal):
 #   --local | --docker      Install type (default: prompt, else local)
 #   --plugin LINK           Plugin to install (repeatable); added to configurations/plugins.yaml
 #   --token TOKEN           Beelzebub Cloud token (BEELZEBUB_CLOUD_AUTH_TOKEN)
 #   --github-token TOKEN    Token for private plugin repos (BEELZEBUB_GITHUB_TOKEN)
+#   --no-run                Build/install only; do not start the local runtime
 #   -y, --yes               Assume yes to prompts (auto-install prerequisites)
 #   -h, --help              Show this help
 set -eu
 
 MODE=""
 PLUGINS=""
-TOKEN="${BEELZEBUB_CLOUD_AUTH_TOKEN:-}"
+TOKEN=""
 GH_TOKEN="${BEELZEBUB_GITHUB_TOKEN:-}"
 ASSUME_YES=0
-REPO_URL="https://github.com/mariocandela/beelzebub.git"
+RUN_LOCAL=1
+REPO_URL="https://github.com/beelzebub-labs/beelzebub.git"
+MAKE_CMD="${MAKE:-make}"
 
-# --- brand palette (truecolor; disabled when not a TTY or NO_COLOR is set) ----
+# Colors are disabled for non-TTY output and when NO_COLOR is set.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   E=$(printf '\033'); R="${E}[0m"; B="${E}[1m"; D="${E}[2m"
   GRN="${E}[38;2;58;208;127m"; BLU="${E}[38;2;120;140;250m"; RED="${E}[38;2;244;80;110m"
@@ -36,12 +39,10 @@ step()  { printf '%s→%s %s\n' "$BLU" "$R" "$*"; }
 ok()    { printf '%s✓%s %s\n' "$GRN" "$R" "$*"; }
 die()   { printf '%s✗ %s%s\n' "$RED" "$*" "$R" >&2; exit 1; }
 
-# banner prints the wordmark with the brand gradient (purple → blue → cyan).
 banner() {
   _cols=$(tput cols 2>/dev/null || echo 80)
   printf '\n'
   if [ -n "$E" ] && [ "${_cols:-80}" -ge 70 ]; then
-    # big ANSI Shadow wordmark, vertical purple → cyan gradient
     printf '%s' "$B"
     printf '  %s[38;2;168;85;247m██████╗ ███████╗███████╗██╗     ███████╗███████╗██████╗ ██╗   ██╗██████╗ \n' "$E"
     printf '  %s[38;2;141;110;245m██╔══██╗██╔════╝██╔════╝██║     ╚══███╔╝██╔════╝██╔══██╗██║   ██║██╔══██╗\n' "$E"
@@ -60,61 +61,54 @@ banner() {
   printf '  %sCybersecurity at Machine Speed%s\n\n' "$D" "$R"
 }
 
-# --- glyph spinner (from the Caronte dashboard) ------------------------------
-# Rotating glyph + infernal phrases, in the brand purple/blue.
-glyph_at()  { i=$(( $1 % 8 )); set -- ✢ ✳ ✶ ✻ ✽ ✻ ✶ ✳; shift "$i"; printf '%s' "$1"; }
-phrase_at() { i=$(( $1 % 6 ));  set -- 'Setting the trap' 'Summoning daemons' 'Weaving illusions' 'Baiting the swarm' 'Opening the gates' 'Stirring the pit'; shift "$i"; printf '%s' "$1"; }
-
-# shimmer TEXT POS — TEXT with a bright crest sweeping across it (Claude-style
-# loading shimmer). Purple only: light purple crest fading through brand purple to dim.
-shimmer() {
-  awk -v t="$1" -v p="$2" \
-    -v c0="$B$E[38;2;201;160;255m" -v c1="$E[38;2;168;85;247m" -v c2="$E[38;2;120;74;168m" -v lo="$D" -v r="$R" 'BEGIN{
-    n=length(t); if(n<1){exit}
-    p=p%n
-    for(i=1;i<=n;i++){ d=(i-1)-p; if(d<0)d=-d
-      c=(d==0)?c0:(d==1)?c1:(d==2)?c2:lo
-      printf "%s%s%s",c,substr(t,i,1),r
-    }
-  }'
+run_step() {
+  _label="$1"
+  shift
+  step "$_label"
+  if "$@"; then
+    ok "$_label"
+  else
+    _rc=$?
+    die "$_label failed (exit $_rc)"
+  fi
 }
 
-# spin_run "done message" cmd...  — run cmd with a glyph spinner + shimmering
-# phrase; on failure print its output and abort. Plain exec without a TTY.
-spin_run() {
-  _done="$1"; shift
-  if [ -z "$E" ] || [ "$HAVE_TTY" -ne 1 ]; then "$@"; return; fi
-  _log=$(mktemp 2>/dev/null || echo "/tmp/bzb.$$.log")
-  "$@" >"$_log" 2>&1 &
-  _pid=$!; _i=0; _p=0
-  while kill -0 "$_pid" 2>/dev/null; do
-    printf '\r  %s%s%s  %s\033[K' "$BLU" "$(glyph_at $_i)" "$R" "$(shimmer "$(phrase_at $_p)" "$_i")" > /dev/tty
-    _i=$((_i + 1)); [ $((_i % 24)) -eq 0 ] && _p=$((_p + 1))
-    sleep 0.1 2>/dev/null || sleep 1   # fractional where supported (busybox falls back to 1s)
-  done
-  wait "$_pid"; _rc=$?
-  printf '\r\033[K' > /dev/tty
-  if [ "$_rc" -ne 0 ]; then cat "$_log" >&2; rm -f "$_log"; die "$_done failed"; fi
-  rm -f "$_log"; ok "$_done"
-}
-
-# --- flags -------------------------------------------------------------------
 while [ $# -gt 0 ]; do
   case "$1" in
     --local)        MODE="local"; shift ;;
     --docker)       MODE="docker"; shift ;;
-    --plugin)       PLUGINS="$PLUGINS $2"; shift 2 ;;
-    --token)        TOKEN="$2"; shift 2 ;;
-    --github-token) GH_TOKEN="$2"; shift 2 ;;
+    --plugin)
+      [ $# -ge 2 ] || die "--plugin requires a repository link"
+      PLUGINS="${PLUGINS}${PLUGINS:+
+}$2"
+      shift 2
+      ;;
+    --token)
+      [ $# -ge 2 ] || die "--token requires a value"
+      TOKEN="$2"
+      shift 2
+      ;;
+    --github-token)
+      [ $# -ge 2 ] || die "--github-token requires a value"
+      GH_TOKEN="$2"
+      shift 2
+      ;;
+    --no-run)       RUN_LOCAL=0; shift ;;
     -y|--yes)       ASSUME_YES=1; shift ;;
     -h|--help)      awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; seen=1; next} seen{exit}' "$0"; exit 0 ;;
     *)              die "unknown option: $1" ;;
   esac
 done
 
-# A terminal is needed to prompt; when piped (curl | sh) we read from /dev/tty.
+# Use /dev/tty for prompts when the script is piped into a shell.
 HAVE_TTY=0
-[ -e /dev/tty ] && [ -r /dev/tty ] && HAVE_TTY=1
+if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+  # Some CI/PTY-like environments expose /dev/tty but do not allow it to be
+  # opened. Probe the device before treating the process as interactive.
+  if ( : </dev/tty >/dev/tty ) 2>/dev/null; then
+    HAVE_TTY=1
+  fi
+fi
 ask() { # ask "Question" -> echoes answer ("" on no tty)
   [ "$HAVE_TTY" -eq 1 ] || { printf '\n'; return 0; }
   printf '%s' "$1" > /dev/tty
@@ -124,15 +118,32 @@ ask() { # ask "Question" -> echoes answer ("" on no tty)
 
 banner
 
-# --- ensure we're in a checkout (clone if not) -------------------------------
-if [ ! -f go.mod ] || [ ! -f Makefile ]; then
-  command -v git >/dev/null 2>&1 || die "run this inside a cloned beelzebub repo, or install git so it can be cloned."
-  step "Cloning Beelzebub..."
-  git clone --depth 1 "$REPO_URL" beelzebub
-  cd beelzebub
+# Resolve the checkout from the script location so invocation from another
+# directory still updates the intended repository. Piped execution falls back
+# to the current directory and clones when no checkout is present.
+SCRIPT_DIR=""
+if [ -n "${0:-}" ] && [ "${0#-}" = "$0" ]; then
+  SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || SCRIPT_DIR=""
 fi
 
-# --- choose install type -----------------------------------------------------
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/go.mod" ] && [ -f "$SCRIPT_DIR/Makefile" ]; then
+  REPO_DIR="$SCRIPT_DIR"
+elif [ -f "go.mod" ] && [ -f "Makefile" ]; then
+  REPO_DIR=$(pwd)
+else
+  command -v git >/dev/null 2>&1 || die "run this inside a cloned beelzebub repo, or install git so it can be cloned."
+  step "Cloning Beelzebub..."
+  CLONE_DIR="${BEELZEBUB_INSTALL_DIR:-beelzebub}"
+  case "$CLONE_DIR" in
+    *[!A-Za-z0-9._/-]*|/*|..|../*) die "invalid clone directory: $CLONE_DIR" ;;
+  esac
+  [ ! -e "$CLONE_DIR" ] || die "clone directory already exists: $CLONE_DIR"
+  git clone --depth 1 "$REPO_URL" "$CLONE_DIR"
+  REPO_DIR=$(CDPATH= cd -- "$CLONE_DIR" && pwd)
+fi
+
+cd "$REPO_DIR"
+
 if [ -z "$MODE" ]; then
   info "How do you want to run Beelzebub?"
   printf '  %s1%s) Local %s(needs Go)%s\n' "$B" "$R" "$D" "$R"
@@ -143,7 +154,7 @@ if [ -z "$MODE" ]; then
   esac
 fi
 
-# --- prerequisites (check; offer to install via a known package manager) -----
+# Offer installation through a detected package manager when a prerequisite is missing.
 pkg_install() { # pkg_install <tool>; echoes a command that would install it, or ""
   if command -v brew     >/dev/null 2>&1; then echo "brew install $1";
   elif command -v apt-get >/dev/null 2>&1; then echo "sudo apt-get update && sudo apt-get install -y $1";
@@ -167,12 +178,16 @@ need() { # need <tool> <manual-instructions>
 
 if [ "$MODE" = "docker" ]; then
   need docker "Install it from https://docs.docker.com/get-docker and re-run."
+  if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+    die "Docker Compose is required. Install the Docker Compose plugin and re-run."
+  fi
 else
   need go  "Install it from https://go.dev/dl and re-run."
   need git "Install git from your package manager and re-run."
+  need make "Install make from your package manager and re-run."
 fi
 
-# --- plugins (only via --plugin; add more anytime in configurations/plugins.yaml or the CLI) ---
+# Keep plugin declarations in YAML so local and Docker deployments use the same list.
 PLUGIN_CONFIG="configurations/plugins.yaml"
 yaml_quote() {
   printf "%s" "$1" | sed "s/'/''/g; s/^/'/; s/$/'/"
@@ -183,7 +198,9 @@ add_plugin_source() {
   mkdir -p configurations
   [ -f "$PLUGIN_CONFIG" ] || printf 'plugins: []\n' > "$PLUGIN_CONFIG"
   _quoted_plugin=$(yaml_quote "$_plugin")
-  grep -Eq "^[[:space:]]*-[[:space:]]*source:[[:space:]]*(['\"])?$(printf "%s" "$_plugin" | sed 's/[.[\*^$()+?{}|]/\\&/g')(['\"])?[[:space:]]*$" "$PLUGIN_CONFIG" 2>/dev/null && return 0
+  grep -Fq "source: $_plugin" "$PLUGIN_CONFIG" 2>/dev/null && return 0
+  grep -Fq "source: '$_plugin'" "$PLUGIN_CONFIG" 2>/dev/null && return 0
+  grep -Fq "source: \"$_plugin\"" "$PLUGIN_CONFIG" 2>/dev/null && return 0
 
   if grep -Eq '^plugins:[[:space:]]*\[\][[:space:]]*(#.*)?$' "$PLUGIN_CONFIG" 2>/dev/null; then
     printf 'plugins:\n  - source: %s\n' "$_quoted_plugin" > "$PLUGIN_CONFIG"
@@ -196,49 +213,74 @@ add_plugin_source() {
   fi
 }
 
-for p in $PLUGINS; do
-  add_plugin_source "$p"
-done
-
-# --- cloud token -------------------------------------------------------------
-if [ -z "$TOKEN" ] && [ "$HAVE_TTY" -eq 1 ]; then
-  info "Beelzebub Cloud token — Learn more at https://beelzebub.ai/products/beelzebub-cloud/"
-  TOKEN="$(ask 'Token (blank to skip): ')"
+if [ -n "$PLUGINS" ]; then
+  while IFS= read -r p; do
+    [ -n "$p" ] && add_plugin_source "$p"
+  done <<EOF
+$PLUGINS
+EOF
 fi
-# set_env KEY VALUE — upsert a line into .env (created 0600).
+
+# Compose reads these values from .env; keep the file private because it may contain tokens.
 set_env() {
   { grep -v "^$1=" .env 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } > .env.tmp && mv .env.tmp .env
   chmod 600 .env
 }
 [ -n "$TOKEN" ] && set_env BEELZEBUB_CLOUD_AUTH_TOKEN "$TOKEN"
 
-# GitHub token: used by the CLI (plugin install) and written to .env so
-# `docker compose --build` passes it as a build arg — this lets a no-Go Docker
-# host bake in private plugins during the image build.
+# Pass the GitHub token to both the CLI and Docker build without exposing it in command arguments.
 if [ -n "$GH_TOKEN" ]; then
   export BEELZEBUB_GITHUB_TOKEN="$GH_TOKEN"
   set_env BEELZEBUB_GITHUB_TOKEN "$GH_TOKEN"
 fi
 
-# Record the mode so a later `plugin install` applies changes the right way.
-printf '%s\n' "$MODE" > .beelzebub-mode
-
-# --- hand off to the Makefile ------------------------------------------------
 if [ "$MODE" = "docker" ]; then
-  spin_run "Image built · container started" ${MAKE:-make} docker
-  # Also build the local CLI so `./beelzebub plugin ...` manages the container (needs Go).
-  command -v go >/dev/null 2>&1 && ${MAKE:-make} -s build >/dev/null 2>&1 || true
+  compose_up() {
+    if docker compose version >/dev/null 2>&1; then
+      docker compose up -d --build
+    else
+      docker-compose up -d --build
+    fi
+  }
+  run_step "Build Docker image and start container" compose_up
+  # Do not direct later plugin commands to Docker if this deployment failed.
+  printf '%s\n' "$MODE" > .beelzebub-mode
+  # Build a local CLI when possible so it can manage the container.
+  if command -v go >/dev/null 2>&1 && command -v "$MAKE_CMD" >/dev/null 2>&1; then
+    if "$MAKE_CMD" -s build >/dev/null 2>&1; then
+      ok "Local plugin CLI built"
+    else
+      info "Local Go CLI was not built; manage Docker plugins with configurations/plugins.yaml and make docker."
+    fi
+  else
+    info "Go is not installed; manage Docker plugins with configurations/plugins.yaml and make docker."
+  fi
   info ""
   info "Manage plugins with: ./beelzebub plugin install <link>   (or edit configurations/plugins.yaml)"
 else
   [ -n "$TOKEN" ] && export BEELZEBUB_CLOUD_AUTH_TOKEN="$TOKEN"
-  spin_run "Plugins wired"     sh -c 'go run . plugin install --no-build'
-  spin_run "Built ./beelzebub" ${MAKE:-make} -s build
-  # Run detached (like Docker's -d) so the installer returns; logs to beelzebub.log.
+  run_step "Install declared plugins" sh -c 'go run . plugin install --no-build'
+  run_step "Build ./beelzebub" "$MAKE_CMD" -s build
+  # The default services include privileged ports, so non-root users finish the
+  # build and start the runtime manually with a suitable service directory.
+  if [ "$RUN_LOCAL" -eq 0 ]; then
+    printf '%s\n' "$MODE" > .beelzebub-mode
+    info "Local installation complete; runtime start skipped (--no-run)."
+    exit 0
+  fi
+  if [ "$(id -u)" -ne 0 ]; then
+    printf '%s\n' "$MODE" > .beelzebub-mode
+    info "Local installation complete; runtime was not started because the default services include privileged ports."
+    info "Start it manually with a suitable service directory, or use --no-run."
+    exit 0
+  fi
+  # Run detached so the installer returns; keep runtime output in a log file.
   nohup ./beelzebub run > beelzebub.log 2>&1 &
   _rpid=$!
   sleep 1
   kill -0 "$_rpid" 2>/dev/null || { cat beelzebub.log >&2; die "runtime exited on startup — see beelzebub.log"; }
+  # Later plugin commands should target local mode only after startup succeeds.
+  printf '%s\n' "$MODE" > .beelzebub-mode
   ok "Runtime running (pid $_rpid) · logs: beelzebub.log · stop: kill $_rpid"
   info ""
   info "Manage plugins with: ./beelzebub plugin install <link>   (or edit configurations/plugins.yaml)"

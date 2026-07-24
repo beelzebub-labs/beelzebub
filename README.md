@@ -73,7 +73,10 @@ Beelzebub is an open-source deception runtime that deploys adaptive, LLM-powered
 ./install.sh     # asks local or Docker, checks prerequisites, and starts it
 ```
 
-Non-interactive: `./install.sh --local` or `./install.sh --docker`.
+Non-interactive: `./install.sh --local` or `./install.sh --docker`. Use
+`./install.sh --local --no-run` to install and build without starting the local
+runtime. On non-root hosts, local installation does not auto-start when the
+default configuration includes privileged ports.
 
 ### Local (Go)
 
