@@ -1,6 +1,10 @@
 services:
   beelzebub:
-    build: .
+    build:
+      context: .
+      args:
+        # Token for cloning private plugins during the image build (from .env).
+        BEELZEBUB_GITHUB_TOKEN: ${BEELZEBUB_GITHUB_TOKEN:-}
     container_name: beelzebub
     restart: always
     ports:
@@ -15,5 +19,7 @@ services:
     environment:
       RABBITMQ_URI: ${RABBITMQ_URI}
       OPEN_AI_SECRET_KEY: ${OPEN_AI_SECRET_KEY}
+      # Beelzebub Cloud (from .env, written by install.sh).
+      BEELZEBUB_CLOUD_AUTH_TOKEN: ${BEELZEBUB_CLOUD_AUTH_TOKEN:-}
     volumes:
       - "./configurations:/configurations"
