@@ -10,7 +10,8 @@
 # Flags (all optional; the install mode and missing prerequisites may be prompted for on a terminal):
 #   --local | --docker      Install type (default: prompt, else local)
 #   --plugin LINK           Plugin to install (repeatable); added to configurations/plugins.yaml
-#   --token TOKEN           Beelzebub Cloud token (BEELZEBUB_CLOUD_AUTH_TOKEN)
+#   --token TOKEN           Beelzebub Cloud token; also turns cloud reporting on
+#   --uri URL               Beelzebub Cloud API base (required alongside --token)
 #   --github-token TOKEN    Token for private plugin repos (BEELZEBUB_GITHUB_TOKEN)
 #   --no-run                Build/install only; do not start the local runtime
 #   -y, --yes               Assume yes to prompts (auto-install prerequisites)
@@ -19,7 +20,8 @@ set -eu
 
 MODE=""
 PLUGINS=""
-TOKEN=""
+TOKEN="${BEELZEBUB_CLOUD_AUTH_TOKEN:-}"
+URI="${BEELZEBUB_CLOUD_URI:-}"
 GH_TOKEN="${BEELZEBUB_GITHUB_TOKEN:-}"
 ASSUME_YES=0
 RUN_LOCAL=1
@@ -86,6 +88,11 @@ while [ $# -gt 0 ]; do
     --token)
       [ $# -ge 2 ] || die "--token requires a value"
       TOKEN="$2"
+      shift 2
+      ;;
+    --uri)
+      [ $# -ge 2 ] || die "--uri requires a value"
+      URI="$2"
       shift 2
       ;;
     --github-token)
@@ -221,12 +228,30 @@ $PLUGINS
 EOF
 fi
 
+if [ -z "$TOKEN" ] && [ "$HAVE_TTY" -eq 1 ]; then
+  info "Beelzebub Cloud token — https://beelzebub.ai/products/beelzebub-cloud/"
+  TOKEN="$(ask 'Token (blank to skip): ')"
+fi
+
+if [ -n "$TOKEN" ] && [ -z "$URI" ]; then
+  if [ "$HAVE_TTY" -eq 1 ]; then
+    info "Cloud API base — the /api/integration URL from the same page as the token."
+    URI="$(ask 'API base URL: ')"
+  fi
+  [ -n "$URI" ] || die "a cloud token needs an endpoint. Pass --uri URL, or set BEELZEBUB_CLOUD_URI."
+fi
+
 # Compose reads these values from .env; keep the file private because it may contain tokens.
 set_env() {
   { grep -v "^$1=" .env 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } > .env.tmp && mv .env.tmp .env
   chmod 600 .env
 }
-[ -n "$TOKEN" ] && set_env BEELZEBUB_CLOUD_AUTH_TOKEN "$TOKEN"
+
+if [ -n "$TOKEN" ]; then
+  set_env BEELZEBUB_CLOUD_ENABLED true
+  set_env BEELZEBUB_CLOUD_URI "$URI"
+  set_env BEELZEBUB_CLOUD_AUTH_TOKEN "$TOKEN"
+fi
 
 # Pass the GitHub token to both the CLI and Docker build without exposing it in command arguments.
 if [ -n "$GH_TOKEN" ]; then
@@ -258,7 +283,11 @@ if [ "$MODE" = "docker" ]; then
   info ""
   info "Manage plugins with: ./beelzebub plugin install <link>   (or edit configurations/plugins.yaml)"
 else
-  [ -n "$TOKEN" ] && export BEELZEBUB_CLOUD_AUTH_TOKEN="$TOKEN"
+  if [ -n "$TOKEN" ]; then
+    export BEELZEBUB_CLOUD_ENABLED=true
+    export BEELZEBUB_CLOUD_URI="$URI"
+    export BEELZEBUB_CLOUD_AUTH_TOKEN="$TOKEN"
+  fi
   run_step "Install declared plugins" sh -c 'go run . plugin install --no-build'
   run_step "Build ./beelzebub" "$MAKE_CMD" -s build
   # The default services include privileged ports, so non-root users finish the
