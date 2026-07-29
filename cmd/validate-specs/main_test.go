@@ -25,7 +25,7 @@ func writeTestFile(t *testing.T, path, content string) {
 func TestRunValidateSpecs(t *testing.T) {
 	t.Run("valid yaml and ignored entries return success", func(t *testing.T) {
 		dir := t.TempDir()
-		writeTestFile(t, filepath.Join(dir, "valid.yaml"), "protocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommands:\n  - regex: ^ls$\n    handler: files\n")
+		writeTestFile(t, filepath.Join(dir, "valid.yaml"), "apiVersion: \"v1\"\nprotocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommands:\n  - regex: ^ls$\n    handler: files\n")
 		writeTestFile(t, filepath.Join(dir, "notes.txt"), "not yaml\n")
 		writeTestFile(t, filepath.Join(dir, "nested", "ignored.yaml"), "protocol: ftp\naddress: \":21\"\n")
 
@@ -44,8 +44,8 @@ func TestRunValidateSpecs(t *testing.T) {
 
 	t.Run("mixed failures report output and exit code", func(t *testing.T) {
 		dir := t.TempDir()
-		writeTestFile(t, filepath.Join(dir, "valid.yaml"), "protocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommands:\n  - regex: ^ls$\n    handler: files\n")
-		writeTestFile(t, filepath.Join(dir, "invalid-schema.yaml"), "protocol: ftp\naddress: \":21\"\n")
+		writeTestFile(t, filepath.Join(dir, "valid.yaml"), "apiVersion: \"v1\"\nprotocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommands:\n  - regex: ^ls$\n    handler: files\n")
+		writeTestFile(t, filepath.Join(dir, "invalid-schema.yaml"), "apiVersion: \"v1\"\nprotocol: ftp\naddress: \":21\"\n")
 		writeTestFile(t, filepath.Join(dir, "malformed.yaml"), "protocol: ssh\naddress: \":22\"\ncommands: [\n")
 		writeTestFile(t, filepath.Join(dir, "notes.txt"), "not yaml\n")
 		writeTestFile(t, filepath.Join(dir, "nested", "ignored.yaml"), "protocol: ftp\naddress: \":21\"\n")
@@ -90,7 +90,7 @@ func TestRunValidateSpecs_SpecsFlag(t *testing.T) {
 		configDir := t.TempDir()
 		specDir := t.TempDir()
 		writeEmbeddedSchemas(t, specDir)
-		writeTestFile(t, filepath.Join(configDir, "valid.yaml"), "protocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommands:\n  - regex: ^ls$\n    handler: files\n")
+		writeTestFile(t, filepath.Join(configDir, "valid.yaml"), "apiVersion: \"v1\"\nprotocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommands:\n  - regex: ^ls$\n    handler: files\n")
 
 		var stdout bytes.Buffer
 		var stderr bytes.Buffer

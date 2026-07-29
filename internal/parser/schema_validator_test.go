@@ -50,7 +50,8 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 		{
 			name: "valid SSH",
 			config: BeelzebubServiceConfiguration{
-				Protocol: "ssh", Address: ":22",
+				ApiVersion: "v1",
+				Protocol:   "ssh", Address: ":22",
 				ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
 				Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
 			},
@@ -58,21 +59,24 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 		{
 			name: "valid HTTP",
 			config: BeelzebubServiceConfiguration{
-				Protocol: "http", Address: ":8080",
+				ApiVersion: "v1",
+				Protocol:   "http", Address: ":8080",
 				Commands: []Command{{RegexStr: ".*", Handler: "ok"}},
 			},
 		},
 		{
 			name: "valid TCP no commands",
 			config: BeelzebubServiceConfiguration{
-				Protocol: "tcp", Address: ":3306",
+				ApiVersion: "v1",
+				Protocol:   "tcp", Address: ":3306",
 				Banner: "8.0",
 			},
 		},
 		{
 			name: "valid MCP",
 			config: BeelzebubServiceConfiguration{
-				Protocol: "mcp", Address: ":8000",
+				ApiVersion: "v1",
+				Protocol:   "mcp", Address: ":8000",
 				Tools: []Tool{
 					{Name: "tool:test", Params: []Param{{Name: "arg", Description: "an arg"}}},
 				},
@@ -81,7 +85,8 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 		{
 			name: "valid TELNET",
 			config: BeelzebubServiceConfiguration{
-				Protocol: "telnet", Address: ":23",
+				ApiVersion: "v1",
+				Protocol:   "telnet", Address: ":23",
 				PasswordRegex: "^(.+)$",
 				Commands:      []Command{{RegexStr: "^ls$", Handler: "files"}},
 			},
@@ -89,7 +94,8 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 		{
 			name: "SSH with LLM",
 			config: BeelzebubServiceConfiguration{
-				Protocol: "ssh", Address: ":2222",
+				ApiVersion: "v1",
+				Protocol:   "ssh", Address: ":2222",
 				ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
 				Commands: []Command{{RegexStr: "^(.+)$", Plugin: "LLMHoneypot"}},
 				Plugin:   Plugin{LLMProvider: "openai", LLMModel: "gpt-4", OpenAISecretKey: "sk-..."},
@@ -98,14 +104,16 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 		{
 			name: "HTTP with Maze",
 			config: BeelzebubServiceConfiguration{
-				Protocol: "http", Address: ":8888",
+				ApiVersion: "v1",
+				Protocol:   "http", Address: ":8888",
 				Commands: []Command{{RegexStr: ".*", Plugin: "MazeHoneypot"}},
 			},
 		},
 		{
 			name: "with rate limit",
 			config: BeelzebubServiceConfiguration{
-				Protocol: "ssh", Address: ":22",
+				ApiVersion: "v1",
+				Protocol:   "ssh", Address: ":22",
 				ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
 				Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
 				Plugin: Plugin{
@@ -147,6 +155,15 @@ func TestValidateConfigSchema_Invalid(t *testing.T) {
 			name:   "missing address",
 			config: BeelzebubServiceConfiguration{Protocol: "ssh"},
 			msg:    "missing propert",
+		},
+		{
+			name: "missing apiVersion",
+			config: BeelzebubServiceConfiguration{
+				Protocol: "ssh", Address: ":22",
+				ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
+				Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
+			},
+			msg: "apiVersion",
 		},
 		{
 			name: "SSH missing passwordRegex",
@@ -232,7 +249,8 @@ func TestValidateConfigSchema_UnknownProtocol(t *testing.T) {
 	defer ResetSchemaCache()
 
 	config := BeelzebubServiceConfiguration{
-		Protocol: "ftp", Address: ":21",
+		ApiVersion: "v1",
+		Protocol:   "ftp", Address: ":21",
 	}
 	issues := ValidateConfigSchema(config)
 	assert.NotEmpty(t, issues)
@@ -429,7 +447,8 @@ func TestSetSchemaDir(t *testing.T) {
 	t.Run("empty dir restores embedded schemas", func(t *testing.T) {
 		assert.NoError(t, SetSchemaDir(""))
 		issues := ValidateConfigSchema(BeelzebubServiceConfiguration{
-			Protocol: "ssh", Address: ":22",
+			ApiVersion: "v1",
+			Protocol:   "ssh", Address: ":22",
 			ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
 			Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
 		})
@@ -457,7 +476,8 @@ func TestSetSchemaDir(t *testing.T) {
 		writeBaseSchemaWithRequired(t, dir, []string{"protocol", "address", "banner"})
 
 		config := BeelzebubServiceConfiguration{
-			Protocol: "ssh", Address: ":22",
+			ApiVersion: "v1",
+			Protocol:   "ssh", Address: ":22",
 			ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
 			Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
 		}
