@@ -6,7 +6,7 @@ require (
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/google/uuid v1.6.0
-	github.com/jarcoal/httpmock v1.4.1
+	github.com/jarcoal/httpmock v1.4.2
 	github.com/mark3labs/mcp-go v0.57.0
 	github.com/melbahja/goph v1.5.2
 	github.com/prometheus/client_golang v1.24.0
