@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -110,6 +112,33 @@ func loadSchemaRaw(fileName string) (any, error) {
 		return nil, err
 	}
 	return jsonschema.UnmarshalJSON(bytes.NewReader(data))
+}
+
+// SetSchemaDir switches the schema source from the embedded specs/ FS to the
+// JSON Schema files in the given directory, and resets the compiled schema
+// cache. Pass an empty string to restore the embedded schemas.
+func SetSchemaDir(dir string) error {
+	if dir == "" {
+		loadSchema = loadSchemaRaw
+		ResetSchemaCache()
+		return nil
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(absDir, "runtime-config.schema.json")); err != nil {
+		return fmt.Errorf("specs dir %q: %w", absDir, err)
+	}
+	loadSchema = func(fileName string) (any, error) {
+		data, err := os.ReadFile(filepath.Join(absDir, fileName))
+		if err != nil {
+			return nil, err
+		}
+		return jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	}
+	ResetSchemaCache()
+	return nil
 }
 
 // ValidateConfigSchema validates a BeelzebubServiceConfiguration against

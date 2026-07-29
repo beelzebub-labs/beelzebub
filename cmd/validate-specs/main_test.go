@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/beelzebub-labs/beelzebub/v3/specs"
 )
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -63,6 +65,70 @@ func TestRunValidateSpecs(t *testing.T) {
 		assert.Contains(t, stdout.String(), "3 files: 1 passed, 2 failed")
 		assert.NotContains(t, stdout.String(), "notes.txt")
 		assert.NotContains(t, stdout.String(), "ignored.yaml")
+	})
+}
+
+func writeEmbeddedSchemas(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := specs.FS.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read embedded specs: %v", err)
+	}
+	for _, entry := range entries {
+		data, err := specs.FS.ReadFile(entry.Name())
+		if err != nil {
+			t.Fatalf("read embedded schema %s: %v", entry.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, entry.Name()), data, 0o644); err != nil {
+			t.Fatalf("write schema %s: %v", entry.Name(), err)
+		}
+	}
+}
+
+func TestRunValidateSpecs_SpecsFlag(t *testing.T) {
+	t.Run("valid specs dir", func(t *testing.T) {
+		configDir := t.TempDir()
+		specDir := t.TempDir()
+		writeEmbeddedSchemas(t, specDir)
+		writeTestFile(t, filepath.Join(configDir, "valid.yaml"), "protocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommands:\n  - regex: ^ls$\n    handler: files\n")
+
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+
+		code := run([]string{"-configs", configDir, "-specs", specDir}, &stdout, &stderr)
+
+		assert.Equal(t, 0, code)
+		assert.Empty(t, stderr.String())
+		assert.Contains(t, stdout.String(), "✓ valid.yaml")
+	})
+
+	t.Run("missing specs dir", func(t *testing.T) {
+		configDir := t.TempDir()
+		missing := filepath.Join(t.TempDir(), "does-not-exist")
+
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+
+		code := run([]string{"-configs", configDir, "-specs", missing}, &stdout, &stderr)
+
+		assert.Equal(t, 1, code)
+		assert.Empty(t, stdout.String())
+		assert.Contains(t, stderr.String(), "error: loading specs dir:")
+		assert.Contains(t, stderr.String(), missing)
+	})
+
+	t.Run("specs dir without base schema", func(t *testing.T) {
+		configDir := t.TempDir()
+		specDir := t.TempDir()
+
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+
+		code := run([]string{"-configs", configDir, "-specs", specDir}, &stdout, &stderr)
+
+		assert.Equal(t, 1, code)
+		assert.Empty(t, stdout.String())
+		assert.Contains(t, stderr.String(), "error: loading specs dir:")
 	})
 }
 

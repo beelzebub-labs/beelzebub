@@ -1,12 +1,17 @@
 package parser
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/beelzebub-labs/beelzebub/v3/specs"
 )
 
 func TestSchemaValidator_Name(t *testing.T) {
@@ -394,6 +399,77 @@ func TestValidateConfigSchema_InitializationAndConversionErrors(t *testing.T) {
 	configToRawJSON = func(any) (any, error) { return nil, errors.New("conversion failed") }
 	issues = ValidateConfigSchema(BeelzebubServiceConfiguration{})
 	assert.Equal(t, "schema: converting config: conversion failed", issues[0].Message)
+}
+
+func writeEmbeddedSchema(t *testing.T, dir, name string) {
+	t.Helper()
+	data, err := specs.FS.ReadFile(name)
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o644))
+}
+
+func writeBaseSchemaWithRequired(t *testing.T, dir string, required []string) {
+	t.Helper()
+	data, err := specs.FS.ReadFile("runtime-config.schema.json")
+	assert.NoError(t, err)
+	var doc map[string]any
+	assert.NoError(t, json.Unmarshal(data, &doc))
+	doc["required"] = required
+	modified, err := json.Marshal(doc)
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "runtime-config.schema.json"), modified, 0o644))
+}
+
+func TestSetSchemaDir(t *testing.T) {
+	t.Cleanup(func() {
+		assert.NoError(t, SetSchemaDir(""))
+		ResetSchemaCache()
+	})
+
+	t.Run("empty dir restores embedded schemas", func(t *testing.T) {
+		assert.NoError(t, SetSchemaDir(""))
+		issues := ValidateConfigSchema(BeelzebubServiceConfiguration{
+			Protocol: "ssh", Address: ":22",
+			ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
+			Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
+		})
+		assert.Empty(t, issues)
+	})
+
+	t.Run("missing dir", func(t *testing.T) {
+		err := SetSchemaDir(filepath.Join(t.TempDir(), "does-not-exist"))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "runtime-config.schema.json")
+	})
+
+	t.Run("dir without base schema", func(t *testing.T) {
+		err := SetSchemaDir(t.TempDir())
+		assert.Error(t, err)
+	})
+
+	t.Run("overrides embedded schemas", func(t *testing.T) {
+		dir := t.TempDir()
+		entries, err := specs.FS.ReadDir(".")
+		assert.NoError(t, err)
+		for _, entry := range entries {
+			writeEmbeddedSchema(t, dir, entry.Name())
+		}
+		writeBaseSchemaWithRequired(t, dir, []string{"protocol", "address", "banner"})
+
+		config := BeelzebubServiceConfiguration{
+			Protocol: "ssh", Address: ":22",
+			ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
+			Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
+		}
+
+		assert.NoError(t, SetSchemaDir(dir))
+		issues := ValidateConfigSchema(config)
+		assert.NotEmpty(t, issues)
+		assert.Contains(t, issues[0].Message, "missing property 'banner'")
+
+		assert.NoError(t, SetSchemaDir(""))
+		assert.Empty(t, ValidateConfigSchema(config))
+	})
 }
 
 func TestStructToRawJSON_MarshalError(t *testing.T) {
