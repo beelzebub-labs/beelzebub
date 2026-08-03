@@ -16,10 +16,16 @@ services:
       - "80:80"
       - "3306:3306"
       - "2112:2112" #Prometheus Open Metrics
+    env_file:
+      - path: .env
+        required: false
     environment:
       RABBITMQ_URI: ${RABBITMQ_URI}
       OPEN_AI_SECRET_KEY: ${OPEN_AI_SECRET_KEY}
-      # Beelzebub Cloud (from .env, written by install.sh).
+      # Beelzebub Cloud (from .env, written by install.sh)
+      BEELZEBUB_CLOUD_ENABLED: ${BEELZEBUB_CLOUD_ENABLED:-false}
+      BEELZEBUB_CLOUD_URI: ${BEELZEBUB_CLOUD_URI:-}
       BEELZEBUB_CLOUD_AUTH_TOKEN: ${BEELZEBUB_CLOUD_AUTH_TOKEN:-}
     volumes:
       - "./configurations:/configurations"
+      - "./state:/state"
