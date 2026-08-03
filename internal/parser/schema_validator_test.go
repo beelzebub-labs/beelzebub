@@ -492,6 +492,77 @@ func TestSetSchemaDir(t *testing.T) {
 	})
 }
 
+func TestValidateConfigSchema_RawConfig(t *testing.T) {
+	ResetSchemaCache()
+	defer ResetSchemaCache()
+
+	t.Run("valid raw doc", func(t *testing.T) {
+		config := BeelzebubServiceConfiguration{
+			Protocol: "ssh", Address: ":22",
+			RawConfig: map[string]any{
+				"apiVersion":    "v1",
+				"protocol":      "ssh",
+				"address":       ":22",
+				"serverVersion": "OpenSSH",
+				"passwordRegex": "^(.+)$",
+				"commands":      []any{map[string]any{"regex": "^ls$", "handler": "files"}},
+			},
+		}
+		assert.Empty(t, ValidateConfigSchema(config))
+	})
+
+	t.Run("unknown property preserved", func(t *testing.T) {
+		config := BeelzebubServiceConfiguration{
+			Protocol: "ssh", Address: ":22",
+			RawConfig: map[string]any{
+				"apiVersion":    "v1",
+				"protocol":      "ssh",
+				"address":       ":22",
+				"serverVersion": "OpenSSH",
+				"passwordRegex": "^(.+)$",
+				"commmands":     []any{map[string]any{"regex": "^ls$", "handler": "files"}},
+			},
+		}
+		issues := ValidateConfigSchema(config)
+		assert.NotEmpty(t, issues)
+		assert.Contains(t, issues[0].Message, "commmands")
+	})
+
+	t.Run("explicit zero value preserved", func(t *testing.T) {
+		config := BeelzebubServiceConfiguration{
+			Protocol: "http", Address: ":8080",
+			RawConfig: map[string]any{
+				"apiVersion": "v1",
+				"protocol":   "http",
+				"address":    ":8080",
+				"commands": []any{map[string]any{
+					"regex":      ".*",
+					"handler":    "ok",
+					"statusCode": 0,
+				}},
+			},
+		}
+		issues := ValidateConfigSchema(config)
+		assert.NotEmpty(t, issues)
+		assert.Contains(t, issues[0].Message, "statusCode")
+	})
+
+	t.Run("explicit empty collection preserved", func(t *testing.T) {
+		config := BeelzebubServiceConfiguration{
+			Protocol: "http", Address: ":8080",
+			RawConfig: map[string]any{
+				"apiVersion": "v1",
+				"protocol":   "http",
+				"address":    ":8080",
+				"commands":   []any{},
+			},
+		}
+		issues := ValidateConfigSchema(config)
+		assert.NotEmpty(t, issues)
+		assert.Contains(t, issues[0].Message, "commands")
+	})
+}
+
 func TestStructToRawJSON_MarshalError(t *testing.T) {
 	value, err := structToRawJSON(func() {})
 	assert.Error(t, err)

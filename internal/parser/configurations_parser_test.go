@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -244,6 +245,25 @@ func TestReadConfigurationsServicesValid(t *testing.T) {
 	assert.Equal(t, firstBeelzebubServiceConfiguration.Tools[0].Params[0].Name, "user_id")
 	assert.Equal(t, firstBeelzebubServiceConfiguration.Tools[0].Params[0].Description, "The ID of the user account to manage.")
 	assert.Equal(t, firstBeelzebubServiceConfiguration.Tools[0].Handler, "reset_password ok")
+}
+
+func TestReadConfigurationsServicesValidationPreservesRawDoc(t *testing.T) {
+	RegisterServiceValidator(&SchemaValidator{})
+	defer ResetServiceValidators()
+
+	dir := t.TempDir()
+	svcYAML := "apiVersion: \"v1\"\nprotocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommmands:\n  - regex: ^ls$\n    handler: files\n"
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "svc.yaml"), []byte(svcYAML), 0644))
+
+	configurationsParser := Init("", dir)
+	services, issues, err := configurationsParser.ReadConfigurationsServicesForValidation()
+	assert.Nil(t, err)
+	assert.Len(t, services, 1)
+	assert.Empty(t, issues)
+	assert.NotNil(t, services[0].RawConfig)
+
+	result := Validate(services, issues)
+	assert.True(t, hasIssueContaining(findIssues(result, "svc.yaml"), LevelError, "commmands"))
 }
 
 func TestReadConfigurationsServicesGenerateHashCode(t *testing.T) {

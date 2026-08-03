@@ -85,6 +85,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		svc.Filename = entry.Name()
 
+		var rawDoc any
+		if err := yaml.Unmarshal(data, &rawDoc); err == nil {
+			svc.RawConfig = rawDoc
+		}
+
 		issues := parser.ValidateConfigSchema(svc)
 		if len(issues) == 0 {
 			results = append(results, result{File: entry.Name()})

@@ -132,6 +132,52 @@ func TestRunValidateSpecs_SpecsFlag(t *testing.T) {
 	})
 }
 
+func TestRunValidateSpecs_RawDocumentValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name:    "unknown top-level property",
+			yaml:    "apiVersion: \"v1\"\nprotocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommmands:\n  - regex: ^ls$\n    handler: files\n",
+			wantErr: "commmands",
+		},
+		{
+			name:    "nested typo property",
+			yaml:    "apiVersion: \"v1\"\nprotocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommands:\n  - regex: ^ls$\n    handlr: files\n",
+			wantErr: "handlr",
+		},
+		{
+			name:    "explicit zero value",
+			yaml:    "apiVersion: \"v1\"\nprotocol: http\naddress: \":8080\"\ncommands:\n  - regex: .*\n    handler: ok\n    statusCode: 0\n",
+			wantErr: "statusCode",
+		},
+		{
+			name:    "explicit empty collection",
+			yaml:    "apiVersion: \"v1\"\nprotocol: http\naddress: \":8080\"\ncommands: []\n",
+			wantErr: "commands",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "svc.yaml"), tt.yaml)
+
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+
+			code := run([]string{"-configs", dir}, &stdout, &stderr)
+
+			assert.Equal(t, 1, code)
+			assert.Empty(t, stderr.String())
+			assert.Contains(t, stdout.String(), "✗ svc.yaml")
+			assert.Contains(t, stdout.String(), tt.wantErr)
+		})
+	}
+}
+
 func TestRunValidateSpecs_MissingDirectory(t *testing.T) {
 	missingDir := filepath.Join(t.TempDir(), "does-not-exist")
 

@@ -38,7 +38,7 @@ var (
 	schemaInitErr      error
 	newSchemaCompiler  = func() schemaCompiler { return jsonschema.NewCompiler() }
 	loadSchema         = loadSchemaRaw
-	configToRawJSON    = structToRawJSON
+	configToRawJSON    = configToRawJSONDefault
 )
 
 // protocolSchemaURLs maps protocol name to the per-protocol schema $id.
@@ -177,10 +177,32 @@ func ValidateConfigSchema(config BeelzebubServiceConfiguration) []ValidationIssu
 	return nil
 }
 
+// configToRawJSONDefault converts a service configuration to a raw JSON value
+// (any) for schema validation. When the configuration carries the original
+// parsed document (RawConfig), it is used as-is so that unknown fields,
+// explicit zero values and empty collections are preserved; otherwise the Go
+// struct is serialized.
+func configToRawJSONDefault(v any) (any, error) {
+	if cfg, ok := v.(BeelzebubServiceConfiguration); ok && cfg.RawConfig != nil {
+		return marshalToRawJSON(cfg.RawConfig)
+	}
+	return structToRawJSON(v)
+}
+
 // structToRawJSON converts a Go struct to a raw JSON value (any) via JSON
 // marshal/unmarshal. This is needed because jsonschema works with JSON types.
 func structToRawJSON(v any) (any, error) {
 	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return jsonschema.UnmarshalJSON(bytes.NewReader(data))
+}
+
+// marshalToRawJSON converts a raw parsed document (map[string]any, []any,
+// json.Number, ...) to a raw JSON value (any) for schema validation.
+func marshalToRawJSON(raw any) (any, error) {
+	data, err := json.Marshal(raw)
 	if err != nil {
 		return nil, err
 	}
