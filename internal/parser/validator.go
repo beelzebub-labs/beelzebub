@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +45,7 @@ type ServiceValidator interface {
 }
 
 var (
-	serviceValidators []ServiceValidator
+	serviceValidators   []ServiceValidator
 	serviceValidatorsMu sync.Mutex
 )
 
@@ -71,12 +70,6 @@ func GetServiceValidators() []ServiceValidator {
 	return append([]ServiceValidator(nil), serviceValidators...)
 }
 
-var validProtocols = []string{"http", "ssh", "tcp", "mcp", "telnet"}
-
-var validCommandPlugins = []string{"", "LLMHoneypot", "MazeHoneypot"}
-
-var validCommandPluginsDisplay = []string{"(none)", "LLMHoneypot", "MazeHoneypot"}
-
 // Validate checks service configurations and returns all errors and warnings
 func Validate(services []BeelzebubServiceConfiguration, parseIssues []ValidationIssue) ValidateResult {
 	resultMap := make(map[string]*ValidationResult)
@@ -94,11 +87,11 @@ func Validate(services []BeelzebubServiceConfiguration, parseIssues []Validation
 		r := getResult(resultMap, services[i].Filename)
 		services[i].Address = strings.TrimSpace(services[i].Address)
 
-		r.Issues = append(r.Issues, validateProtocol(services[i])...)
 		r.Issues = append(r.Issues, validateAddress(services[i])...)
 		r.Issues = append(r.Issues, validateCommands(services[i])...)
 		r.Issues = append(r.Issues, validateFallbackCommand(services[i])...)
 		r.Issues = append(r.Issues, validatePluginConfig(services[i])...)
+		r.Issues = append(r.Issues, validateDerivedConfiguration(services[i])...)
 
 		for _, v := range GetServiceValidators() {
 			r.Issues = append(r.Issues, v.Validate(services[i])...)
@@ -110,6 +103,19 @@ func Validate(services []BeelzebubServiceConfiguration, parseIssues []Validation
 	return buildResult(resultMap)
 }
 
+// Validate is also a public entry point, so these invariants must not depend
+// on the file/JSON parser having run first.
+func validateDerivedConfiguration(svc BeelzebubServiceConfiguration) []ValidationIssue {
+	var issues []ValidationIssue
+	if svc.Plugin.RateLimitEnabled && (svc.Plugin.RateLimitRequests <= 0 || svc.Plugin.RateLimitWindowSeconds <= 0) {
+		issues = append(issues, ValidationIssue{Level: LevelError, Message: "invalid rate limiting config: rateLimitRequests and rateLimitWindowSeconds must be > 0"})
+	}
+	if err := svc.CompileTrustedProxies(); err != nil {
+		issues = append(issues, ValidationIssue{Level: LevelError, Message: err.Error()})
+	}
+	return issues
+}
+
 func getResult(resultMap map[string]*ValidationResult, filename string) *ValidationResult {
 	r, ok := resultMap[filename]
 	if !ok {
@@ -117,17 +123,6 @@ func getResult(resultMap map[string]*ValidationResult, filename string) *Validat
 		resultMap[filename] = r
 	}
 	return r
-}
-
-func validateProtocol(svc BeelzebubServiceConfiguration) []ValidationIssue {
-	if slices.Contains(validProtocols, svc.Protocol) {
-		return nil
-	}
-
-	return []ValidationIssue{{
-		Level:   LevelError,
-		Message: fmt.Sprintf("invalid protocol %q, valid: %s", svc.Protocol, strings.Join(validProtocols, ", ")),
-	}}
 }
 
 func validateAddress(svc BeelzebubServiceConfiguration) []ValidationIssue {
@@ -168,14 +163,7 @@ func validateCommands(svc BeelzebubServiceConfiguration) []ValidationIssue {
 			})
 		}
 
-		if !slices.Contains(validCommandPlugins, cmd.Plugin) {
-			issues = append(issues, ValidationIssue{
-				Level:   LevelError,
-				Message: fmt.Sprintf("command[%d] has invalid plugin %q, valid: %s", j, cmd.Plugin, strings.Join(validCommandPluginsDisplay, ", ")),
-			})
-		}
-
-		if cmd.Handler == "" && cmd.Plugin == "" {
+		if cmd.Handler == "" && cmd.Plugin == "" && !isIntentionalHTTPEmptyResponse(svc, cmd) {
 			issues = append(issues, ValidationIssue{
 				Level:   LevelWarning,
 				Message: fmt.Sprintf("command[%d] has empty handler and no plugin, matched requests will produce no output", j),
@@ -209,19 +197,12 @@ func validateFallbackCommand(svc BeelzebubServiceConfiguration) []ValidationIssu
 			})
 		}
 	}
-
-	if !slices.Contains(validCommandPlugins, fb.Plugin) {
-		issues = append(issues, ValidationIssue{
-			Level:   LevelError,
-			Message: fmt.Sprintf("fallbackCommand has invalid plugin %q, valid: %s", fb.Plugin, strings.Join(validCommandPluginsDisplay, ", ")),
-		})
-	}
 	return issues
 }
 
 func validatePluginConfig(svc BeelzebubServiceConfiguration) []ValidationIssue {
 	var issues []ValidationIssue
-	if svc.DeadlineTimeoutSeconds == 0 && len(svc.Commands) > 0 {
+	if (svc.Protocol == "tcp" || svc.Protocol == "telnet" || svc.Protocol == "ssh") && svc.DeadlineTimeoutSeconds == 0 && len(svc.Commands) > 0 {
 		issues = append(issues, ValidationIssue{
 			Level:   LevelWarning,
 			Message: "deadlineTimeoutSeconds is not set, connections may be closed immediately",
@@ -235,6 +216,28 @@ func validatePluginConfig(svc BeelzebubServiceConfiguration) []ValidationIssue {
 		})
 	}
 	return issues
+}
+
+func isIntentionalHTTPEmptyResponse(svc BeelzebubServiceConfiguration, cmd Command) bool {
+	if svc.Protocol != "http" || cmd.Handler != "" || cmd.Plugin != "" {
+		return false
+	}
+	if cmd.StatusCode == 204 || cmd.StatusCode == 205 || cmd.StatusCode == 304 ||
+		(cmd.StatusCode >= 300 && cmd.StatusCode < 400 && hasHeader(cmd.Headers, "Location")) ||
+		(cmd.StatusCode == 401 && hasHeader(cmd.Headers, "WWW-Authenticate")) {
+		return true
+	}
+	return false
+}
+
+func hasHeader(headers []string, name string) bool {
+	for _, header := range headers {
+		parts := strings.SplitN(header, ":", 2)
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func detectCollisions(services []BeelzebubServiceConfiguration, resultMap map[string]*ValidationResult) {

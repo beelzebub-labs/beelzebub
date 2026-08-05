@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 )
@@ -40,7 +41,7 @@ func (v *LLMPluginValidator) Validate(config parser.BeelzebubServiceConfiguratio
 		})
 	}
 
-	if config.Plugin.LLMProvider == "openai" && config.Plugin.OpenAISecretKey == "" {
+	if config.Plugin.LLMProvider == "openai" && config.Plugin.OpenAISecretKey == "" && os.Getenv("OPEN_AI_SECRET_KEY") == "" {
 		issues = append(issues, parser.ValidationIssue{
 			Level:   parser.LevelWarning,
 			Message: "openAISecretKey is empty for openai provider, set OPEN_AI_SECRET_KEY env var at runtime or openAISecretKey in config",

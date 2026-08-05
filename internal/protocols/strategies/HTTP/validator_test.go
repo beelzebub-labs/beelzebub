@@ -1,11 +1,20 @@
 package HTTP
 
 import (
+	"os"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/stretchr/testify/assert"
 )
+
+func existingFile() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "/tmp"
+	}
+	return exe
+}
 
 func TestHTTPValidator_Name(t *testing.T) {
 	v := &HTTPValidator{}
@@ -23,10 +32,11 @@ func TestHTTPValidator_NotHTTPProtocol(t *testing.T) {
 
 func TestHTTPValidator_BothTLSSet(t *testing.T) {
 	v := &HTTPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "http",
-		TLSCertPath: "/proc/self/exe",
-		TLSKeyPath:  "/proc/self/exe",
+		TLSCertPath: existing,
+		TLSKeyPath:  existing,
 	}
 	issues := v.Validate(config)
 	assert.Empty(t, issues)
@@ -69,10 +79,11 @@ func TestHTTPValidator_OnlyKey(t *testing.T) {
 
 func TestHTTPValidator_TLSFilesExist(t *testing.T) {
 	v := &HTTPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "http",
-		TLSCertPath: "/proc/self/exe",
-		TLSKeyPath:  "/proc/self/exe",
+		TLSCertPath: existing,
+		TLSKeyPath:  existing,
 	}
 	issues := v.Validate(config)
 	assert.Empty(t, issues)
@@ -95,9 +106,10 @@ func TestHTTPValidator_TLSFileNotExist(t *testing.T) {
 
 func TestHTTPValidator_TLSOneFileNotExist(t *testing.T) {
 	v := &HTTPValidator{}
+	existing := existingFile()
 	config := parser.BeelzebubServiceConfiguration{
 		Protocol:    "http",
-		TLSCertPath: "/proc/self/exe",
+		TLSCertPath: existing,
 		TLSKeyPath:  "/nonexistent/cert.key",
 	}
 	issues := v.Validate(config)
@@ -154,11 +166,31 @@ func TestHTTPValidator_NoCommandsNoFallback(t *testing.T) {
 func TestHTTPValidator_NoCommandsWithFallback(t *testing.T) {
 	v := &HTTPValidator{}
 	config := parser.BeelzebubServiceConfiguration{
-		Protocol: "http",
+		Protocol:        "http",
 		FallbackCommand: parser.Command{Handler: "fallback"},
 	}
 	issues := v.Validate(config)
 	for _, issue := range issues {
 		assert.NotContains(t, issue.Message, "no fallbackCommand")
 	}
+}
+
+func TestHTTPValidator_CatchAllCommandNeedsNoFallback(t *testing.T) {
+	v := &HTTPValidator{}
+	for _, regex := range []string{".*", "^.*$", "^(.*)$"} {
+		issues := v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "http", Commands: []parser.Command{{RegexStr: regex, Handler: "ok"}}})
+		for _, issue := range issues {
+			assert.NotContains(t, issue.Message, "no fallbackCommand")
+		}
+	}
+}
+
+func TestHTTPValidator_PartialCommandsNeedFallback(t *testing.T) {
+	issues := (&HTTPValidator{}).Validate(parser.BeelzebubServiceConfiguration{Protocol: "http", Commands: []parser.Command{{RegexStr: "^GET /api", Handler: "ok"}}})
+	assert.Contains(t, issues, parser.ValidationIssue{Level: parser.LevelWarning, Message: "HTTP service has commands but no fallbackCommand — unmatched requests will return empty 200 OK"})
+}
+
+func TestHTTPValidator_InvalidRegexIsNotCatchAll(t *testing.T) {
+	issues := (&HTTPValidator{}).Validate(parser.BeelzebubServiceConfiguration{Protocol: "http", Commands: []parser.Command{{RegexStr: "^(?:.*)$", Handler: "ok"}}})
+	assert.Contains(t, issues, parser.ValidationIssue{Level: parser.LevelWarning, Message: "HTTP service has commands but no fallbackCommand — unmatched requests will return empty 200 OK"})
 }

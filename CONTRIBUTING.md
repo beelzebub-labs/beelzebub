@@ -100,3 +100,16 @@ Enhancement suggestions are tracked as [GitHub issues](https://github.com/beelze
 - Provide a **step-by-step description of the suggested enhancement** in as many details as possible.
 - **Describe the current behavior** and **explain which behavior you expected to see instead** and why. At this point you can also tell which alternatives do not work for you.
 - **Explain why this enhancement would be useful** to most Beelzebub users. You may also want to point out the other projects that solved it better and which could serve as inspiration.
+
+## Configuration Validation
+
+Beelzebub validates honeypot service configurations with a dual-layer approach: **JSON Schema** (structural rules, hard errors) and **Go procedural checks** (cross-field constraints, quality warnings). The JSON Schemas live in `specs/` and are embedded in the binary.
+
+The full architecture reference — validation flow, schema rules, commands, and rule matrix — is in [docs/configuration-validation.md](docs/configuration-validation.md).
+
+When you change a configuration field or a validator, keep everything in sync:
+
+1. Update the Go struct in `internal/parser/configurations_parser.go`.
+2. Update the JSON Schemas in `specs/`.
+3. Run `make validate-specs` and `make validate-all`.
+4. Update the rule matrix in `docs/configuration-validation.md`.

@@ -117,7 +117,7 @@ Flags:
 
 ### `beelzebub validate`
 
-Parse and validate all configuration files without starting any services. Useful in CI pipelines.
+Parse and validate all configuration files without starting any services. Useful in CI pipelines. See [Configuration Validation](docs/configuration-validation.md) for the validation architecture and rule reference.
 
 ```bash
 beelzebub validate --conf-core ./configurations/beelzebub.yaml --conf-services ./configurations/services/

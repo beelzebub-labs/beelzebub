@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"net/http"
-	"os"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -196,7 +195,7 @@ func TestBuildExecuteModelOpenAISecretKeyFromEnv(t *testing.T) {
 		Provider:  OpenAI,
 	}
 
-	os.Setenv("OPEN_AI_SECRET_KEY", "sdjdnklfjndslkjanfk")
+	t.Setenv("OPEN_AI_SECRET_KEY", "sdjdnklfjndslkjanfk")
 
 	openAIGPTVirtualTerminal := InitLLMHoneypot(llmHoneypot)
 
