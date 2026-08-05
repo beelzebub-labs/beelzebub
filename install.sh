@@ -28,7 +28,6 @@ RUN_LOCAL=1
 REPO_URL="https://github.com/beelzebub-labs/beelzebub.git"
 MAKE_CMD="${MAKE:-make}"
 
-# Colors are disabled for non-TTY output and when NO_COLOR is set.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   E=$(printf '\033'); R="${E}[0m"; B="${E}[1m"; D="${E}[2m"
   GRN="${E}[38;2;58;208;127m"; BLU="${E}[38;2;120;140;250m"; RED="${E}[38;2;244;80;110m"
@@ -116,11 +115,37 @@ if [ -r /dev/tty ] && [ -w /dev/tty ]; then
     HAVE_TTY=1
   fi
 fi
-ask() { # ask "Question" -> echoes answer ("" on no tty)
+ask() { # ask "Question" -> echoes the answer, trimmed ("" on no tty)
   [ "$HAVE_TTY" -eq 1 ] || { printf '\n'; return 0; }
   printf '%s' "$1" > /dev/tty
   IFS= read -r _a < /dev/tty || _a=""
-  printf '%s' "$_a"
+  printf '%s' "$_a" | sed 's/^[[:space:]"'"'"']*//; s/[[:space:]"'"'"']*$//'
+}
+
+confirm() {
+  [ "$HAVE_TTY" -eq 1 ] || { [ "$2" = "y" ]; return; }
+  while :; do
+    _c="$(ask "$1")"
+    [ -n "$_c" ] || _c="$2"
+    case "$_c" in
+      y|Y|yes|YES) return 0 ;;
+      n|N|no|NO)   return 1 ;;
+    esac
+    info "Please answer y or n." >&2
+  done
+}
+
+choose() {
+  _q=$1; _def=$2; shift 2
+  [ "$HAVE_TTY" -eq 1 ] || { printf '%s' "$_def"; return 0; }
+  while :; do
+    _s="$(ask "$_q")"
+    [ -n "$_s" ] || _s="$_def"
+    for _v in "$@"; do
+      [ "$_s" = "$_v" ] && { printf '%s' "$_s"; return 0; }
+    done
+    info "Please answer one of: $*" >&2
+  done
 }
 
 banner
@@ -155,7 +180,7 @@ if [ -z "$MODE" ]; then
   info "How do you want to run Beelzebub?"
   printf '  %s1%s) Local %s(needs Go)%s\n' "$B" "$R" "$D" "$R"
   printf '  %s2%s) Docker %s(needs… Docker)%s\n' "$B" "$R" "$D" "$R"
-  case "$(ask 'Choose [1]: ')" in
+  case "$(choose 'Choose [1]: ' 1 1 2)" in
     2) MODE="docker" ;;
     *) MODE="local" ;;
   esac
@@ -176,9 +201,9 @@ need() { # need <tool> <manual-instructions>
   command -v "$1" >/dev/null 2>&1 && return 0
   cmd="$(pkg_install "$1")"
   if [ -n "$cmd" ]; then
-    reply="no"
-    [ "$ASSUME_YES" -eq 1 ] && reply="yes" || reply="$(ask "$1 is required. Install it with \"$cmd\"? [y/N]: ")"
-    case "$reply" in y|Y|yes|YES) sh -c "$cmd" >/dev/null 2>&1 && return 0 || die "failed to install $1" ;; esac
+    if [ "$ASSUME_YES" -eq 1 ] || confirm "$1 is required. Install it with \"$cmd\"? [y/N]: " n; then
+      sh -c "$cmd" >/dev/null 2>&1 && return 0 || die "failed to install $1"
+    fi
   fi
   die "$1 is required. $2"
 }
@@ -228,17 +253,83 @@ $PLUGINS
 EOF
 fi
 
+looks_like_token() {
+  case "$1" in *[!A-Za-z0-9._-]*) return 1 ;; esac
+  [ "${#1}" -ge 16 ]
+}
+looks_like_host() {
+  case "${1#*://}" in
+    localhost|localhost[:/]*|*.*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 if [ -z "$TOKEN" ] && [ "$HAVE_TTY" -eq 1 ]; then
   info "Beelzebub Cloud token — https://beelzebub.ai/products/beelzebub-cloud/"
-  TOKEN="$(ask 'Token (blank to skip): ')"
+  while :; do
+    TOKEN="$(ask 'Token (blank to skip): ')"
+    [ -n "$TOKEN" ] || break
+    looks_like_token "$TOKEN" && break
+    info "That is not a token — paste the whole value, or leave blank to skip." >&2
+  done
 fi
 
 if [ -n "$TOKEN" ] && [ -z "$URI" ]; then
   if [ "$HAVE_TTY" -eq 1 ]; then
-    info "Cloud API base — the /api/integration URL from the same page as the token."
-    URI="$(ask 'API base URL: ')"
+    while :; do
+      URI="$(ask 'Cloud URL: ')"
+      [ -n "$URI" ] && looks_like_host "$URI" && break
+      info "That is not a URL — paste the address you sign in to." >&2
+    done
   fi
-  [ -n "$URI" ] || die "a cloud token needs an endpoint. Pass --uri URL, or set BEELZEBUB_CLOUD_URI."
+  [ -n "$URI" ] || die "a cloud token needs a URL. Pass --uri URL, or set BEELZEBUB_CLOUD_URI."
+fi
+
+if [ -n "$URI" ]; then
+  case "$URI" in http://*|https://*) ;; *) URI="https://$URI" ;; esac
+  URI="${URI%/}"
+  case "$URI" in */api/integration) ;; *) URI="$URI/api/integration" ;; esac
+fi
+
+# 0 ok, 1 rejected, 2 could not check.
+verify_cloud() {
+  command -v curl >/dev/null 2>&1 || return 2
+  _out=$(mktemp 2>/dev/null) || return 2
+  _curl=0
+  _code=$(curl -sS -o "$_out" -w '%{http_code}' --max-time 15 \
+    -H "Authorization: $TOKEN" "$URI/honeypots" 2>/dev/null) || _curl=$?
+  _first=$(head -c 1 "$_out" 2>/dev/null)
+  rm -f "$_out"
+  # 6 = could not resolve host: a typo, not a blip.
+  if [ "$_curl" -eq 6 ]; then
+    VERIFY_MSG="cannot resolve the host in $URI — check the URL"
+    return 1
+  fi
+  [ "$_curl" -eq 0 ] || { VERIFY_MSG="cannot reach $URI"; return 2; }
+  case "$_code" in
+    000) VERIFY_MSG="cannot reach $URI"; return 2 ;;
+    200)
+      if [ "$_first" = "[" ] || [ "$_first" = "{" ]; then
+        return 0
+      fi
+      VERIFY_MSG="$URI served a web page, not the API — check the URL"
+      return 1 ;;
+    401|403) VERIFY_MSG="token rejected by $URI"; return 1 ;;
+    404) VERIFY_MSG="$URI answered 404 — either the URL is wrong, or the token is not valid there"; return 1 ;;
+    *) VERIFY_MSG="unexpected reply from $URI (HTTP $_code)"; return 1 ;;
+  esac
+}
+
+if [ -n "$TOKEN" ]; then
+  _verdict=0
+  verify_cloud || _verdict=$?
+  case $_verdict in
+    0) ok "Cloud credentials verified" ;;
+    2) info "Could not verify the cloud credentials: $VERIFY_MSG. Continuing." ;;
+    *)
+      info "$VERIFY_MSG"
+      confirm 'Continue anyway? [y/N]: ' n || die "fix the token or the URL and re-run." ;;
+  esac
 fi
 
 # Compose reads these values from .env; keep the file private because it may contain tokens.
@@ -260,6 +351,46 @@ if [ -n "$GH_TOKEN" ]; then
 fi
 
 if [ "$MODE" = "docker" ]; then
+  # A bound port would abort `compose up` after the image is built.
+  port_busy() {
+    if command -v lsof >/dev/null 2>&1; then
+      lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+    elif command -v ss >/dev/null 2>&1; then
+      ss -lnt 2>/dev/null | grep -qE "[:.]$1[[:space:]]"
+    elif command -v netstat >/dev/null 2>&1; then
+      netstat -an 2>/dev/null | grep -qE "[:.]$1[[:space:]].*LISTEN"
+    else
+      return 1
+    fi
+  }
+
+  # Scanning the LAN needs the host's interfaces. No equivalent on Docker
+  # Desktop, where the bridge stays and the plugin is pinned to a CIDR.
+  if [ "$(uname -s)" = "Linux" ]; then
+    printf 'services:\n  beelzebub:\n    network_mode: host\n    ports: !reset []\n' \
+      > docker-compose.override.yml
+    ok "Host network: the sensor sees this machine's interfaces"
+  else
+
+  BUSY=""; FREE=""
+  for _p in $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([0-9][0-9]*\):[0-9].*/\1/p' docker-compose.yml); do
+    if port_busy "$_p"; then
+      BUSY="$BUSY $_p"
+    else
+      FREE="$FREE      - \"$_p:$_p\"
+"
+    fi
+  done
+
+  if [ -n "$BUSY" ]; then
+    info "Ports already in use:$BUSY"
+    confirm 'Start without publishing them? [Y/n]: ' y || die "free those ports and re-run."
+    { printf 'services:\n  beelzebub:\n    ports: !override\n'; printf '%s' "$FREE"; } \
+      > docker-compose.override.yml
+    ok "Wrote docker-compose.override.yml without:$BUSY"
+  fi
+  fi
+
   compose_up() {
     if docker compose version >/dev/null 2>&1; then
       docker compose up -d --build
@@ -271,17 +402,23 @@ if [ "$MODE" = "docker" ]; then
   # Do not direct later plugin commands to Docker if this deployment failed.
   printf '%s\n' "$MODE" > .beelzebub-mode
   # Build a local CLI when possible so it can manage the container.
+  _cli_built=0
   if command -v go >/dev/null 2>&1 && command -v "$MAKE_CMD" >/dev/null 2>&1; then
     if "$MAKE_CMD" -s build >/dev/null 2>&1; then
       ok "Local plugin CLI built"
+      _cli_built=1
     else
-      info "Local Go CLI was not built; manage Docker plugins with configurations/plugins.yaml and make docker."
+      info "Local Go CLI was not built."
     fi
   else
-    info "Go is not installed; manage Docker plugins with configurations/plugins.yaml and make docker."
+    info "Go is not installed."
   fi
   info ""
-  info "Manage plugins with: ./beelzebub plugin install <link>   (or edit configurations/plugins.yaml)"
+  if [ "$_cli_built" -eq 1 ]; then
+    info "Add a plugin with: ./beelzebub plugin install <link>"
+  else
+    info "Add a plugin by listing it in configurations/plugins.yaml, then: make docker"
+  fi
 else
   if [ -n "$TOKEN" ]; then
     export BEELZEBUB_CLOUD_ENABLED=true

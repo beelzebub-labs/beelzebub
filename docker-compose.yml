@@ -20,8 +20,8 @@ services:
       - path: .env
         required: false
     environment:
-      RABBITMQ_URI: ${RABBITMQ_URI}
-      OPEN_AI_SECRET_KEY: ${OPEN_AI_SECRET_KEY}
+      RABBITMQ_URI: ${RABBITMQ_URI:-}
+      OPEN_AI_SECRET_KEY: ${OPEN_AI_SECRET_KEY:-}
       # Beelzebub Cloud (from .env, written by install.sh)
       BEELZEBUB_CLOUD_ENABLED: ${BEELZEBUB_CLOUD_ENABLED:-false}
       BEELZEBUB_CLOUD_URI: ${BEELZEBUB_CLOUD_URI:-}

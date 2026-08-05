@@ -19,6 +19,8 @@ const ConfigurationsDirName = "configurations"
 
 const DeclaredConfigPath = ConfigurationsDirName + "/" + DeclaredFileName
 
+const DeclaredConfigDir = ConfigurationsDirName + "/plugins"
+
 const declaredHeader = `# Plugins to compile into this deployment.
 #
 # Add a plugin by writing its repository here, or run:

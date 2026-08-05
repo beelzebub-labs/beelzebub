@@ -157,7 +157,27 @@ func (m *Manager) Install(ctx context.Context, rawSource, ref string, force bool
 		return LockedPlugin{}, err
 	}
 
+	locked.ConfigPath, locked.ConfigNew = m.seedConfig(manifest.Name, locked.Dir)
 	return locked, nil
+}
+
+func (m *Manager) seedConfig(name, dir string) (string, bool) {
+	rel := filepath.Join(DeclaredConfigDir, name+".yaml")
+	dst := filepath.Join(m.moduleRoot, rel)
+	if _, err := os.Stat(dst); err == nil {
+		return rel, false
+	}
+	buf, err := os.ReadFile(filepath.Join(m.moduleRoot, dir, rel))
+	if err != nil {
+		return "", false
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return "", false
+	}
+	if err := os.WriteFile(dst, buf, 0o644); err != nil {
+		return "", false
+	}
+	return rel, true
 }
 
 func (m *Manager) Remove(ctx context.Context, name string) (LockedPlugin, error) {
