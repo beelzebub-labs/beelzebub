@@ -174,3 +174,23 @@ func TestHTTPValidator_NoCommandsWithFallback(t *testing.T) {
 		assert.NotContains(t, issue.Message, "no fallbackCommand")
 	}
 }
+
+func TestHTTPValidator_CatchAllCommandNeedsNoFallback(t *testing.T) {
+	v := &HTTPValidator{}
+	for _, regex := range []string{".*", "^.*$", "^(.*)$"} {
+		issues := v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "http", Commands: []parser.Command{{RegexStr: regex, Handler: "ok"}}})
+		for _, issue := range issues {
+			assert.NotContains(t, issue.Message, "no fallbackCommand")
+		}
+	}
+}
+
+func TestHTTPValidator_PartialCommandsNeedFallback(t *testing.T) {
+	issues := (&HTTPValidator{}).Validate(parser.BeelzebubServiceConfiguration{Protocol: "http", Commands: []parser.Command{{RegexStr: "^GET /api", Handler: "ok"}}})
+	assert.Contains(t, issues, parser.ValidationIssue{Level: parser.LevelWarning, Message: "HTTP service has commands but no fallbackCommand — unmatched requests will return empty 200 OK"})
+}
+
+func TestHTTPValidator_InvalidRegexIsNotCatchAll(t *testing.T) {
+	issues := (&HTTPValidator{}).Validate(parser.BeelzebubServiceConfiguration{Protocol: "http", Commands: []parser.Command{{RegexStr: "^(?:.*)$", Handler: "ok"}}})
+	assert.Contains(t, issues, parser.ValidationIssue{Level: parser.LevelWarning, Message: "HTTP service has commands but no fallbackCommand — unmatched requests will return empty 200 OK"})
+}

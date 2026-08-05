@@ -23,7 +23,7 @@
     "description": { "type": "string", "description": "Human-readable label for this honeypot service." },
     "serverVersion": { "type": "string", "description": "Banner/version string sent to clients during handshake (e.g. OpenSSH, Apache/2.4.53)." },
     "serverName": { "type": "string", "description": "Hostname reported by the honeypot (e.g. ubuntu, mail.internal.company.com)." },
-    "deadlineTimeoutSeconds": { "type": "integer", "minimum": 0, "description": "Max connection lifetime in seconds. 0 means no timeout. Go warns if unset with commands." },
+    "deadlineTimeoutSeconds": { "type": "integer", "minimum": 0, "description": "Connection deadline in seconds for TCP, TELNET, and SSH. HTTP does not use this field; 0 causes immediate deadlines for TCP and TELNET, while SSH treats 0 as no timeout." },
     "banner": { "type": "string", "description": "Initial banner sent on connection (TCP) or greeting (HTTP). Can include binary wire format." },
     "passwordRegex": { "type": "string", "description": "Regex pattern for accepted passwords. Required for SSH and TELNET. Syntax validated by Go at runtime." },
     "trustedProxies": {

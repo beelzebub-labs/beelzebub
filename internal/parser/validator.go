@@ -149,7 +149,7 @@ func validateCommands(svc BeelzebubServiceConfiguration) []ValidationIssue {
 			})
 		}
 
-		if cmd.Handler == "" && cmd.Plugin == "" {
+		if cmd.Handler == "" && cmd.Plugin == "" && !isIntentionalHTTPEmptyResponse(svc, cmd) {
 			issues = append(issues, ValidationIssue{
 				Level:   LevelWarning,
 				Message: fmt.Sprintf("command[%d] has empty handler and no plugin, matched requests will produce no output", j),
@@ -188,7 +188,7 @@ func validateFallbackCommand(svc BeelzebubServiceConfiguration) []ValidationIssu
 
 func validatePluginConfig(svc BeelzebubServiceConfiguration) []ValidationIssue {
 	var issues []ValidationIssue
-	if svc.DeadlineTimeoutSeconds == 0 && len(svc.Commands) > 0 {
+	if (svc.Protocol == "tcp" || svc.Protocol == "telnet" || svc.Protocol == "ssh") && svc.DeadlineTimeoutSeconds == 0 && len(svc.Commands) > 0 {
 		issues = append(issues, ValidationIssue{
 			Level:   LevelWarning,
 			Message: "deadlineTimeoutSeconds is not set, connections may be closed immediately",
@@ -202,6 +202,28 @@ func validatePluginConfig(svc BeelzebubServiceConfiguration) []ValidationIssue {
 		})
 	}
 	return issues
+}
+
+func isIntentionalHTTPEmptyResponse(svc BeelzebubServiceConfiguration, cmd Command) bool {
+	if svc.Protocol != "http" || cmd.Handler != "" || cmd.Plugin != "" {
+		return false
+	}
+	if cmd.StatusCode == 204 || cmd.StatusCode == 205 || cmd.StatusCode == 304 ||
+		(cmd.StatusCode >= 300 && cmd.StatusCode < 400 && hasHeader(cmd.Headers, "Location")) ||
+		(cmd.StatusCode == 401 && hasHeader(cmd.Headers, "WWW-Authenticate")) {
+		return true
+	}
+	return false
+}
+
+func hasHeader(headers []string, name string) bool {
+	for _, header := range headers {
+		parts := strings.SplitN(header, ":", 2)
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func detectCollisions(services []BeelzebubServiceConfiguration, resultMap map[string]*ValidationResult) {

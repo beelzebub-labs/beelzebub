@@ -314,14 +314,14 @@ func TestValidateDeadlineTimeout(t *testing.T) {
 		commands []Command
 		wantWarn bool
 	}{
-		{"zero with commands", 0, []Command{{RegexStr: "test"}}, true},
+		{"tcp zero with commands", 0, []Command{{RegexStr: "test"}}, true},
 		{"zero without commands", 0, nil, false},
 		{"non-zero with commands", 30, []Command{{RegexStr: "test"}}, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := makeService("test.yaml", "http", ":8080", tt.commands)
+			svc := makeService("test.yaml", "tcp", ":8080", tt.commands)
 			svc.DeadlineTimeoutSeconds = tt.timeout
 			result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
 			issues := findIssues(result, "test.yaml")
@@ -333,6 +333,30 @@ func TestValidateDeadlineTimeout(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateDeadlineTimeoutHTTPDoesNotWarn(t *testing.T) {
+	svc := makeService("test.yaml", "http", ":8080", []Command{{RegexStr: "test"}})
+	result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
+	assert.False(t, hasIssueContaining(findIssues(result, "test.yaml"), LevelWarning, "deadlineTimeoutSeconds"))
+}
+
+func TestValidateIntentionalHTTPEmptyResponses(t *testing.T) {
+	tests := []Command{
+		{RegexStr: "a", StatusCode: 204},
+		{RegexStr: "b", StatusCode: 205},
+		{RegexStr: "c", StatusCode: 304},
+		{RegexStr: "d", StatusCode: 302, Headers: []string{"location: /login"}},
+		{RegexStr: "e", StatusCode: 401, Headers: []string{"WWW-AUTHENTICATE: Basic realm=api"}},
+	}
+	result := Validate([]BeelzebubServiceConfiguration{makeService("test.yaml", "http", ":8080", tests)}, nil)
+	assert.False(t, hasIssueContaining(findIssues(result, "test.yaml"), LevelWarning, "empty handler"))
+}
+
+func TestValidateHTTPEmptyHandlerStillWarnsWhenNotIntentional(t *testing.T) {
+	svc := makeService("test.yaml", "http", ":8080", []Command{{RegexStr: "test", StatusCode: 200}})
+	result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
+	assert.True(t, hasIssueContaining(findIssues(result, "test.yaml"), LevelWarning, "empty handler"))
 }
 
 func TestValidateWithParseIssues(t *testing.T) {
