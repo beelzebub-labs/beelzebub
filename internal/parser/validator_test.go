@@ -34,6 +34,28 @@ func findIssues(result ValidateResult, filename string) []ValidationIssue {
 	return nil
 }
 
+func TestValidateDerivedConfigurationReportsOnceWithFilenameWithoutMutation(t *testing.T) {
+	commands := []Command{{RegexStr: "ok", Handler: "ok"}}
+	services := []BeelzebubServiceConfiguration{{
+		Filename:       "invalid.yaml",
+		Protocol:       "http",
+		Address:        ":8080",
+		Commands:       commands,
+		TrustedProxies: []string{"bad"},
+		Plugin:         Plugin{RateLimitEnabled: true, RateLimitRequests: 0, RateLimitWindowSeconds: 1},
+	}}
+	result := Validate(services, nil)
+	issues := findIssues(result, "invalid.yaml")
+	assert.Equal(t, 2, result.TotalErrors)
+	assert.Len(t, issues, 2)
+	for _, issue := range issues {
+		assert.Equal(t, "invalid.yaml", result.Results[0].Filename)
+		assert.Equal(t, LevelError, issue.Level)
+	}
+	assert.Nil(t, services[0].TrustedProxiesNets)
+	assert.Nil(t, services[0].Commands[0].Regex)
+}
+
 func hasIssue(issues []ValidationIssue, level, message string) bool {
 	for _, issue := range issues {
 		if issue.Level == level && issue.Message == message {

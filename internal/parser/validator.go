@@ -91,6 +91,7 @@ func Validate(services []BeelzebubServiceConfiguration, parseIssues []Validation
 		r.Issues = append(r.Issues, validateCommands(services[i])...)
 		r.Issues = append(r.Issues, validateFallbackCommand(services[i])...)
 		r.Issues = append(r.Issues, validatePluginConfig(services[i])...)
+		r.Issues = append(r.Issues, validateDerivedConfiguration(services[i])...)
 
 		for _, v := range GetServiceValidators() {
 			r.Issues = append(r.Issues, v.Validate(services[i])...)
@@ -100,6 +101,19 @@ func Validate(services []BeelzebubServiceConfiguration, parseIssues []Validation
 	detectCollisions(services, resultMap)
 
 	return buildResult(resultMap)
+}
+
+// Validate is also a public entry point, so these invariants must not depend
+// on the file/JSON parser having run first.
+func validateDerivedConfiguration(svc BeelzebubServiceConfiguration) []ValidationIssue {
+	var issues []ValidationIssue
+	if svc.Plugin.RateLimitEnabled && (svc.Plugin.RateLimitRequests <= 0 || svc.Plugin.RateLimitWindowSeconds <= 0) {
+		issues = append(issues, ValidationIssue{Level: LevelError, Message: "invalid rate limiting config: rateLimitRequests and rateLimitWindowSeconds must be > 0"})
+	}
+	if err := svc.CompileTrustedProxies(); err != nil {
+		issues = append(issues, ValidationIssue{Level: LevelError, Message: err.Error()})
+	}
+	return issues
 }
 
 func getResult(resultMap map[string]*ValidationResult, filename string) *ValidationResult {

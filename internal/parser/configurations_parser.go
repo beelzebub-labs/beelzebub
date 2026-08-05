@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -182,7 +184,9 @@ func (bp configurationsParser) ReadConfigurationsCore() (*BeelzebubCoreConfigura
 		return nil, fmt.Errorf("in file %s: %v", bp.configurationsCorePath, err)
 	}
 
-	applyEnvOverrides(beelzebubConfiguration)
+	if err := applyEnvOverrides(beelzebubConfiguration); err != nil {
+		return nil, fmt.Errorf("environment configuration: %v", err)
+	}
 	return beelzebubConfiguration, nil
 }
 
@@ -194,21 +198,44 @@ func (bp configurationsParser) ReadConfigurationsCore() (*BeelzebubCoreConfigura
 //	BEELZEBUB_RABBITMQ_ENABLED, BEELZEBUB_RABBITMQ_URI,
 //	BEELZEBUB_PROMETHEUS_PATH, BEELZEBUB_PROMETHEUS_PORT,
 //	BEELZEBUB_CLOUD_ENABLED, BEELZEBUB_CLOUD_URI, BEELZEBUB_CLOUD_AUTH_TOKEN
-func applyEnvOverrides(cfg *BeelzebubCoreConfigurations) {
+func applyEnvOverrides(cfg *BeelzebubCoreConfigurations) error {
+	parse := func(name, value string) (bool, error) {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return false, fmt.Errorf("%s must be a boolean: %w", name, err)
+		}
+		return parsed, nil
+	}
 	if v := os.Getenv("BEELZEBUB_LOGGING_DEBUG"); v != "" {
-		cfg.Core.Logging.Debug = parseBool(v)
+		parsed, err := parse("BEELZEBUB_LOGGING_DEBUG", v)
+		if err != nil {
+			return err
+		}
+		cfg.Core.Logging.Debug = parsed
 	}
 	if v := os.Getenv("BEELZEBUB_LOGGING_DEBUG_REPORT_CALLER"); v != "" {
-		cfg.Core.Logging.DebugReportCaller = parseBool(v)
+		parsed, err := parse("BEELZEBUB_LOGGING_DEBUG_REPORT_CALLER", v)
+		if err != nil {
+			return err
+		}
+		cfg.Core.Logging.DebugReportCaller = parsed
 	}
 	if v := os.Getenv("BEELZEBUB_LOGGING_LOG_DISABLE_TIMESTAMP"); v != "" {
-		cfg.Core.Logging.LogDisableTimestamp = parseBool(v)
+		parsed, err := parse("BEELZEBUB_LOGGING_LOG_DISABLE_TIMESTAMP", v)
+		if err != nil {
+			return err
+		}
+		cfg.Core.Logging.LogDisableTimestamp = parsed
 	}
 	if v := os.Getenv("BEELZEBUB_LOGGING_LOGS_PATH"); v != "" {
 		cfg.Core.Logging.LogsPath = v
 	}
 	if v := os.Getenv("BEELZEBUB_RABBITMQ_ENABLED"); v != "" {
-		cfg.Core.Tracings.RabbitMQ.Enabled = parseBool(v)
+		parsed, err := parse("BEELZEBUB_RABBITMQ_ENABLED", v)
+		if err != nil {
+			return err
+		}
+		cfg.Core.Tracings.RabbitMQ.Enabled = parsed
 	}
 	if v := os.Getenv("BEELZEBUB_RABBITMQ_URI"); v != "" {
 		cfg.Core.Tracings.RabbitMQ.URI = v
@@ -220,7 +247,11 @@ func applyEnvOverrides(cfg *BeelzebubCoreConfigurations) {
 		cfg.Core.Prometheus.Port = v
 	}
 	if v := os.Getenv("BEELZEBUB_CLOUD_ENABLED"); v != "" {
-		cfg.Core.BeelzebubCloud.Enabled = parseBool(v)
+		parsed, err := parse("BEELZEBUB_CLOUD_ENABLED", v)
+		if err != nil {
+			return err
+		}
+		cfg.Core.BeelzebubCloud.Enabled = parsed
 	}
 	if v := os.Getenv("BEELZEBUB_CLOUD_URI"); v != "" {
 		cfg.Core.BeelzebubCloud.URI = v
@@ -228,6 +259,7 @@ func applyEnvOverrides(cfg *BeelzebubCoreConfigurations) {
 	if v := os.Getenv("BEELZEBUB_CLOUD_AUTH_TOKEN"); v != "" {
 		cfg.Core.BeelzebubCloud.AuthToken = v
 	}
+	return nil
 }
 
 func parseBool(v string) bool {
@@ -302,6 +334,13 @@ func (bp configurationsParser) readConfigurationsServices(strict bool) ([]Beelze
 		var rawDoc any
 		if err := yaml.Unmarshal(buf, &rawDoc); err == nil {
 			beelzebubServiceConfiguration.RawConfig = rawDoc
+			if err := validateRawStringFields(rawDoc); err != nil {
+				if strict {
+					return nil, nil, fmt.Errorf("in file %s: %v", filePath, err)
+				}
+				issues = append(issues, ValidationIssue{Level: LevelError, Message: err.Error(), Filename: servicesName})
+				continue
+			}
 		}
 
 		if beelzebubServiceConfiguration.Plugin.RateLimitEnabled {
@@ -342,25 +381,55 @@ func (bp configurationsParser) readConfigurationsServices(strict bool) ([]Beelze
 // parseServicesFromEnv parses a JSON array of BeelzebubServiceConfiguration from
 // the BEELZEBUB_SERVICES_CONFIG environment variable.
 func parseServicesFromEnv(jsonStr string, strict bool) ([]BeelzebubServiceConfiguration, []ValidationIssue, error) {
-	var servicesConfiguration []BeelzebubServiceConfiguration
-	if err := json.Unmarshal([]byte(jsonStr), &servicesConfiguration); err != nil {
-		return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG: %v", err)
-	}
-
-	var rawServices []any
 	dec := json.NewDecoder(strings.NewReader(jsonStr))
 	dec.UseNumber()
-	if err := dec.Decode(&rawServices); err != nil {
+	var rawValue any
+	if err := dec.Decode(&rawValue); err != nil {
 		return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG: %v", err)
+	}
+	if err := ensureJSONEOF(dec); err != nil {
+		return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG: %v", err)
+	}
+	rawServices, ok := rawValue.([]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG: expected a JSON array")
 	}
 
 	var issues []ValidationIssue
 	var validServices []BeelzebubServiceConfiguration
 
-	for i := range servicesConfiguration {
-		svc := &servicesConfiguration[i]
-		svc.Filename = fmt.Sprintf("<env:BEELZEBUB_SERVICES_CONFIG>[%d]", i)
-		svc.RawConfig = rawServices[i]
+	for i, rawService := range rawServices {
+		filename := fmt.Sprintf("<env:BEELZEBUB_SERVICES_CONFIG>[%d]", i)
+		if rawService == nil {
+			message := "service entry must be a JSON object, not null"
+			if strict {
+				return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG[%d]: %s", i, message)
+			}
+			issues = append(issues, ValidationIssue{Level: LevelError, Message: message, Filename: filename})
+			continue
+		}
+		data, err := json.Marshal(rawService)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG[%d]: %v", i, err)
+		}
+		var parsed BeelzebubServiceConfiguration
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			if strict {
+				return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG[%d]: %v", i, err)
+			}
+			issues = append(issues, ValidationIssue{Level: LevelError, Message: err.Error(), Filename: filename})
+			continue
+		}
+		svc := &parsed
+		svc.Filename = filename
+		svc.RawConfig = rawService
+		if err := validateRawStringFields(rawService); err != nil {
+			if strict {
+				return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG[%d]: %v", i, err)
+			}
+			issues = append(issues, ValidationIssue{Level: LevelError, Message: err.Error(), Filename: filename})
+			continue
+		}
 
 		if svc.Plugin.RateLimitEnabled {
 			if svc.Plugin.RateLimitRequests <= 0 || svc.Plugin.RateLimitWindowSeconds <= 0 {
@@ -394,16 +463,110 @@ func parseServicesFromEnv(jsonStr string, strict bool) ([]BeelzebubServiceConfig
 	return validServices, issues, nil
 }
 
+// validateRawStringFields catches explicit nulls that yaml/json can otherwise
+// decode into empty strings. Missing fields and empty arrays remain valid.
+func validateRawStringFields(raw any) error {
+	if raw == nil { // empty YAML document: preserve existing default behavior
+		return nil
+	}
+	object, ok := raw.(map[string]any)
+	if !ok {
+		return fmt.Errorf("service entry must be a JSON/YAML object")
+	}
+	if value, present := object["trustedProxies"]; present {
+		if err := validateStringArray(value, "trustedProxies"); err != nil {
+			return err
+		}
+	}
+	if commands, present := object["commands"]; present {
+		if err := validateObjectArray(commands, "commands"); err != nil {
+			return err
+		}
+		for i, item := range commands.([]any) {
+			command := item.(map[string]any)
+			if headers, present := command["headers"]; present {
+				if err := validateStringArray(headers, fmt.Sprintf("commands[%d].headers", i)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if tools, present := object["tools"]; present {
+		if err := validateObjectArray(tools, "tools"); err != nil {
+			return err
+		}
+		for i, item := range tools.([]any) {
+			tool := item.(map[string]any)
+			if params, present := tool["params"]; present {
+				if err := validateObjectArray(params, fmt.Sprintf("tools[%d].params", i)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateObjectArray(value any, field string) error {
+	items, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("%s must be an array of objects", field)
+	}
+	for i, item := range items {
+		if item == nil {
+			return fmt.Errorf("%s[%d] must be an object, not null", field, i)
+		}
+		if _, ok := item.(map[string]any); !ok {
+			return fmt.Errorf("%s[%d] must be an object", field, i)
+		}
+	}
+	return nil
+}
+
+func validateStringArray(value any, field string) error {
+	if value == nil {
+		return fmt.Errorf("%s must be an array of strings, not null", field)
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("%s must be an array of strings", field)
+	}
+	for i, item := range items {
+		if _, ok := item.(string); !ok {
+			return fmt.Errorf("%s[%d] must be a string", field, i)
+		}
+	}
+	return nil
+}
+
+func ensureJSONEOF(dec *json.Decoder) error {
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing data")
+		}
+		return err
+	}
+	return nil
+}
+
 // CompileCommandRegex is the method that compiles the regular expression for each configured Command.
 func (c *BeelzebubServiceConfiguration) CompileCommandRegex() error {
+	compiled := make([]*regexp.Regexp, len(c.Commands))
 	for i, command := range c.Commands {
 		if command.RegexStr != "" {
 			rex, err := regexp.Compile(command.RegexStr)
 			if err != nil {
+				for j := range c.Commands {
+					c.Commands[j].Regex = nil
+				}
 				return err
 			}
-			c.Commands[i].Regex = rex
+			compiled[i] = rex
 		}
+	}
+	for i := range c.Commands {
+		c.Commands[i].Regex = compiled[i]
 	}
 	return nil
 }
@@ -412,6 +575,9 @@ func (c *BeelzebubServiceConfiguration) CompileCommandRegex() error {
 // into net.IPNet values stored in TrustedProxiesNets. Bare IPs are treated as
 // /32 (IPv4) or /128 (IPv6).
 func (c *BeelzebubServiceConfiguration) CompileTrustedProxies() error {
+	// Clear derived state first, so a failed recompilation cannot leave a
+	// previous, potentially broader trust policy active.
+	c.TrustedProxiesNets = nil
 	nets := make([]*net.IPNet, 0, len(c.TrustedProxies))
 	for _, entry := range c.TrustedProxies {
 		entry = strings.TrimSpace(entry)
@@ -423,7 +589,8 @@ func (c *BeelzebubServiceConfiguration) CompileTrustedProxies() error {
 			if ip == nil {
 				return fmt.Errorf("invalid trustedProxies entry %q", entry)
 			}
-			if ip.To4() != nil {
+			// To4 also matches IPv4-mapped IPv6; preserve the written family.
+			if !strings.Contains(entry, ":") && ip.To4() != nil {
 				entry += "/32"
 			} else {
 				entry += "/128"
@@ -451,6 +618,7 @@ func gelAllFilesNameByDirName(dirName string) ([]string, error) {
 			filesName = append(filesName, file.Name())
 		}
 	}
+	sort.Strings(filesName)
 	return filesName, nil
 }
 
