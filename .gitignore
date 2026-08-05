@@ -12,3 +12,6 @@ integration_test/certs/tls.key
 .opencode/
 node_modules/
 package-lock.json
+/beelzebub
+/.beelzebub-mode
+/plugins/*/

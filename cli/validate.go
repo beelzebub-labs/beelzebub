@@ -46,7 +46,7 @@ func runValidate(corePath, servicesPath string) error {
 	if err != nil {
 		coreResult = parser.ValidateResult{
 			Results: []parser.ValidationResult{
-			{Filename: corePath, Issues: []parser.ValidationIssue{
+				{Filename: corePath, Issues: []parser.ValidationIssue{
 					{Level: parser.LevelError, Message: fmt.Sprintf("failed to read core config: %v", err)},
 				}},
 			},

@@ -12,6 +12,10 @@ WORKDIR /build
 COPY . .
 RUN go mod download
 
+# Install plugins declared in configurations/plugins.yaml (no-op if the file is empty).
+# For private plugins, pass a token: docker build --build-arg BEELZEBUB_GITHUB_TOKEN=...
+ARG BEELZEBUB_GITHUB_TOKEN=""
+RUN BEELZEBUB_GITHUB_TOKEN="$BEELZEBUB_GITHUB_TOKEN" go run . plugin install --no-build
 
 # Build
 RUN go build -o main .

@@ -29,12 +29,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configsDir := fs.String("configs", "configurations/services", "directory with YAML config files")
+	specsDir := fs.String("specs", "", "directory with JSON Schema files (default: embedded in binary)")
 
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
 		}
 		return 2
+	}
+
+	if *specsDir != "" {
+		if err := parser.SetSchemaDir(*specsDir); err != nil {
+			fmt.Fprintf(stderr, "error: loading specs dir: %v\n", err)
+			return 1
+		}
 	}
 
 	absConfigs, err := filepath.Abs(*configsDir)
@@ -76,6 +84,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		svc.Filename = entry.Name()
+
+		var rawDoc any
+		if err := yaml.Unmarshal(data, &rawDoc); err == nil {
+			svc.RawConfig = rawDoc
+		}
 
 		issues := parser.ValidateConfigSchema(svc)
 		if len(issues) == 0 {

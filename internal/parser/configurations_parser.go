@@ -92,6 +92,11 @@ type BeelzebubServiceConfiguration struct {
 	// headers are ignored and the immediate TCP peer is used as source IP.
 	TrustedProxies     []string     `yaml:"trustedProxies,omitempty" json:"trustedProxies,omitempty"`
 	TrustedProxiesNets []*net.IPNet `yaml:"-" json:"-"`
+	// RawConfig is the original parsed document (from YAML or the
+	// BEELZEBUB_SERVICES_CONFIG JSON) before unmarshalling into this struct.
+	// Schema validation prefers it over the struct round-trip so that unknown
+	// fields, explicit zero values and empty collections are not lost.
+	RawConfig any `yaml:"-" json:"-"`
 }
 
 func (bsc BeelzebubServiceConfiguration) HashCode() (string, error) {
@@ -294,6 +299,11 @@ func (bp configurationsParser) readConfigurationsServices(strict bool) ([]Beelze
 
 		beelzebubServiceConfiguration.Filename = servicesName
 
+		var rawDoc any
+		if err := yaml.Unmarshal(buf, &rawDoc); err == nil {
+			beelzebubServiceConfiguration.RawConfig = rawDoc
+		}
+
 		if beelzebubServiceConfiguration.Plugin.RateLimitEnabled {
 			if beelzebubServiceConfiguration.Plugin.RateLimitRequests <= 0 ||
 				beelzebubServiceConfiguration.Plugin.RateLimitWindowSeconds <= 0 {
@@ -337,12 +347,20 @@ func parseServicesFromEnv(jsonStr string, strict bool) ([]BeelzebubServiceConfig
 		return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG: %v", err)
 	}
 
+	var rawServices []any
+	dec := json.NewDecoder(strings.NewReader(jsonStr))
+	dec.UseNumber()
+	if err := dec.Decode(&rawServices); err != nil {
+		return nil, nil, fmt.Errorf("invalid BEELZEBUB_SERVICES_CONFIG: %v", err)
+	}
+
 	var issues []ValidationIssue
 	var validServices []BeelzebubServiceConfiguration
 
 	for i := range servicesConfiguration {
 		svc := &servicesConfiguration[i]
 		svc.Filename = fmt.Sprintf("<env:BEELZEBUB_SERVICES_CONFIG>[%d]", i)
+		svc.RawConfig = rawServices[i]
 
 		if svc.Plugin.RateLimitEnabled {
 			if svc.Plugin.RateLimitRequests <= 0 || svc.Plugin.RateLimitWindowSeconds <= 0 {

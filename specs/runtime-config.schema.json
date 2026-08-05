@@ -54,7 +54,7 @@
     "fallbackCommand": { "$ref": "#/definitions/Command" },
     "plugin": { "$ref": "#/definitions/Plugin" }
   },
-  "required": ["protocol", "address"],
+  "required": ["apiVersion", "protocol", "address"],
   "additionalProperties": false,
   "dependencies": {
     "tlsCertPath": ["tlsKeyPath"],

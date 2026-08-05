@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -36,7 +38,7 @@ var (
 	schemaInitErr      error
 	newSchemaCompiler  = func() schemaCompiler { return jsonschema.NewCompiler() }
 	loadSchema         = loadSchemaRaw
-	configToRawJSON    = structToRawJSON
+	configToRawJSON    = configToRawJSONDefault
 )
 
 // protocolSchemaURLs maps protocol name to the per-protocol schema $id.
@@ -112,6 +114,33 @@ func loadSchemaRaw(fileName string) (any, error) {
 	return jsonschema.UnmarshalJSON(bytes.NewReader(data))
 }
 
+// SetSchemaDir switches the schema source from the embedded specs/ FS to the
+// JSON Schema files in the given directory, and resets the compiled schema
+// cache. Pass an empty string to restore the embedded schemas.
+func SetSchemaDir(dir string) error {
+	if dir == "" {
+		loadSchema = loadSchemaRaw
+		ResetSchemaCache()
+		return nil
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(absDir, "runtime-config.schema.json")); err != nil {
+		return fmt.Errorf("specs dir %q: %w", absDir, err)
+	}
+	loadSchema = func(fileName string) (any, error) {
+		data, err := os.ReadFile(filepath.Join(absDir, fileName))
+		if err != nil {
+			return nil, err
+		}
+		return jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	}
+	ResetSchemaCache()
+	return nil
+}
+
 // ValidateConfigSchema validates a BeelzebubServiceConfiguration against
 // the JSON Schema. For known protocols, validates against the per-protocol
 // schema (which includes the base schema via $ref). For unknown protocols,
@@ -148,10 +177,32 @@ func ValidateConfigSchema(config BeelzebubServiceConfiguration) []ValidationIssu
 	return nil
 }
 
+// configToRawJSONDefault converts a service configuration to a raw JSON value
+// (any) for schema validation. When the configuration carries the original
+// parsed document (RawConfig), it is used as-is so that unknown fields,
+// explicit zero values and empty collections are preserved; otherwise the Go
+// struct is serialized.
+func configToRawJSONDefault(v any) (any, error) {
+	if cfg, ok := v.(BeelzebubServiceConfiguration); ok && cfg.RawConfig != nil {
+		return marshalToRawJSON(cfg.RawConfig)
+	}
+	return structToRawJSON(v)
+}
+
 // structToRawJSON converts a Go struct to a raw JSON value (any) via JSON
 // marshal/unmarshal. This is needed because jsonschema works with JSON types.
 func structToRawJSON(v any) (any, error) {
 	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return jsonschema.UnmarshalJSON(bytes.NewReader(data))
+}
+
+// marshalToRawJSON converts a raw parsed document (map[string]any, []any,
+// json.Number, ...) to a raw JSON value (any) for schema validation.
+func marshalToRawJSON(raw any) (any, error) {
+	data, err := json.Marshal(raw)
 	if err != nil {
 		return nil, err
 	}
