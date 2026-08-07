@@ -524,6 +524,84 @@ func TestTraceRequest_RemoteAddr_IPv6WithoutPort(t *testing.T) {
 	assert.Equal(t, "2001:db8::42", ev.RemoteAddr)
 }
 
+func TestHTTPHandler_MethodRouting(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		commands   []parser.Command
+		fallback   parser.Command
+		wantStatus int
+		wantBody   string
+		wantAllow  string
+	}{
+		{
+			name:       "allowed method",
+			method:     http.MethodPost,
+			path:       "/api/generate",
+			commands:   []parser.Command{{Regex: regexp.MustCompile(`^/api/generate$`), Methods: []string{http.MethodPost}, Handler: "generated", StatusCode: http.StatusOK}},
+			wantStatus: http.StatusOK,
+			wantBody:   "generated",
+		},
+		{
+			name:       "missing list accepts every method",
+			method:     http.MethodPatch,
+			path:       "/open",
+			commands:   []parser.Command{{Regex: regexp.MustCompile(`^/open$`), Handler: "open", StatusCode: http.StatusOK}},
+			wantStatus: http.StatusOK,
+			wantBody:   "open",
+		},
+		{
+			name:   "later command accepts method",
+			method: http.MethodPost,
+			path:   "/same",
+			commands: []parser.Command{
+				{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodGet}, Handler: "get", StatusCode: http.StatusOK},
+				{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodPost}, Handler: "post", StatusCode: http.StatusCreated},
+			},
+			wantStatus: http.StatusCreated,
+			wantBody:   "post",
+		},
+		{
+			name:   "known URL rejects method",
+			method: http.MethodDelete,
+			path:   "/same",
+			commands: []parser.Command{
+				{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodGet, http.MethodPost}, Handler: "wrong", StatusCode: http.StatusOK},
+				{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodPost}, Handler: "wrong", StatusCode: http.StatusOK},
+			},
+			fallback:   parser.Command{Handler: "fallback", StatusCode: http.StatusNotFound},
+			wantStatus: http.StatusMethodNotAllowed,
+			wantBody:   http.StatusText(http.StatusMethodNotAllowed),
+			wantAllow:  "GET, POST",
+		},
+		{
+			name:       "unknown URL uses fallback",
+			method:     http.MethodGet,
+			path:       "/missing",
+			commands:   []parser.Command{{Regex: regexp.MustCompile(`^/known$`), Methods: []string{http.MethodGet}, Handler: "known", StatusCode: http.StatusOK}},
+			fallback:   parser.Command{Handler: "fallback", StatusCode: http.StatusNotFound},
+			wantStatus: http.StatusNotFound,
+			wantBody:   "fallback",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(tt.method, tt.path, nil)
+			newHTTPHandler(parser.BeelzebubServiceConfiguration{
+				Commands:        tt.commands,
+				FallbackCommand: tt.fallback,
+			}, &mockTracer{}).ServeHTTP(recorder, request)
+
+			assert.Equal(t, tt.wantStatus, recorder.Code)
+			assert.Equal(t, tt.wantBody, recorder.Body.String())
+			assert.Equal(t, tt.wantAllow, recorder.Header().Get("Allow"))
+		})
+	}
+}
+
 func TestInit_Basic(t *testing.T) {
 	strategy := HTTPStrategy{}
 	tr := &mockTracer{}

@@ -61,7 +61,7 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 			config: BeelzebubServiceConfiguration{
 				ApiVersion: "v1",
 				Protocol:   "http", Address: ":8080",
-				Commands: []Command{{RegexStr: ".*", Handler: "ok"}},
+				Commands: []Command{{RegexStr: ".*", Methods: []string{"GET", "POST"}, Handler: "ok"}},
 			},
 		},
 		{
@@ -223,6 +223,14 @@ func TestValidateConfigSchema_Invalid(t *testing.T) {
 				Commands: []Command{{RegexStr: "^ls$", Handler: "files"}},
 			},
 			msg: "missing property",
+		},
+		{
+			name: "duplicate HTTP methods",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "http", Address: ":8080",
+				Commands: []Command{{RegexStr: ".*", Methods: []string{"GET", "GET"}, Handler: "ok"}},
+			},
+			msg: "equal",
 		},
 	}
 

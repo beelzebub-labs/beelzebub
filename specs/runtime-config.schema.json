@@ -161,6 +161,11 @@
       "type": "object",
       "properties": {
         "regex": { "type": "string" },
+        "methods": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
         "handler": { "type": "string" },
         "headers": {
           "type": "array",

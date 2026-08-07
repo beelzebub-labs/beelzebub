@@ -127,6 +127,7 @@ make validate-all          # validate-specs + beelzebub validate (full)
 | **Commands** | `commands` required for HTTP (min 1) | Schema | Error |
 | **Commands** | `commands` required for TELNET (min 1) | Schema | Error |
 | **Commands** | `commands[].regex` non-empty | Schema + Go | Error |
+| **Commands** | `commands[].methods` entries non-empty and unique | Schema | Error |
 | **Commands** | `commands[].plugin` enum valid | Schema | Error |
 | **Commands** | `commands[].handler` empty + `plugin` empty | Go | Warning |
 | **Commands** | `commands[].headers` format `key: value` | Go | Warning |
