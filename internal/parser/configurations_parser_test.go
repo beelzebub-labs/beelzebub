@@ -2,8 +2,10 @@ package parser
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -246,6 +248,25 @@ func TestReadConfigurationsServicesValid(t *testing.T) {
 	assert.Equal(t, firstBeelzebubServiceConfiguration.Tools[0].Handler, "reset_password ok")
 }
 
+func TestReadConfigurationsServicesValidationPreservesRawDoc(t *testing.T) {
+	RegisterServiceValidator(&SchemaValidator{})
+	defer ResetServiceValidators()
+
+	dir := t.TempDir()
+	svcYAML := "apiVersion: \"v1\"\nprotocol: ssh\naddress: \":22\"\nserverVersion: OpenSSH_9.0\npasswordRegex: ^(.+)$\ncommmands:\n  - regex: ^ls$\n    handler: files\n"
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "svc.yaml"), []byte(svcYAML), 0644))
+
+	configurationsParser := Init("", dir)
+	services, issues, err := configurationsParser.ReadConfigurationsServicesForValidation()
+	assert.Nil(t, err)
+	assert.Len(t, services, 1)
+	assert.Empty(t, issues)
+	assert.NotNil(t, services[0].RawConfig)
+
+	result := Validate(services, issues)
+	assert.True(t, hasIssueContaining(findIssues(result, "svc.yaml"), LevelError, "commmands"))
+}
+
 func TestReadConfigurationsServicesGenerateHashCode(t *testing.T) {
 	configurationsParser := Init("", "")
 
@@ -258,7 +279,7 @@ func TestReadConfigurationsServicesGenerateHashCode(t *testing.T) {
 
 	assert.Nil(t, err)
 	assert.Nil(t, errHashCode)
-	assert.Equal(t, hashCode, "528e52a4b7addc43ec887dba7913070c9fd9f2ec246723c4b6ee73de75426e24")
+	assert.Equal(t, "34c8a2e81787e09f9e24efd6f60b2ceb808e47d9fa180ea8af9f054797ad4e00", hashCode)
 }
 
 func TestReadConfigurationsPluginGuardrailsValid(t *testing.T) {
@@ -436,6 +457,61 @@ func TestCompileCommandRegex(t *testing.T) {
 	}
 }
 
+func TestCompileTrustedProxiesEdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []string
+		want    int
+		bad     bool
+	}{
+		{name: "IPs CIDRs whitespace and empty entries", entries: []string{" 127.0.0.1 ", "::1", " 10.0.0.0/8 ", ""}, want: 3},
+		{name: "IPv4 mapped IPv6", entries: []string{"::ffff:192.0.2.1"}, want: 1},
+		{name: "zero prefix", entries: []string{"0.0.0.0/0", "::/0"}, want: 2},
+		{name: "canonical host bits are masked by ParseCIDR", entries: []string{"192.0.2.99/24"}, want: 1},
+		{name: "invalid address forms", entries: []string{"127.0.0.1:80"}, bad: true},
+		{name: "invalid", entries: []string{"not-an-ip"}, bad: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := BeelzebubServiceConfiguration{TrustedProxies: tt.entries}
+			err := cfg.CompileTrustedProxies()
+			if tt.bad {
+				assert.Error(t, err)
+				assert.Nil(t, cfg.TrustedProxiesNets)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Len(t, cfg.TrustedProxiesNets, tt.want)
+			if tt.name == "IPv4 mapped IPv6" {
+				assert.True(t, cfg.TrustedProxiesNets[0].Contains(net.ParseIP("::ffff:192.0.2.1")))
+				assert.False(t, cfg.TrustedProxiesNets[0].Contains(net.ParseIP("::ffff:192.0.2.2")))
+			}
+			if tt.name == "canonical host bits are masked by ParseCIDR" {
+				assert.True(t, cfg.TrustedProxiesNets[0].Contains(net.ParseIP("192.0.2.1")))
+				assert.True(t, cfg.TrustedProxiesNets[0].Contains(net.ParseIP("192.0.2.254")))
+			}
+		})
+	}
+}
+
+func TestCompileCommandRegexIsAtomic(t *testing.T) {
+	cfg := BeelzebubServiceConfiguration{Commands: []Command{{RegexStr: "ok"}, {RegexStr: "["}}}
+	assert.Error(t, cfg.CompileCommandRegex())
+	assert.Nil(t, cfg.Commands[0].Regex)
+	cfg.Commands[1].RegexStr = "fixed"
+	assert.NoError(t, cfg.CompileCommandRegex())
+	assert.NotNil(t, cfg.Commands[0].Regex)
+	assert.Equal(t, "fixed", cfg.Commands[1].Regex.String())
+}
+
+func TestCompileTrustedProxiesClearsPreviousState(t *testing.T) {
+	cfg := BeelzebubServiceConfiguration{TrustedProxies: []string{"127.0.0.1"}}
+	assert.NoError(t, cfg.CompileTrustedProxies())
+	cfg.TrustedProxies = []string{"invalid"}
+	assert.Error(t, cfg.CompileTrustedProxies())
+	assert.Nil(t, cfg.TrustedProxiesNets)
+}
+
 func TestToolAnnotationsReadOnlyHint(t *testing.T) {
 	configurationsParser := Init("", "")
 	configurationsParser.readFileBytesByFilePathDependency = mockReadfilebytesToolWithReadOnlyAnnotation
@@ -544,7 +620,7 @@ func TestToolAnnotationsHashCodeStability(t *testing.T) {
 	// the hash for configs that don't use annotations
 	hashCode, errHashCode := beelzebubServicesConfiguration[0].HashCode()
 	assert.Nil(t, errHashCode)
-	assert.Equal(t, "528e52a4b7addc43ec887dba7913070c9fd9f2ec246723c4b6ee73de75426e24", hashCode)
+	assert.Equal(t, "34c8a2e81787e09f9e24efd6f60b2ceb808e47d9fa180ea8af9f054797ad4e00", hashCode)
 }
 
 func TestReadConfigurationsCoreEnvOverridesFile(t *testing.T) {
@@ -590,6 +666,15 @@ func TestReadConfigurationsCoreEnvOnlyNoFile(t *testing.T) {
 	assert.Equal(t, "./logs", cfg.Core.Logging.LogsPath)
 }
 
+func TestReadConfigurationsCoreRejectsInvalidBooleanEnvironment(t *testing.T) {
+	t.Setenv("BEELZEBUB_LOGGING_DEBUG", "definitely-not-bool")
+	parser := Init("missing.yaml", "")
+	parser.readFileBytesByFilePathDependency = mockReadfilebytesNotFound
+	cfg, err := parser.ReadConfigurationsCore()
+	assert.Nil(t, cfg)
+	assert.EqualError(t, err, "environment configuration: BEELZEBUB_LOGGING_DEBUG must be a boolean: strconv.ParseBool: parsing \"definitely-not-bool\": invalid syntax")
+}
+
 func TestReadConfigurationsServicesFromEnv(t *testing.T) {
 	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"apiVersion":"v1","protocol":"ssh","address":":2222","serverVersion":"OpenSSH","serverName":"ubuntu","passwordRegex":"^root$","deadlineTimeoutSeconds":60}]`)
 
@@ -614,6 +699,89 @@ func TestReadConfigurationsServicesFromEnvInvalidJSON(t *testing.T) {
 	assert.Nil(t, services)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid BEELZEBUB_SERVICES_CONFIG")
+}
+
+func TestReadConfigurationsServicesFromEnvRejectsTrailingDataAndNull(t *testing.T) {
+	for _, value := range []string{`[] {"unexpected":true}`, `[null]`, `null`} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("BEELZEBUB_SERVICES_CONFIG", value)
+			services, err := Init("", "").ReadConfigurationsServices()
+			assert.Error(t, err)
+			assert.Nil(t, services)
+		})
+	}
+}
+
+func TestParseServicesFromEnvLenientNullAndTrustedProxiesNull(t *testing.T) {
+	services, issues, err := parseServicesFromEnv(`[null,{"protocol":"http","address":":8080","trustedProxies":null}]`, false)
+	assert.NoError(t, err)
+	assert.Empty(t, services)
+	assert.Len(t, issues, 2)
+	assert.Equal(t, LevelError, issues[0].Level)
+	assert.Equal(t, LevelError, issues[1].Level)
+
+	_, _, err = parseServicesFromEnv(`{"protocol":"http"}`, false)
+	assert.Error(t, err)
+	services, issues, err = parseServicesFromEnv(`[1]`, false)
+	assert.NoError(t, err)
+	assert.Empty(t, services)
+	assert.Len(t, issues, 1)
+}
+
+func TestParseServicesFromEnvTrustedProxiesExplicitTypes(t *testing.T) {
+	for _, value := range []string{`null`, `[null]`, `[123]`, `[true]`} {
+		for _, strict := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s-strict-%t", value, strict), func(t *testing.T) {
+				services, issues, err := parseServicesFromEnv(fmt.Sprintf(`[{"protocol":"http","trustedProxies":%s}]`, value), strict)
+				if strict {
+					assert.Error(t, err)
+					return
+				}
+				assert.NoError(t, err)
+				assert.Empty(t, services)
+				assert.Len(t, issues, 1)
+			})
+		}
+	}
+}
+
+func TestYAMLTrustedProxiesExplicitTypes(t *testing.T) {
+	for _, value := range []string{"null", "[null]", "[123]", "[true]"} {
+		t.Run(value, func(t *testing.T) {
+			parser := Init("", "")
+			parser.gelAllFilesNameByDirNameDependency = func(string) ([]string, error) { return []string{"svc.yaml"}, nil }
+			parser.readFileBytesByFilePathDependency = func(string) ([]byte, error) {
+				return []byte(fmt.Sprintf("protocol: http\ntrustedProxies: %s\n", value)), nil
+			}
+			_, err := parser.ReadConfigurationsServices()
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestYAMLRequiredArraysNullStrictAndLenient(t *testing.T) {
+	for _, field := range []string{"commands", "tools"} {
+		t.Run(field, func(t *testing.T) {
+			parser := Init("", "")
+			parser.gelAllFilesNameByDirNameDependency = func(string) ([]string, error) { return []string{"svc.yaml"}, nil }
+			parser.readFileBytesByFilePathDependency = func(string) ([]byte, error) {
+				return []byte(fmt.Sprintf("protocol: http\n%s: null\n", field)), nil
+			}
+			_, err := parser.ReadConfigurationsServices()
+			assert.Error(t, err)
+			services, issues, err := parser.ReadConfigurationsServicesForValidation()
+			assert.NoError(t, err)
+			assert.Empty(t, services)
+			assert.Len(t, issues, 1)
+		})
+	}
+	parser := Init("", "")
+	parser.gelAllFilesNameByDirNameDependency = func(string) ([]string, error) { return []string{"svc.yaml"}, nil }
+	parser.readFileBytesByFilePathDependency = func(string) ([]byte, error) {
+		return []byte("protocol: http\ntools:\n  - name: tool:test\n    params: null\n"), nil
+	}
+	_, err := parser.ReadConfigurationsServices()
+	assert.Error(t, err)
 }
 
 func TestReadConfigurationsServicesFromEnvInvalidRateLimit(t *testing.T) {
@@ -669,9 +837,9 @@ func TestReadConfigurationsServicesDirectoryNotFound(t *testing.T) {
 }
 
 func TestReadConfigurationsServicesFromEnvInvalidRegex(t *testing.T) {
-	// Use the Go field name "RegexStr" as JSON key so that json.Unmarshal stores the value
+	// Use the Go field JSON tag "regex" so that json.Unmarshal stores the value
 	// as a plain string and leaves regex compilation to CompileCommandRegex.
-	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"protocol":"ssh","address":":22","commands":[{"RegexStr":"[invalid"}]}]`)
+	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"protocol":"ssh","address":":22","commands":[{"regex":"[invalid"}]}]`)
 
 	configurationsParser := Init("", "")
 
@@ -1099,7 +1267,7 @@ func TestReadConfigurationsServicesForValidationFromEnvRateLimitError(t *testing
 }
 
 func TestReadConfigurationsServicesForValidationFromEnvInvalidRegex(t *testing.T) {
-	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"protocol":"ssh","address":":22","commands":[{"RegexStr":"[invalid"}]}]`)
+	t.Setenv("BEELZEBUB_SERVICES_CONFIG", `[{"protocol":"ssh","address":":22","commands":[{"regex":"[invalid"}]}]`)
 
 	configurationsParser := Init("", "")
 

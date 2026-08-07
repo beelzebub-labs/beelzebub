@@ -1,0 +1,239 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://beelzebub-labs.github.io/specs/runtime-config.schema.json",
+  "title": "Beelzebub Runtime Service Configuration",
+  "description": "Base schema for Beelzebub runtime service configurations. Extended per-protocol via allOf + $ref.",
+  "type": "object",
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["v1"],
+      "description": "Configuration format version. Currently only 'v1' is supported."
+    },
+    "protocol": {
+      "type": "string",
+      "enum": ["ssh", "http", "tcp", "telnet", "mcp"],
+      "description": "Honeypot protocol type. Determines which per-protocol schema and validators are applied."
+    },
+    "address": {
+      "type": "string",
+      "pattern": "^(\\[[^\\]]+\\]|[^:\\s]+)?:[0-9]{1,5}$|^/[^:]+$",
+      "description": "Listen address in host:port format (e.g. :22, 0.0.0.0:8080, [::1]:443). Unix sockets use /path format."
+    },
+    "description": { "type": "string", "description": "Human-readable label for this honeypot service." },
+    "serverVersion": { "type": "string", "description": "Banner/version string sent to clients during handshake (e.g. OpenSSH, Apache/2.4.53)." },
+    "serverName": { "type": "string", "description": "Hostname reported by the honeypot (e.g. ubuntu, mail.internal.company.com)." },
+    "deadlineTimeoutSeconds": { "type": "integer", "minimum": 0, "description": "Connection deadline in seconds for TCP, TELNET, and SSH. HTTP does not use this field; 0 causes immediate deadlines for TCP and TELNET, while SSH treats 0 as no timeout." },
+    "banner": { "type": "string", "description": "Initial banner sent on connection (TCP) or greeting (HTTP). Can include binary wire format." },
+    "passwordRegex": { "type": "string", "description": "Regex pattern for accepted passwords. Required for SSH and TELNET. Syntax validated by Go at runtime." },
+    "trustedProxies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "CIDRs or IPs of trusted reverse proxies. Affects X-Forwarded-For / X-Real-IP parsing."
+    },
+    "tlsCertPath": { "type": "string", "description": "Path to TLS certificate file. Must be paired with tlsKeyPath. File existence checked by Go at runtime." },
+    "tlsKeyPath": { "type": "string", "description": "Path to TLS private key file. Must be paired with tlsCertPath." },
+    "commands": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          { "$ref": "#/definitions/Command" },
+          {
+            "required": ["regex"],
+            "properties": { "regex": { "minLength": 1 } }
+          }
+        ]
+      },
+      "maxItems": 100
+    },
+    "tools": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Tool" },
+      "maxItems": 100
+    },
+    "fallbackCommand": { "$ref": "#/definitions/Command" },
+    "plugin": { "$ref": "#/definitions/Plugin" }
+  },
+  "required": ["apiVersion", "protocol", "address"],
+  "additionalProperties": false,
+  "dependencies": {
+    "tlsCertPath": ["tlsKeyPath"],
+    "tlsKeyPath": ["tlsCertPath"]
+  },
+  "allOf": [
+    {
+      "$comment": "LLMHoneypot: if any command or fallback uses LLMHoneypot, top-level plugin must have llmProvider and llmModel",
+      "if": {
+        "anyOf": [
+          {
+            "required": ["commands"],
+            "properties": {
+              "commands": {
+                "contains": {
+                  "properties": { "plugin": { "const": "LLMHoneypot" } },
+                  "required": ["plugin"]
+                }
+              }
+            }
+          },
+          {
+            "required": ["fallbackCommand"],
+            "properties": {
+              "fallbackCommand": {
+                "required": ["plugin"],
+                "properties": { "plugin": { "const": "LLMHoneypot" } }
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "required": ["plugin"],
+        "properties": {
+          "plugin": {
+            "required": ["llmProvider", "llmModel"],
+            "properties": {
+              "llmModel": { "minLength": 1 },
+              "llmProvider": { "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "MazeHoneypot: if any command or fallback uses MazeHoneypot, protocol must be http",
+      "if": {
+        "anyOf": [
+          {
+            "required": ["commands"],
+            "properties": {
+              "commands": {
+                "contains": {
+                  "properties": { "plugin": { "const": "MazeHoneypot" } },
+                  "required": ["plugin"]
+                }
+              }
+            }
+          },
+          {
+            "required": ["fallbackCommand"],
+            "properties": {
+              "fallbackCommand": {
+                "required": ["plugin"],
+                "properties": { "plugin": { "const": "MazeHoneypot" } }
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "protocol": { "const": "http" }
+        }
+      }
+    },
+    {
+      "$comment": "Rate limiting: if plugin.rateLimitEnabled is true, rateLimitRequests and rateLimitWindowSeconds must be > 0",
+      "if": {
+        "required": ["plugin"],
+        "properties": {
+          "plugin": {
+            "required": ["rateLimitEnabled"],
+            "properties": { "rateLimitEnabled": { "const": true } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "plugin": {
+            "required": ["rateLimitRequests", "rateLimitWindowSeconds"],
+            "properties": {
+              "rateLimitRequests": { "minimum": 1 },
+              "rateLimitWindowSeconds": { "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "Command": {
+      "type": "object",
+      "properties": {
+        "regex": { "type": "string" },
+        "handler": { "type": "string" },
+        "headers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "statusCode": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "plugin": {
+          "type": "string",
+          "enum": ["", "LLMHoneypot", "MazeHoneypot"]
+        },
+        "name": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "Tool": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ToolParam" }
+        },
+        "handler": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/ToolAnnotations" }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "ToolParam": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "ToolAnnotations": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "readOnlyHint": { "type": "boolean" },
+        "destructiveHint": { "type": "boolean" },
+        "idempotentHint": { "type": "boolean" },
+        "openWorldHint": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "Plugin": {
+      "type": "object",
+      "properties": {
+        "llmProvider": {
+          "type": "string",
+          "enum": ["", "ollama", "openai"]
+        },
+        "llmModel": { "type": "string" },
+        "prompt": { "type": "string" },
+        "openAISecretKey": { "type": "string" },
+        "host": { "type": "string" },
+        "inputValidationEnabled": { "type": "boolean" },
+        "inputValidationPrompt": { "type": "string" },
+        "outputValidationEnabled": { "type": "boolean" },
+        "outputValidationPrompt": { "type": "string" },
+        "rateLimitEnabled": { "type": "boolean" },
+        "rateLimitRequests": { "type": "integer" },
+        "rateLimitWindowSeconds": { "type": "integer" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

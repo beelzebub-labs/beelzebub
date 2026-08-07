@@ -117,7 +117,7 @@ Flags:
 
 ### `beelzebub validate`
 
-Parse and validate all configuration files without starting any services. Useful in CI pipelines.
+Parse and validate all configuration files without starting any services. Useful in CI pipelines. See [Configuration Validation](docs/configuration-validation.md) for the validation architecture and rule reference.
 
 ```bash
 beelzebub validate --conf-core ./configurations/beelzebub.yaml --conf-services ./configurations/services/
@@ -329,6 +329,8 @@ Environment variable overrides are supported for all fields (e.g. `BEELZEBUB_RAB
 ### Service Configuration
 
 Each decoy service is defined in a separate YAML file placed in the `services/` directory. The `protocol` field determines the deception engine used. Commands use `regex` for request matching and either a static `handler` or a `plugin` reference for dynamic responses.
+
+When using the **LLMHoneypot** plugin, it is highly recommended to use guardrails to prevent the LLM from being jailbroken or otherwise manipulated in ways that could compromise the honeypot. See the [LLMHoneypot plugin documentation](https://docs.beelzebub.ai/basics/beelzebub-api-v1#llmhoneypot-plugin) for details.
 
 ## Deception Services
 

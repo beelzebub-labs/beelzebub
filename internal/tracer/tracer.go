@@ -13,10 +13,10 @@ import (
 const Workers = 5
 
 type Event struct {
-	DateTime        string
-	RemoteAddr      string
-	Protocol        string
-	Command         string
+	DateTime   string
+	RemoteAddr string
+	Protocol   string
+	Command    string
 	// CommandRaw is a hex-escaped (\xNN) rendering of the exact bytes the
 	// client sent. It is populated only when Command's UTF-8 string form would
 	// lose data (i.e. the input is not valid UTF-8, as happens with binary

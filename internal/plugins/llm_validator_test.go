@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"os"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -90,6 +91,7 @@ func TestLLMPluginValidator_EmptyModel(t *testing.T) {
 }
 
 func TestLLMPluginValidator_OpenAIEmptySecretKey(t *testing.T) {
+	t.Setenv("OPEN_AI_SECRET_KEY", "")
 	validator := &LLMPluginValidator{}
 
 	config := makeLLMService("openai", "gpt-4o", "")
@@ -98,6 +100,13 @@ func TestLLMPluginValidator_OpenAIEmptySecretKey(t *testing.T) {
 	assert.Len(t, issues, 1)
 	assert.Equal(t, parser.LevelWarning, issues[0].Level)
 	assert.Contains(t, issues[0].Message, "openAISecretKey is empty")
+}
+
+func TestLLMPluginValidator_OpenAISecretKeyFromEnv(t *testing.T) {
+	t.Setenv("OPEN_AI_SECRET_KEY", "test-only-key")
+	issues := (&LLMPluginValidator{}).Validate(makeLLMService("openai", "gpt-4o", ""))
+	assert.Empty(t, issues)
+	assert.Equal(t, "test-only-key", os.Getenv("OPEN_AI_SECRET_KEY"))
 }
 
 func TestLLMPluginValidator_OllamaEmptySecretKey(t *testing.T) {

@@ -131,7 +131,7 @@ func TestGetHoneypotsConfigurationsWithResults(t *testing.T) {
 			TrustedProxiesNets: []*net.IPNet{},
 		},
 	}, &result)
-	assert.Equal(t, "1212319b58fef59aaddd18537d2d65c62f6fb6e9874ac92d426f5cd8859e2d9e", configurationsHash)
+	assert.Equal(t, "f488015ba743c96aca43462b2f798d700af9b3eb7cab401435a0c522da6f5abf", configurationsHash)
 	assert.Nil(t, err)
 }
 
