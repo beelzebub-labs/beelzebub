@@ -13,8 +13,9 @@
 #   --token TOKEN           Beelzebub Cloud token; also turns cloud reporting on
 #   --uri URL               Beelzebub Cloud API base (required alongside --token)
 #   --github-token TOKEN    Token for private plugin repos (BEELZEBUB_GITHUB_TOKEN)
+#   --ref REF               Git tag or branch to clone when not inside a checkout
 #   --no-run                Build/install only; do not start the local runtime
-#   -y, --yes               Assume yes to prompts (auto-install prerequisites)
+#   -y, --yes               Assume yes to prompts (auto-install prerequisites, fully unattended)
 #   -h, --help              Show this help
 set -eu
 
@@ -23,6 +24,7 @@ PLUGINS=""
 TOKEN="${BEELZEBUB_CLOUD_AUTH_TOKEN:-}"
 URI="${BEELZEBUB_CLOUD_URI:-}"
 GH_TOKEN="${BEELZEBUB_GITHUB_TOKEN:-}"
+REF="${BEELZEBUB_INSTALL_REF:-}"
 ASSUME_YES=0
 RUN_LOCAL=1
 REPO_URL="https://github.com/beelzebub-labs/beelzebub.git"
@@ -74,6 +76,9 @@ run_step() {
   fi
 }
 
+# A truncated `curl | sh` download must define, never execute.
+main() {
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --local)        MODE="local"; shift ;;
@@ -97,6 +102,11 @@ while [ $# -gt 0 ]; do
     --github-token)
       [ $# -ge 2 ] || die "--github-token requires a value"
       GH_TOKEN="$2"
+      shift 2
+      ;;
+    --ref)
+      [ $# -ge 2 ] || die "--ref requires a value"
+      REF="$2"
       shift 2
       ;;
     --no-run)       RUN_LOCAL=0; shift ;;
@@ -153,24 +163,38 @@ banner
 # Resolve the checkout from the script location so invocation from another
 # directory still updates the intended repository. Piped execution falls back
 # to the current directory and clones when no checkout is present.
+is_beelzebub_checkout() { # is_beelzebub_checkout <dir>
+  [ -f "$1/go.mod" ] && [ -f "$1/Makefile" ] \
+    && grep -q '^module github\.com/beelzebub-labs/beelzebub' "$1/go.mod" 2>/dev/null
+}
+
 SCRIPT_DIR=""
 if [ -n "${0:-}" ] && [ "${0#-}" = "$0" ]; then
   SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || SCRIPT_DIR=""
 fi
 
-if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/go.mod" ] && [ -f "$SCRIPT_DIR/Makefile" ]; then
+if [ -n "$SCRIPT_DIR" ] && is_beelzebub_checkout "$SCRIPT_DIR"; then
   REPO_DIR="$SCRIPT_DIR"
-elif [ -f "go.mod" ] && [ -f "Makefile" ]; then
+elif is_beelzebub_checkout "$(pwd)"; then
   REPO_DIR=$(pwd)
 else
   command -v git >/dev/null 2>&1 || die "run this inside a cloned beelzebub repo, or install git so it can be cloned."
-  step "Cloning Beelzebub..."
   CLONE_DIR="${BEELZEBUB_INSTALL_DIR:-beelzebub}"
   case "$CLONE_DIR" in
     *[!A-Za-z0-9._/-]*|/*|..|../*) die "invalid clone directory: $CLONE_DIR" ;;
   esac
-  [ ! -e "$CLONE_DIR" ] || die "clone directory already exists: $CLONE_DIR"
-  git clone --depth 1 "$REPO_URL" "$CLONE_DIR"
+  if [ -e "$CLONE_DIR" ]; then
+    is_beelzebub_checkout "$CLONE_DIR" || die "clone directory already exists: $CLONE_DIR"
+    step "Reusing existing checkout: $CLONE_DIR"
+    git -C "$CLONE_DIR" pull --ff-only >/dev/null 2>&1 || true
+  else
+    step "Cloning Beelzebub..."
+    if [ -n "$REF" ]; then
+      git clone --depth 1 --branch "$REF" "$REPO_URL" "$CLONE_DIR"
+    else
+      git clone --depth 1 "$REPO_URL" "$CLONE_DIR"
+    fi
+  fi
   REPO_DIR=$(CDPATH= cd -- "$CLONE_DIR" && pwd)
 fi
 
@@ -209,9 +233,15 @@ need() { # need <tool> <manual-instructions>
 }
 
 if [ "$MODE" = "docker" ]; then
-  need docker "Install it from https://docs.docker.com/get-docker and re-run."
+  command -v docker >/dev/null 2>&1 \
+    || die "docker is required. Install it from https://docs.docker.com/get-docker and re-run."
   if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
-    die "Docker Compose is required. Install the Docker Compose plugin and re-run."
+    _cc="$(pkg_install docker-compose-plugin)"
+    if [ -n "$_cc" ] && { [ "$ASSUME_YES" -eq 1 ] || confirm "Docker Compose is required. Install it with \"$_cc\"? [y/N]: " n; }; then
+      sh -c "$_cc" || true
+    fi
+    docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1 \
+      || die "Docker Compose is required. Install the Compose plugin and re-run."
   fi
 else
   need go  "Install it from https://go.dev/dl and re-run."
@@ -221,6 +251,7 @@ fi
 
 # Keep plugin declarations in YAML so local and Docker deployments use the same list.
 PLUGIN_CONFIG="configurations/plugins.yaml"
+PLUGIN_CONFIG_DIR="configurations/plugins"
 yaml_quote() {
   printf "%s" "$1" | sed "s/'/''/g; s/^/'/; s/$/'/"
 }
@@ -364,32 +395,77 @@ if [ "$MODE" = "docker" ]; then
     fi
   }
 
+  all_ports() {
+    sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([0-9][0-9]*\):[0-9].*/\1/p' docker-compose.yml
+  }
+  # `!override` and `!reset` need Compose 2.24. Older versions merge lists instead
+  # of replacing them, so there the ports are commented out in place.
+  compose_can_override() {
+    _v=$(docker compose version --short 2>/dev/null | tr -d 'v')
+    _maj=${_v%%.*}; _min=${_v#*.}; _min=${_min%%.*}
+    case "$_maj$_min" in *[!0-9]*|"") return 1 ;; esac
+    [ "$_maj" -gt 2 ] || { [ "$_maj" -eq 2 ] && [ "$_min" -ge 24 ]; }
+  }
+  drop_port() {
+    sed -i.bak "s|^\([[:space:]]*\)- \"$1:|\1# - \"$1:|" docker-compose.yml && rm -f docker-compose.yml.bak
+  }
+
   # Scanning the LAN needs the host's interfaces. No equivalent on Docker
   # Desktop, where the bridge stays and the plugin is pinned to a CIDR.
   if [ "$(uname -s)" = "Linux" ]; then
-    printf 'services:\n  beelzebub:\n    network_mode: host\n    ports: !reset []\n' \
-      > docker-compose.override.yml
+    if compose_can_override; then
+      printf 'services:\n  beelzebub:\n    network_mode: host\n    ports: !reset []\n' > docker-compose.override.yml
+    else
+      printf 'services:\n  beelzebub:\n    network_mode: host\n' > docker-compose.override.yml
+      for _p in $(all_ports); do drop_port "$_p"; done
+      # An emptied `ports:` is no longer a list, so the key goes too.
+      sed -i.bak 's|^\([[:space:]]*\)ports:|\1# ports:|' docker-compose.yml && rm -f docker-compose.yml.bak
+    fi
     ok "Host network: the sensor sees this machine's interfaces"
   else
-
-  BUSY=""; FREE=""
-  for _p in $(sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}\([0-9][0-9]*\):[0-9].*/\1/p' docker-compose.yml); do
-    if port_busy "$_p"; then
-      BUSY="$BUSY $_p"
-    else
-      FREE="$FREE      - \"$_p:$_p\"
-"
+    BUSY=""; FREE=""
+    for _p in $(all_ports); do
+      if port_busy "$_p"; then BUSY="$BUSY $_p"; else FREE="$FREE      - \"$_p:$_p\"
+"; fi
+    done
+    if [ -n "$BUSY" ]; then
+      info "Ports already in use:$BUSY"
+      confirm 'Start without publishing them? [Y/n]: ' y || die "free those ports and re-run."
+      if compose_can_override; then
+        { printf 'services:\n  beelzebub:\n    ports: !override\n'; printf '%s' "$FREE"; } > docker-compose.override.yml
+      else
+        for _p in $BUSY; do drop_port "$_p"; done
+      fi
+      ok "Not publishing:$BUSY"
     fi
-  done
+  fi
 
-  if [ -n "$BUSY" ]; then
-    info "Ports already in use:$BUSY"
-    confirm 'Start without publishing them? [Y/n]: ' y || die "free those ports and re-run."
-    { printf 'services:\n  beelzebub:\n    ports: !override\n'; printf '%s' "$FREE"; } \
-      > docker-compose.override.yml
-    ok "Wrote docker-compose.override.yml without:$BUSY"
-  fi
-  fi
+  # In Docker mode `plugin install` runs inside the image build, so the config a
+  # plugin ships never reaches the host and the operator has no file to edit.
+  # Copy it here instead — for every declared plugin, and never over an existing one.
+  seed_plugin_configs() {
+    _srcs=$(sed -n 's/^[[:space:]]*-[[:space:]]*source:[[:space:]]*//p' "$PLUGIN_CONFIG" 2>/dev/null | tr -d "\"'")
+    for _s in $_srcs; do
+      _tmp=""
+      case "$_s" in
+        ./*|/*|../*|~/*) _dir=$_s ;;
+        *)
+          command -v git >/dev/null 2>&1 || continue
+          _tmp=$(mktemp -d) || continue
+          git clone --depth 1 -q "https://${_s%@*}" "$_tmp" 2>/dev/null || { rm -rf "$_tmp"; continue; }
+          _dir=$_tmp ;;
+      esac
+      _name=$(sed -n 's/^name:[[:space:]]*//p' "$_dir/plugins.yaml" 2>/dev/null | head -1 | tr -d "\"'")
+      _ex="$_dir/$PLUGIN_CONFIG_DIR/$_name.yaml"
+      if [ -n "$_name" ] && [ -f "$_ex" ] && [ ! -f "$PLUGIN_CONFIG_DIR/$_name.yaml" ]; then
+        mkdir -p "$PLUGIN_CONFIG_DIR"
+        cp "$_ex" "$PLUGIN_CONFIG_DIR/$_name.yaml"
+        ok "Config for $_name: $PLUGIN_CONFIG_DIR/$_name.yaml"
+      fi
+      if [ -n "$_tmp" ]; then rm -rf "$_tmp"; fi
+    done
+  }
+  seed_plugin_configs
 
   compose_up() {
     if docker compose version >/dev/null 2>&1; then
@@ -399,25 +475,40 @@ if [ "$MODE" = "docker" ]; then
     fi
   }
   run_step "Build Docker image and start container" compose_up
+
   # Do not direct later plugin commands to Docker if this deployment failed.
   printf '%s\n' "$MODE" > .beelzebub-mode
   # Build a local CLI when possible so it can manage the container.
-  _cli_built=0
-  if command -v go >/dev/null 2>&1 && command -v "$MAKE_CMD" >/dev/null 2>&1; then
-    if "$MAKE_CMD" -s build >/dev/null 2>&1; then
-      ok "Local plugin CLI built"
-      _cli_built=1
+  # The plugin CLI is a Go binary on the host. Plugins work without it — they are
+  # declared and compiled in during the image build — so offer, do not require.
+  if ! command -v go >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1 || command -v pacman >/dev/null 2>&1 || command -v apk >/dev/null 2>&1; then
+      _gp=go
     else
-      info "Local Go CLI was not built."
+      _gp=golang
     fi
-  else
-    info "Go is not installed."
+    _gc="$(pkg_install "$_gp")"
+    # Optional, not a prerequisite: -y must not pull it in unasked.
+    if [ -n "$_gc" ] && [ "$HAVE_TTY" -eq 1 ] && [ "$ASSUME_YES" -eq 0 ]; then
+      info "Go is not installed. It builds ./beelzebub, which manages plugins from the shell."
+      if confirm "Install it with \"$_gc\"? [y/N]: " n; then
+        sh -c "$_gc" || info "Could not install Go; continuing without the plugin CLI."
+      fi
+    fi
+  fi
+
+  _cli_built=0
+  if command -v go >/dev/null 2>&1 && command -v "$MAKE_CMD" >/dev/null 2>&1 \
+     && "$MAKE_CMD" -s build >/dev/null 2>&1; then
+    ok "Plugin CLI built"
+    _cli_built=1
   fi
   info ""
   if [ "$_cli_built" -eq 1 ]; then
     info "Add a plugin with: ./beelzebub plugin install <link>"
   else
-    info "Add a plugin by listing it in configurations/plugins.yaml, then: make docker"
+    info "Add a plugin: append \"  - source: <link>\" under \"plugins:\" in $PLUGIN_CONFIG,"
+    info "then re-run this installer to rebuild with it."
   fi
 else
   if [ -n "$TOKEN" ]; then
@@ -451,3 +542,7 @@ else
   info ""
   info "Manage plugins with: ./beelzebub plugin install <link>   (or edit configurations/plugins.yaml)"
 fi
+
+}
+
+main "$@"

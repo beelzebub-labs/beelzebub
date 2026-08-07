@@ -16,9 +16,6 @@ services:
       - "80:80"
       - "3306:3306"
       - "2112:2112" #Prometheus Open Metrics
-    env_file:
-      - path: .env
-        required: false
     environment:
       RABBITMQ_URI: ${RABBITMQ_URI:-}
       OPEN_AI_SECRET_KEY: ${OPEN_AI_SECRET_KEY:-}
