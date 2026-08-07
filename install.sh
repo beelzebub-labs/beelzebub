@@ -133,6 +133,7 @@ ask() { # ask "Question" -> echoes the answer, trimmed ("" on no tty)
 }
 
 confirm() {
+  [ "$ASSUME_YES" -eq 0 ] || { [ "$2" = "y" ]; return; }
   [ "$HAVE_TTY" -eq 1 ] || { [ "$2" = "y" ]; return; }
   while :; do
     _c="$(ask "$1")"
@@ -478,38 +479,29 @@ if [ "$MODE" = "docker" ]; then
 
   # Do not direct later plugin commands to Docker if this deployment failed.
   printf '%s\n' "$MODE" > .beelzebub-mode
-  # Build a local CLI when possible so it can manage the container.
-  # The plugin CLI is a Go binary on the host. Plugins work without it — they are
-  # declared and compiled in during the image build — so offer, do not require.
-  if ! command -v go >/dev/null 2>&1; then
-    if command -v brew >/dev/null 2>&1 || command -v pacman >/dev/null 2>&1 || command -v apk >/dev/null 2>&1; then
-      _gp=go
-    else
-      _gp=golang
-    fi
-    _gc="$(pkg_install "$_gp")"
-    # Optional, not a prerequisite: -y must not pull it in unasked.
-    if [ -n "$_gc" ] && [ "$HAVE_TTY" -eq 1 ] && [ "$ASSUME_YES" -eq 0 ]; then
-      info "Go is not installed. It builds ./beelzebub, which manages plugins from the shell."
-      if confirm "Install it with \"$_gc\"? [y/N]: " n; then
-        sh -c "$_gc" || info "Could not install Go; continuing without the plugin CLI."
-      fi
-    fi
-  fi
-
-  _cli_built=0
   if command -v go >/dev/null 2>&1 && command -v "$MAKE_CMD" >/dev/null 2>&1 \
      && "$MAKE_CMD" -s build >/dev/null 2>&1; then
     ok "Plugin CLI built"
-    _cli_built=1
+  else
+    # The repo must be mounted at its host path so compose bind mounts resolve.
+    cat > beelzebub <<'WRAP'
+#!/bin/sh
+set -eu
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -t 0 ]; then tty=-t; else tty=; fi
+exec docker run --rm -i $tty \
+  -v "$dir":"$dir" -w "$dir" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v beelzebub-cli-gocache:/go \
+  -e GOCACHE=/go/.cache \
+  -e BEELZEBUB_GITHUB_TOKEN="${BEELZEBUB_GITHUB_TOKEN:-}" \
+  golang:alpine sh -c 'apk add -q --no-cache git docker-cli docker-cli-compose >/dev/null && exec go run . "$@"' sh "$@"
+WRAP
+    chmod +x beelzebub
+    ok "Plugin CLI ready"
   fi
   info ""
-  if [ "$_cli_built" -eq 1 ]; then
-    info "Add a plugin with: ./beelzebub plugin install <link>"
-  else
-    info "Add a plugin: append \"  - source: <link>\" under \"plugins:\" in $PLUGIN_CONFIG,"
-    info "then re-run this installer to rebuild with it."
-  fi
+  info "Add a plugin with: ./beelzebub plugin install <link>"
 else
   if [ -n "$TOKEN" ]; then
     export BEELZEBUB_CLOUD_ENABLED=true
