@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"strings"
@@ -52,6 +53,42 @@ func latin1ToRawBytes(s string) []byte {
 	return b
 }
 
+func wireInputString(b []byte, encoding string) string {
+	if encoding == "latin1" {
+		return rawBytesToLatin1(b)
+	}
+	return string(b)
+}
+
+func commandMatchInput(b []byte, encoding string) string {
+	input := wireInputString(b, encoding)
+	if encoding == "latin1" {
+		return input
+	}
+	return strings.TrimRight(input, "\r\n")
+}
+
+func staticResponseBytes(s, encoding string) []byte {
+	if encoding == "latin1" {
+		return latin1ToRawBytes(s)
+	}
+	return []byte(s)
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
+}
+
 // hexEscapeNonPrintable renders b as printable ASCII, emitting every
 // non-printable byte (and the backslash itself) as \xNN. The result is safe to
 // store in trace events, JSON, and TEXT columns while remaining reversible to
@@ -82,13 +119,6 @@ func toWindowsFileTime(t time.Time) []byte {
 	return b
 }
 
-// applyPatches applies the generic Patches declared on a Command to buf and
-// returns the patched copy. Supported patch types are:
-//
-//   - "random"   — write Length cryptographically random bytes at Offset
-//   - "filetime" — write 8-byte Windows FILETIME (current UTC) at Offset
-//
-// Any other patch type is ignored here and left for wire-plugins to interpret.
 // deadlineCutoff returns the absolute deadline for a connection given the
 // configured timeout, or the zero time (no deadline) when the timeout is <= 0.
 func deadlineCutoff(d time.Duration) time.Time {
@@ -98,6 +128,8 @@ func deadlineCutoff(d time.Duration) time.Time {
 	return time.Now().Add(d)
 }
 
+// applyPatches applies the generic Patches declared on a Command to buf and
+// returns the patched copy. Unknown types are left for wire-plugins.
 func applyPatches(buf []byte, patches []parser.Patch) []byte {
 	if len(patches) == 0 {
 		return buf
@@ -107,15 +139,16 @@ func applyPatches(buf []byte, patches []parser.Patch) []byte {
 	for _, p := range patches {
 		switch p.Type {
 		case "random":
-			if p.Length > 0 && p.Offset >= 0 && p.Offset+p.Length <= len(out) {
-				if _, err := rand.Read(out[p.Offset : p.Offset+p.Length]); err != nil {
-					// crypto/rand failure is effectively fatal for the host; leave
-					// the original bytes rather than emitting predictable zeros.
+			if p.Length > 0 && p.Offset >= 0 && p.Length <= len(out) && p.Offset <= len(out)-p.Length {
+				randomBytes := make([]byte, p.Length)
+				if _, err := rand.Read(randomBytes); err != nil {
 					log.Errorf("random patch: crypto/rand read failed: %v", err)
+				} else {
+					copy(out[p.Offset:p.Offset+p.Length], randomBytes)
 				}
 			}
 		case "filetime":
-			if p.Offset >= 0 && p.Offset+8 <= len(out) {
+			if p.Offset >= 0 && p.Offset <= len(out)-8 {
 				copy(out[p.Offset:], toWindowsFileTime(time.Now()))
 			}
 		}
@@ -124,33 +157,44 @@ func applyPatches(buf []byte, patches []parser.Patch) []byte {
 }
 
 type TCPStrategy struct {
-	Sessions    *historystore.HistoryStore
-	tlsMu       sync.Mutex
-	tlsCert     *tls.Certificate // generated at Init when any command has tlsUpgrade:true
-	tlsCN       string           // common name used to (re)generate tlsCert
+	Sessions *historystore.HistoryStore
+
 	lifecycleMu sync.Mutex
 	listeners   []net.Listener
 	acceptDone  []chan struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
 	cleanerOnce sync.Once
+
+	activeMu    sync.Mutex
+	activeConns map[net.Conn]struct{}
+	handlers    sync.WaitGroup
 }
 
-// currentTLSCert returns the self-signed cert for TLS upgrade, lazily
-// regenerating it if it has expired (a honeypot may run longer than the cert's
-// validity). Returns nil if no cert is available and regeneration fails.
-func (tcpStrategy *TCPStrategy) currentTLSCert() *tls.Certificate {
-	tcpStrategy.tlsMu.Lock()
-	defer tcpStrategy.tlsMu.Unlock()
-	if tcpStrategy.tlsCert == nil {
+type tlsCertificateState struct {
+	mu         sync.Mutex
+	cert       *tls.Certificate
+	commonName string
+}
+
+func (state *tlsCertificateState) current() *tls.Certificate {
+	if state == nil {
 		return nil
 	}
-	if leaf := tcpStrategy.tlsCert.Leaf; leaf != nil && time.Now().After(leaf.NotAfter) {
-		if cert, err := generateSelfSignedCert(tcpStrategy.tlsCN); err != nil {
-			log.Errorf("TLS cert regeneration failed: %v", err)
-		} else {
-			tcpStrategy.tlsCert = cert
-		}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.cert == nil {
+		return nil
 	}
-	return tcpStrategy.tlsCert
+	if leaf := state.cert.Leaf; leaf != nil && time.Now().After(leaf.NotAfter) {
+		cert, err := generateSelfSignedCert(state.commonName)
+		if err != nil {
+			log.Errorf("TLS cert regeneration failed: %v", err)
+			return nil
+		}
+		state.cert = cert
+	}
+	return state.cert
 }
 
 // generateSelfSignedCert creates an ephemeral P-256 ECDSA self-signed certificate
@@ -165,17 +209,26 @@ func generateSelfSignedCert(commonName string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return nil, err
+	}
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: serialNumber,
 		Subject:      pkix.Name{CommonName: commonName},
-		DNSNames:     []string{commonName},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		// A real TLS server presents a leaf (end-entity) certificate: key usage
-		// digitalSignature + keyEncipherment, extKeyUsage serverAuth, and NOT a
-		// CA. Emitting IsCA/keyCertSign here gave fingerprinting tools a tell.
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		// A real TLS server presents a leaf (end-entity) certificate. This key is
+		// ECDSA, so digitalSignature + serverAuth are sufficient; keyEncipherment
+		// would describe an RSA-style key exchange and creates a fingerprint.
+		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	if ip := net.ParseIP(commonName); ip != nil {
+		template.IPAddresses = []net.IP{ip}
+	} else {
+		template.DNSNames = []string{commonName}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
@@ -194,15 +247,14 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 		tcpStrategy.Sessions = historystore.NewHistoryStore()
 	}
 
+	var tlsState *tlsCertificateState
 	for _, cmd := range servConf.Commands {
 		if cmd.TLSUpgrade {
-			tcpStrategy.tlsCN = servConf.ServerName
 			cert, err := generateSelfSignedCert(servConf.ServerName)
 			if err != nil {
-				log.Errorf("TLS cert generation failed: %v", err)
-			} else {
-				tcpStrategy.tlsCert = cert
+				return fmt.Errorf("generating TCP TLS certificate: %w", err)
 			}
+			tlsState = &tlsCertificateState{cert: cert, commonName: servConf.ServerName}
 			break
 		}
 	}
@@ -215,9 +267,18 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 
 	acceptDone := make(chan struct{})
 	tcpStrategy.lifecycleMu.Lock()
+	if tcpStrategy.ctx == nil {
+		tcpStrategy.ctx, tcpStrategy.cancel = context.WithCancel(context.Background())
+	}
+	strategyCtx := tcpStrategy.ctx
 	tcpStrategy.listeners = append(tcpStrategy.listeners, listen)
 	tcpStrategy.acceptDone = append(tcpStrategy.acceptDone, acceptDone)
 	tcpStrategy.lifecycleMu.Unlock()
+	tcpStrategy.activeMu.Lock()
+	if tcpStrategy.activeConns == nil {
+		tcpStrategy.activeConns = make(map[net.Conn]struct{})
+	}
+	tcpStrategy.activeMu.Unlock()
 
 	tcpStrategy.cleanerOnce.Do(func() {
 		tcpStrategy.Sessions.HistoryCleaner()
@@ -234,13 +295,23 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 				log.Errorf("Error accepting TCP connection: %v", err)
 				continue
 			}
+			tcpStrategy.activeMu.Lock()
+			tcpStrategy.activeConns[conn] = struct{}{}
+			tcpStrategy.handlers.Add(1)
+			tcpStrategy.activeMu.Unlock()
 			go func(c net.Conn) {
+				defer tcpStrategy.handlers.Done()
+				defer func() {
+					tcpStrategy.activeMu.Lock()
+					delete(tcpStrategy.activeConns, c)
+					tcpStrategy.activeMu.Unlock()
+				}()
 				defer func() {
 					if r := recover(); r != nil {
 						log.Errorf("panic in TCP handler: %v", r)
 					}
 				}()
-				handleTCPConnection(c, servConf, tr, tcpStrategy)
+				handleTCPConnectionWithState(c, servConf, tr, tcpStrategy, tlsState, strategyCtx)
 			}(conn)
 		}
 	}()
@@ -253,14 +324,13 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 	return nil
 }
 
-// Shutdown stops the listener accept loop and the session history cleaner owned
-// by this strategy. Existing accepted connections are allowed to finish through
-// their normal deadlines; closing active connections requires a broader protocol
-// strategy lifecycle contract.
+// Shutdown stops listeners, active connections, command plugins, handler
+// goroutines, and the session history cleaner owned by this strategy.
 func (tcpStrategy *TCPStrategy) Shutdown() error {
 	tcpStrategy.lifecycleMu.Lock()
 	listeners := append([]net.Listener(nil), tcpStrategy.listeners...)
 	acceptDone := append([]chan struct{}(nil), tcpStrategy.acceptDone...)
+	cancel := tcpStrategy.cancel
 	tcpStrategy.listeners = nil
 	tcpStrategy.acceptDone = nil
 	tcpStrategy.lifecycleMu.Unlock()
@@ -274,6 +344,21 @@ func (tcpStrategy *TCPStrategy) Shutdown() error {
 	for _, done := range acceptDone {
 		<-done
 	}
+	if cancel != nil {
+		cancel()
+	}
+	tcpStrategy.activeMu.Lock()
+	connections := make([]net.Conn, 0, len(tcpStrategy.activeConns))
+	for conn := range tcpStrategy.activeConns {
+		connections = append(connections, conn)
+	}
+	tcpStrategy.activeMu.Unlock()
+	for _, conn := range connections {
+		if closeErr := conn.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			err = errors.Join(err, closeErr)
+		}
+	}
+	tcpStrategy.handlers.Wait()
 	if tcpStrategy.Sessions != nil {
 		tcpStrategy.Sessions.Close()
 	}
@@ -286,14 +371,39 @@ type tcpSession struct {
 	servConf   parser.BeelzebubServiceConfiguration
 	tr         tracer.Tracer
 	strategy   *TCPStrategy
+	tlsState   *tlsCertificateState
+	ctx        context.Context
 	host       string
 	port       string
 	remoteAddr string
 	connID     string // per-connection UUID (WireContext.ConnID)
 	sessionKey string // per-source key for cross-connection LLM history
+	cutoff     time.Time
+}
+
+func tcpHistoryKey(servConf parser.BeelzebubServiceConfiguration, host string) string {
+	return "TCP|" + servConf.Address + "|" + host
 }
 
 func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, tcpStrategy *TCPStrategy) {
+	var tlsState *tlsCertificateState
+	for _, command := range servConf.Commands {
+		if !command.TLSUpgrade {
+			continue
+		}
+		cert, err := generateSelfSignedCert(servConf.ServerName)
+		if err != nil {
+			log.Errorf("TLS cert generation failed: %v", err)
+			conn.Close()
+			return
+		}
+		tlsState = &tlsCertificateState{cert: cert, commonName: servConf.ServerName}
+		break
+	}
+	handleTCPConnectionWithState(conn, servConf, tr, tcpStrategy, tlsState, context.Background())
+}
+
+func handleTCPConnectionWithState(conn net.Conn, servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, tcpStrategy *TCPStrategy, tlsState *tlsCertificateState, ctx context.Context) {
 	// Closure form (not `defer conn.Close()`): conn is reassigned to the
 	// TLS-wrapped connection on upgrade, and the closure captures it by
 	// reference, so this closes the encrypted connection, not the original.
@@ -301,8 +411,9 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 
 	// A non-positive timeout means "no deadline"; setting SetDeadline(now+0)
 	// would pin the deadline to the current instant and break every read.
-	if d := time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second; d > 0 {
-		if err := conn.SetDeadline(time.Now().Add(d)); err != nil {
+	cutoff := deadlineCutoff(time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second)
+	if !cutoff.IsZero() {
+		if err := conn.SetDeadline(cutoff); err != nil {
 			log.Debugf("set connection deadline failed: %v", err)
 		}
 	}
@@ -319,7 +430,7 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 	if servConf.Banner != "" {
 		// Preserve upstream behavior (banner + "\n") but binary-safe: the banner
 		// may contain \xHH escapes, so encode via Latin-1 rather than %s.
-		if _, err := conn.Write(append(latin1ToRawBytes(servConf.Banner), '\n')); err != nil {
+		if err := writeAll(conn, append(staticResponseBytes(servConf.Banner, servConf.WireEncoding), '\n')); err != nil {
 			log.Debugf("banner write failed: %v", err)
 			return
 		}
@@ -335,11 +446,14 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		servConf:   servConf,
 		tr:         tr,
 		strategy:   tcpStrategy,
+		tlsState:   tlsState,
+		ctx:        ctx,
 		host:       host,
 		port:       port,
 		remoteAddr: conn.RemoteAddr().String(),
 		connID:     uuid.New().String(),
-		sessionKey: "TCP" + host,
+		sessionKey: tcpHistoryKey(servConf, host),
+		cutoff:     cutoff,
 	}
 	sess.serve(conn)
 }
@@ -350,7 +464,7 @@ func serveStateless(conn net.Conn, servConf parser.BeelzebubServiceConfiguration
 	buffer := make([]byte, 1024)
 	command := ""
 	commandRaw := ""
-	if n, err := conn.Read(buffer); err == nil {
+	if n, _ := conn.Read(buffer); n > 0 {
 		command = string(buffer[:n])
 		if !utf8.Valid(buffer[:n]) {
 			commandRaw = hexEscapeNonPrintable(buffer[:n])
@@ -376,7 +490,15 @@ func (s *tcpSession) serve(conn net.Conn) {
 	// incomplete handshakes (e.g. a scanner that only sends a challenge request)
 	// don't leak entries in plugin challenge stores. Keyed by ConnID (this
 	// connection), not sessionKey (shared across connections from the same IP).
-	defer closeWireSessions(s.connID, s.servConf.WirePlugins)
+	defer func() {
+		closeCtx := context.Background()
+		if s.ctx != nil {
+			closeCtx = context.WithoutCancel(s.ctx)
+		}
+		closeCtx, cancel := context.WithTimeout(closeCtx, 5*time.Second)
+		defer cancel()
+		closeWireSessions(closeCtx, s.connID, s.servConf.WirePlugins)
+	}()
 
 	s.tr.TraceEvent(tracer.Event{
 		Msg:         "New TCP Session",
@@ -388,6 +510,12 @@ func (s *tcpSession) serve(conn net.Conn) {
 		ID:          s.connID,
 		Description: s.servConf.Description,
 	})
+	defer s.tr.TraceEvent(tracer.Event{
+		Msg:      "End TCP Session",
+		Status:   tracer.End.String(),
+		ID:       s.connID,
+		Protocol: tracer.TCP.String(),
+	})
 
 	histories := s.loadHistory()
 
@@ -395,19 +523,20 @@ func (s *tcpSession) serve(conn net.Conn) {
 	// a time (split-read/pipeline safe); otherwise it accumulates opportunistically
 	// until a handler can match. A fresh reader is rebuilt after a TLS upgrade so
 	// it reads from the encrypted connection.
-	deadline := time.Duration(s.servConf.DeadlineTimeoutSeconds) * time.Second
-	reader := &connReader{conn: conn, framing: s.servConf.Framing, cutoff: deadlineCutoff(deadline)}
+	currentFraming := s.servConf.Framing
+	reader := &connReader{conn: conn, framing: currentFraming, wireEncoding: s.servConf.WireEncoding, cutoff: s.cutoff}
 
 	for {
 		rawBuffer, err := reader.nextMessage(s.servConf.Commands)
 		if len(rawBuffer) == 0 {
 			break
 		}
+		terminalReadError := err != nil
 		if err != nil {
 			log.Debugf("tcp read returned buffered data with terminal error: %v", err)
 		}
 
-		commandInput := strings.TrimRight(rawBytesToLatin1(rawBuffer), "\r\n")
+		commandInput := commandMatchInput(rawBuffer, s.servConf.WireEncoding)
 
 		// Preserve the exact bytes when the input is not valid UTF-8 (binary
 		// protocols), so the forensic record survives the lossy Latin-1→UTF-8
@@ -430,8 +559,9 @@ func (s *tcpSession) serve(conn net.Conn) {
 
 			// Write the (possibly wire-plugin-modified) response.
 			if len(outputBytes) > 0 {
-				if _, err := conn.Write(outputBytes); err != nil {
-					break
+				if err := writeAll(conn, outputBytes); err != nil {
+					log.Debugf("TCP response write failed: %v", err)
+					return
 				}
 			}
 
@@ -445,7 +575,10 @@ func (s *tcpSession) serve(conn net.Conn) {
 				conn = upgraded // subsequent loop iterations read/write encrypted
 				// Rebuild the reader on the encrypted connection; any bytes
 				// buffered before the upgrade belong to the cleartext phase.
-				reader = &connReader{conn: conn, framing: s.servConf.Framing, cutoff: deadlineCutoff(deadline)}
+				if command.TLSFraming != nil {
+					currentFraming = command.TLSFraming
+				}
+				reader = &connReader{conn: conn, framing: currentFraming, wireEncoding: s.servConf.WireEncoding, cutoff: s.cutoff}
 			}
 
 			if command.CloseAfter {
@@ -457,24 +590,18 @@ func (s *tcpSession) serve(conn net.Conn) {
 		if !matched {
 			s.traceNotFound(commandInput, commandRaw)
 		}
+		if terminalReadError {
+			return
+		}
 	}
 
-	s.tr.TraceEvent(tracer.Event{
-		Msg:      "End TCP Session",
-		Status:   tracer.End.String(),
-		ID:       s.connID,
-		Protocol: tracer.TCP.String(),
-	})
 }
 
 // loadHistory loads the LLM context history for the session, capped to avoid
 // context overflow. Each entry is a user+assistant pair, so 20 entries = 10
 // exchanges. Configurable per service via maxHistory; defaults to 20.
 func (s *tcpSession) loadHistory() []plugins.Message {
-	maxHistoryEntries := s.servConf.MaxHistory
-	if maxHistoryEntries <= 0 {
-		maxHistoryEntries = 20
-	}
+	maxHistoryEntries := s.maxHistoryEntries()
 	if !s.strategy.Sessions.HasKey(s.sessionKey) {
 		return nil
 	}
@@ -484,6 +611,13 @@ func (s *tcpSession) loadHistory() []plugins.Message {
 		all = all[len(all)-maxHistoryEntries:]
 	}
 	return all
+}
+
+func (s *tcpSession) maxHistoryEntries() int {
+	if s.servConf.MaxHistory > 0 {
+		return s.servConf.MaxHistory
+	}
+	return 20
 }
 
 // handleMatch executes a matched command: it dispatches any plugin, builds the
@@ -504,11 +638,16 @@ func (s *tcpSession) handleMatch(command parser.Command, rawBuffer []byte, comma
 	// output is then treated like a static handler: Latin-1 encoded + patched).
 	// Static YAML handlers carry \xHH escapes parsed as Latin-1 codepoints and
 	// always need latin1ToRawBytes + applyPatches.
-	outputIsUTF8 := false
+	outputIsUTF8 := s.servConf.WireEncoding != "latin1"
+	applyGenericPatches := command.Plugin == ""
 	if command.Plugin != "" {
 		if cp, ok := plugin.GetCommand(command.Plugin); ok {
 			outputIsUTF8 = !command.BinaryOutput
-			output, err := cp.Execute(context.Background(), plugin.CommandRequest{
+			pluginCtx := s.ctx
+			if pluginCtx == nil {
+				pluginCtx = context.Background()
+			}
+			output, err := cp.Execute(pluginCtx, plugin.CommandRequest{
 				Command:  commandInput,
 				ClientIP: s.host,
 				Protocol: "tcp",
@@ -517,11 +656,18 @@ func (s *tcpSession) handleMatch(command parser.Command, rawBuffer []byte, comma
 			})
 			if err != nil {
 				log.Errorf("plugin %q execute error: %s", command.Plugin, err.Error())
+				// Preserve a configured binary handler fallback when the plugin
+				// fails, including its protocol patches.
+				outputIsUTF8 = s.servConf.WireEncoding != "latin1"
+				applyGenericPatches = true
 			} else {
 				commandOutput = output
+				applyGenericPatches = command.BinaryOutput
 			}
 		} else {
 			log.Warnf("unknown plugin %q, skipping", command.Plugin)
+			outputIsUTF8 = s.servConf.WireEncoding != "latin1"
+			applyGenericPatches = true
 		}
 	}
 
@@ -534,7 +680,7 @@ func (s *tcpSession) handleMatch(command parser.Command, rawBuffer []byte, comma
 			outputBytes = latin1ToRawBytes(commandOutput)
 		}
 	}
-	if !outputIsUTF8 {
+	if applyGenericPatches {
 		outputBytes = applyPatches(outputBytes, command.Patches)
 	}
 
@@ -554,19 +700,49 @@ func (s *tcpSession) handleMatch(command parser.Command, rawBuffer []byte, comma
 		Handler:       handlerName,
 	}
 
-	// Wire-plugin dispatch: protocol-specific post-processing runs here.
-	// Wire-plugins may modify outputBytes and enrich ev (e.g. via ev.Metadata).
-	// Empty registry → no-op.
-	runWirePlugins(&WireContext{
+	// Wire-plugin dispatch: protocol-specific post-processing runs here through
+	// the same public registry used by every externally installed plugin.
+	wirePatches := make([]plugin.WirePatch, len(command.Patches))
+	for i, patch := range command.Patches {
+		wirePatches[i] = plugin.WirePatch{Type: patch.Type, Offset: patch.Offset, Length: patch.Length}
+	}
+	wireExchange := &plugin.WireContext{
 		SessionKey:    s.sessionKey,
 		ConnID:        s.connID,
-		Command:       &command,
+		ClientIP:      s.host,
+		ClientPort:    s.port,
 		Request:       rawBuffer,
-		Response:      &outputBytes,
-		Event:         &ev,
-		Histories:     histories,
-		ServiceConfig: s.servConf,
-	})
+		Response:      outputBytes,
+		CommandOutput: ev.CommandOutput,
+		Metadata:      ev.Metadata,
+		History:       plugins.MessagesToPlugin(histories),
+		Command: plugin.WireCommand{
+			Name:         command.Name,
+			Handler:      command.Handler,
+			Plugin:       command.Plugin,
+			CloseAfter:   command.CloseAfter,
+			TLSUpgrade:   command.TLSUpgrade,
+			BinaryOutput: command.BinaryOutput,
+			Patches:      wirePatches,
+		},
+		Service: plugin.WireService{
+			Protocol:      s.servConf.Protocol,
+			Address:       s.servConf.Address,
+			Description:   s.servConf.Description,
+			ServerName:    s.servConf.ServerName,
+			ServerVersion: s.servConf.ServerVersion,
+			WireEncoding:  s.servConf.WireEncoding,
+			Config:        plugins.ConfigFromServiceConf(s.servConf),
+		},
+	}
+	pluginCtx := s.ctx
+	if pluginCtx == nil {
+		pluginCtx = context.Background()
+	}
+	runWirePlugins(pluginCtx, s.servConf.WirePlugins, wireExchange)
+	outputBytes = wireExchange.Response
+	ev.CommandOutput = wireExchange.CommandOutput
+	ev.Metadata = wireExchange.Metadata
 
 	// Store command and response in history (after wire-plugins so any response
 	// replacement they performed is captured).
@@ -574,7 +750,7 @@ func (s *tcpSession) handleMatch(command parser.Command, rawBuffer []byte, comma
 		{Role: plugins.USER.String(), Content: commandInput},
 		{Role: plugins.ASSISTANT.String(), Content: ev.CommandOutput},
 	}
-	s.strategy.Sessions.Append(s.sessionKey, newEntries...)
+	s.strategy.Sessions.AppendBounded(s.sessionKey, s.maxHistoryEntries(), newEntries...)
 
 	return ev, outputBytes, newEntries
 }
@@ -584,7 +760,7 @@ func (s *tcpSession) handleMatch(command parser.Command, rawBuffer []byte, comma
 // success, or (nil, false) if no cert is available or the handshake fails (the
 // caller should then close the connection).
 func (s *tcpSession) upgradeTLS(conn net.Conn) (net.Conn, bool) {
-	cert := s.strategy.currentTLSCert()
+	cert := s.tlsState.current()
 	if cert == nil {
 		// Cert generation failed at Init: the connection would otherwise continue
 		// in cleartext, silently defeating tlsUpgrade. Surface it and close.
@@ -595,8 +771,8 @@ func (s *tcpSession) upgradeTLS(conn net.Conn) (net.Conn, bool) {
 		Certificates: []tls.Certificate{*cert},
 		MinVersion:   tls.VersionTLS12,
 	})
-	if d := time.Duration(s.servConf.DeadlineTimeoutSeconds) * time.Second; d > 0 {
-		if err := conn.SetDeadline(time.Now().Add(d)); err != nil {
+	if !s.cutoff.IsZero() {
+		if err := conn.SetDeadline(s.cutoff); err != nil {
 			log.Debugf("set TLS handshake deadline failed: %v", err)
 		}
 	}

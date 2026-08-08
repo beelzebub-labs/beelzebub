@@ -1,6 +1,7 @@
 package TCP
 
 import (
+	"context"
 	"encoding/hex"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
+	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
 	"gopkg.in/yaml.v3"
 )
 
@@ -78,8 +80,8 @@ func vncStartService(t *testing.T, yamlPath string) (string, *vncTracer) {
 // the ConnID fix, the second connection's challenge clobbered the first's.
 func TestVNC_ConnIDIsolation(t *testing.T) {
 	p := vncWirePlugin{}
-	challengeHandler := &parser.Command{Name: vncChallengeHandler}
-	responseHandler := &parser.Command{Name: vncResponseHandler}
+	challengeHandler := plugin.WireCommand{Name: vncChallengeHandler}
+	responseHandler := plugin.WireCommand{Name: vncResponseHandler}
 
 	chA := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	chB := []byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
@@ -92,13 +94,16 @@ func TestVNC_ConnIDIsolation(t *testing.T) {
 
 	store := func(connID string, ch []byte) {
 		out := append([]byte(nil), ch...)
-		p.OnExchange(&WireContext{ConnID: connID, SessionKey: "TCP9.9.9.9", Command: challengeHandler, Response: &out, Event: &tracer.Event{}})
+		if err := p.OnExchange(context.Background(), &plugin.WireContext{ConnID: connID, SessionKey: "TCP9.9.9.9", Command: challengeHandler, Response: out}); err != nil {
+			t.Fatalf("store challenge: %v", err)
+		}
 	}
-	capture := func(connID string, resp []byte) *tracer.Event {
-		ev := &tracer.Event{}
-		out := []byte{}
-		p.OnExchange(&WireContext{ConnID: connID, SessionKey: "TCP9.9.9.9", Command: responseHandler, Request: resp, Response: &out, Event: ev})
-		return ev
+	capture := func(connID string, resp []byte) map[string]string {
+		exchange := &plugin.WireContext{ConnID: connID, SessionKey: "TCP9.9.9.9", Command: responseHandler, Request: resp}
+		if err := p.OnExchange(context.Background(), exchange); err != nil {
+			t.Fatalf("capture response: %v", err)
+		}
+		return exchange.Metadata
 	}
 
 	// Interleave two connections from the same source IP.
@@ -107,11 +112,11 @@ func TestVNC_ConnIDIsolation(t *testing.T) {
 	evB := capture("conn-B", respB)
 	evA := capture("conn-A", respA)
 
-	if evA.Metadata["vnc_challenge"] != hex.EncodeToString(chA) {
-		t.Errorf("conn-A challenge = %s, want %s (cross-connection clobber)", evA.Metadata["vnc_challenge"], hex.EncodeToString(chA))
+	if evA["vnc_challenge"] != hex.EncodeToString(chA) {
+		t.Errorf("conn-A challenge = %s, want %s (cross-connection clobber)", evA["vnc_challenge"], hex.EncodeToString(chA))
 	}
-	if evB.Metadata["vnc_challenge"] != hex.EncodeToString(chB) {
-		t.Errorf("conn-B challenge = %s, want %s (cross-connection clobber)", evB.Metadata["vnc_challenge"], hex.EncodeToString(chB))
+	if evB["vnc_challenge"] != hex.EncodeToString(chB) {
+		t.Errorf("conn-B challenge = %s, want %s (cross-connection clobber)", evB["vnc_challenge"], hex.EncodeToString(chB))
 	}
 }
 

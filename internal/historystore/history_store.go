@@ -15,8 +15,9 @@ var (
 // HistoryStore is a thread-safe structure for storing Messages used to build LLM Context.
 type HistoryStore struct {
 	sync.RWMutex
-	sessions map[string]HistoryEvent
-	done     chan struct{}
+	sessions  map[string]HistoryEvent
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // HistoryEvent is a container for storing messages
@@ -45,12 +46,19 @@ func (hs *HistoryStore) HasKey(key string) bool {
 func (hs *HistoryStore) Query(key string) []plugins.Message {
 	hs.RLock()
 	defer hs.RUnlock()
-	return hs.sessions[key].Messages
+	messages := hs.sessions[key].Messages
+	return append([]plugins.Message(nil), messages...)
 }
 
 // Append will add the slice of Mesages to the entry for the key.
 // If the map has not yet been initalised, then a new map is created.
 func (hs *HistoryStore) Append(key string, message ...plugins.Message) {
+	hs.AppendBounded(key, 0, message...)
+}
+
+// AppendBounded appends messages and retains at most max entries for key.
+// A non-positive max preserves the unbounded behavior of Append.
+func (hs *HistoryStore) AppendBounded(key string, max int, message ...plugins.Message) {
 	hs.Lock()
 	defer hs.Unlock()
 	// In the unexpected case that the map has not yet been initalised, create it.
@@ -63,6 +71,11 @@ func (hs *HistoryStore) Append(key string, message ...plugins.Message) {
 	}
 	e.LastSeen = time.Now()
 	e.Messages = append(e.Messages, message...)
+	if max > 0 && len(e.Messages) > max {
+		trimmed := make([]plugins.Message, max)
+		copy(trimmed, e.Messages[len(e.Messages)-max:])
+		e.Messages = trimmed
+	}
 	hs.sessions[key] = e
 }
 
@@ -91,9 +104,9 @@ func (hs *HistoryStore) HistoryCleaner() {
 
 // Close stops the HistoryCleaner goroutine. It is safe to call multiple times.
 func (hs *HistoryStore) Close() {
-	select {
-	case <-hs.done:
-	default:
-		close(hs.done)
-	}
+	hs.closeOnce.Do(func() {
+		if hs.done != nil {
+			close(hs.done)
+		}
+	})
 }

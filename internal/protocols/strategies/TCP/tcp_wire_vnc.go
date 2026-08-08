@@ -1,9 +1,12 @@
 package TCP
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"sync"
+
+	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
 )
 
 // VNC Authentication (RFB security type 2) is a DES challenge-response scheme:
@@ -33,51 +36,59 @@ var vncChallengeStore sync.Map
 
 type vncWirePlugin struct{}
 
-func (vncWirePlugin) OnExchange(ctx *WireContext) {
-	if ctx.Command == nil {
-		return
+func (vncWirePlugin) Metadata() plugin.Metadata {
+	return plugin.Metadata{
+		Name:        "vnc",
+		Version:     "1.0.0",
+		Author:      "Beelzebub Labs",
+		Description: "Captures RFB VNC challenge-response material from TCP exchanges.",
 	}
+}
+
+func (vncWirePlugin) OnExchange(_ context.Context, ctx *plugin.WireContext) error {
 	switch ctx.Command.Name {
 	case vncChallengeHandler:
 		// The outbound response is the 16-byte challenge (already randomised
 		// by the generic patch engine). Stash it for this session.
-		if ctx.Response != nil && len(*ctx.Response) >= 16 {
+		if len(ctx.Response) >= 16 {
 			challenge := make([]byte, 16)
-			copy(challenge, (*ctx.Response)[:16])
+			copy(challenge, ctx.Response[:16])
 			vncChallengeStore.Store(ctx.ConnID, challenge)
 		}
 	case vncResponseHandler:
 		// The inbound request is the 16-byte DES-encrypted response.
 		if len(ctx.Request) < 16 {
-			return
+			return nil
 		}
 		v, ok := vncChallengeStore.Load(ctx.ConnID)
 		if !ok {
-			return
+			return nil
 		}
 		challenge, ok := v.([]byte)
 		if !ok {
-			return
+			return nil
 		}
 		response := ctx.Request[:16]
-		if ctx.Event.Metadata == nil {
-			ctx.Event.Metadata = map[string]string{}
+		if ctx.Metadata == nil {
+			ctx.Metadata = map[string]string{}
 		}
-		ctx.Event.Metadata["vnc_challenge"] = hex.EncodeToString(challenge)
-		ctx.Event.Metadata["vnc_response"] = hex.EncodeToString(response)
+		ctx.Metadata["vnc_challenge"] = hex.EncodeToString(challenge)
+		ctx.Metadata["vnc_response"] = hex.EncodeToString(response)
 		// John the Ripper VNC format (--format=vnc).
-		ctx.Event.Metadata["vnc_john"] = fmt.Sprintf("$vnc$*%s*%s",
+		ctx.Metadata["vnc_john"] = fmt.Sprintf("$vnc$*%s*%s",
 			hex.EncodeToString(challenge), hex.EncodeToString(response))
 		vncChallengeStore.Delete(ctx.ConnID)
 	}
+	return nil
 }
 
 // OnSessionClose purges any stored challenge for the ended connection, so an
 // incomplete handshake (challenge sent, response never received) does not leak.
-func (vncWirePlugin) OnSessionClose(connID string) {
+func (vncWirePlugin) OnSessionClose(_ context.Context, connID string) error {
 	vncChallengeStore.Delete(connID)
+	return nil
 }
 
 func init() {
-	RegisterWirePlugin("vnc", vncWirePlugin{})
+	plugin.Register(vncWirePlugin{})
 }

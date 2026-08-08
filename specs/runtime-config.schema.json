@@ -23,7 +23,17 @@
     "description": { "type": "string", "description": "Human-readable label for this honeypot service." },
     "serverVersion": { "type": "string", "description": "Banner/version string sent to clients during handshake (e.g. OpenSSH, Apache/2.4.53)." },
     "serverName": { "type": "string", "description": "Hostname reported by the honeypot (e.g. ubuntu, mail.internal.company.com)." },
-    "deadlineTimeoutSeconds": { "type": "integer", "minimum": 0, "description": "Connection deadline in seconds for TCP, TELNET, and SSH. HTTP does not use this field; 0 causes immediate deadlines for TCP and TELNET, while SSH treats 0 as no timeout." },
+    "deadlineTimeoutSeconds": { "type": "integer", "minimum": 0, "description": "Connection deadline in seconds for TCP, TELNET, and SSH. HTTP does not use this field; 0 disables the deadline." },
+    "maxHistory": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "Maximum number of TCP conversation messages retained per service and source. 0 uses the runtime default." },
+    "wireEncoding": { "type": "string", "enum": ["utf8", "latin1"], "description": "Encoding used by TCP regexes and static handlers. Defaults to utf8." },
+    "framing": { "$ref": "#/definitions/Framing" },
+    "wirePlugins": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "maxItems": 32,
+      "description": "Names of registered TCP wire plugins enabled for this service, in execution order. Empty means none."
+    },
     "banner": { "type": "string", "description": "Initial banner sent on connection (TCP) or greeting (HTTP). Can include binary wire format." },
     "passwordRegex": { "type": "string", "description": "Regex pattern for accepted passwords. Required for SSH and TELNET. Syntax validated by Go at runtime." },
     "trustedProxies": {
@@ -176,12 +186,49 @@
           "minimum": 100,
           "maximum": 599
         },
-        "plugin": {
-          "type": "string",
-          "enum": ["", "LLMHoneypot", "MazeHoneypot"]
-        },
-        "name": { "type": "string" }
+        "plugin": { "type": "string" },
+        "name": { "type": "string" },
+        "closeAfter": { "type": "boolean" },
+        "tlsUpgrade": { "type": "boolean" },
+        "tlsFraming": { "$ref": "#/definitions/Framing" },
+        "binaryOutput": { "type": "boolean" },
+        "patches": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Patch" },
+          "maxItems": 32
+        }
       },
+      "additionalProperties": false
+    },
+    "Framing": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["length-prefix", "ber"] },
+        "lengthOffset": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "lengthSize": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "headerSize": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "bigEndian": { "type": "boolean" },
+        "lengthIncludesHeader": { "type": "boolean" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": ["mode"],
+            "properties": { "mode": { "const": "ber" } }
+          },
+          "else": { "required": ["lengthSize"] }
+        }
+      ]
+    },
+    "Patch": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "offset": { "type": "integer", "minimum": 0 },
+        "length": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
       "additionalProperties": false
     },
     "Tool": {

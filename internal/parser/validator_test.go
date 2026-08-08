@@ -174,19 +174,18 @@ func TestValidateCommandRegexEmpty(t *testing.T) {
 	}
 }
 
-func TestValidateCommandPluginInvalid(t *testing.T) {
+func TestValidateCommandPluginNamesRemainExtensible(t *testing.T) {
 	RegisterServiceValidator(&SchemaValidator{})
 	defer ResetServiceValidators()
 
 	tests := []struct {
-		name      string
-		plugin    string
-		wantError bool
+		name   string
+		plugin string
 	}{
-		{"typo plugin name", "TypoPlugin", true},
-		{"empty plugin", "", false},
-		{"LLMHoneypot", "LLMHoneypot", false},
-		{"MazeHoneypot", "MazeHoneypot", false},
+		{"external plugin", "hello-demon"},
+		{"empty plugin", ""},
+		{"LLMHoneypot", "LLMHoneypot"},
+		{"MazeHoneypot", "MazeHoneypot"},
 	}
 
 	for _, tt := range tests {
@@ -197,13 +196,8 @@ func TestValidateCommandPluginInvalid(t *testing.T) {
 			result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
 			issues := findIssues(result, "test.yaml")
 
-			if tt.wantError {
-				assert.True(t, hasIssueContaining(issues, LevelError, "value must be one of"),
-					"expected schema validation error for plugin %q, got: %v", tt.plugin, issues)
-			} else {
-				assert.False(t, hasIssueContaining(issues, LevelError, "value must be one of"),
-					"unexpected schema validation error for plugin %q", tt.plugin)
-			}
+			assert.False(t, hasIssueContaining(issues, LevelError, "value must be one of"),
+				"plugin names must not be restricted by the schema: %q", tt.plugin)
 		})
 	}
 }
@@ -213,40 +207,34 @@ func TestValidateFallbackCommand(t *testing.T) {
 	defer ResetServiceValidators()
 
 	tests := []struct {
-		name          string
-		fallback      Command
-		wantRegexErr  bool
-		wantPluginErr bool
+		name         string
+		fallback     Command
+		wantRegexErr bool
 	}{
 		{
-			name:          "empty handler and plugin",
-			fallback:      Command{},
-			wantRegexErr:  false,
-			wantPluginErr: false,
+			name:         "empty handler and plugin",
+			fallback:     Command{},
+			wantRegexErr: false,
 		},
 		{
-			name:          "invalid plugin with valid regex",
-			fallback:      Command{Handler: "test", Plugin: "BadPlugin", RegexStr: ".*"},
-			wantRegexErr:  false,
-			wantPluginErr: true,
+			name:         "invalid plugin with valid regex",
+			fallback:     Command{Handler: "test", Plugin: "BadPlugin", RegexStr: ".*"},
+			wantRegexErr: false,
 		},
 		{
-			name:          "empty regex with valid plugin (fallback is catch-all, no regex needed)",
-			fallback:      Command{Handler: "test", Plugin: "LLMHoneypot"},
-			wantRegexErr:  false,
-			wantPluginErr: false,
+			name:         "empty regex with valid plugin (fallback is catch-all, no regex needed)",
+			fallback:     Command{Handler: "test", Plugin: "LLMHoneypot"},
+			wantRegexErr: false,
 		},
 		{
-			name:          "invalid regex syntax in fallback",
-			fallback:      Command{Handler: "test", Plugin: "LLMHoneypot", RegexStr: "[invalid"},
-			wantRegexErr:  true,
-			wantPluginErr: false,
+			name:         "invalid regex syntax in fallback",
+			fallback:     Command{Handler: "test", Plugin: "LLMHoneypot", RegexStr: "[invalid"},
+			wantRegexErr: true,
 		},
 		{
-			name:          "valid regex and valid plugin",
-			fallback:      Command{Handler: "test", Plugin: "MazeHoneypot", RegexStr: ".*"},
-			wantRegexErr:  false,
-			wantPluginErr: false,
+			name:         "valid regex and valid plugin",
+			fallback:     Command{Handler: "test", Plugin: "MazeHoneypot", RegexStr: ".*"},
+			wantRegexErr: false,
 		},
 	}
 
@@ -262,10 +250,8 @@ func TestValidateFallbackCommand(t *testing.T) {
 					"expected regex error, got: %v", issues)
 			}
 
-			if tt.wantPluginErr {
-				assert.True(t, hasIssueContaining(issues, LevelError, "value must be one of"),
-					"expected schema plugin error, got: %v", issues)
-			}
+			assert.False(t, hasIssueContaining(issues, LevelError, "value must be one of"),
+				"fallback plugin names must remain extensible: %v", issues)
 		})
 	}
 }
@@ -349,7 +335,7 @@ func TestValidateDeadlineTimeout(t *testing.T) {
 			issues := findIssues(result, "test.yaml")
 
 			if tt.wantWarn {
-				assert.True(t, hasIssue(issues, LevelWarning, "deadlineTimeoutSeconds is not set, connections may be closed immediately"))
+				assert.True(t, hasIssue(issues, LevelWarning, "deadlineTimeoutSeconds is not set, connections have no deadline"))
 			} else {
 				assert.False(t, hasIssue(issues, LevelWarning, "deadlineTimeoutSeconds is not set"))
 			}

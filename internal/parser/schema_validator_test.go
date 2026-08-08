@@ -73,6 +73,49 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 			},
 		},
 		{
+			name: "TCP binary framework fields",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion:   "v1",
+				Protocol:     "tcp",
+				Address:      ":5900",
+				WireEncoding: "latin1",
+				MaxHistory:   20,
+				Framing: &Framing{
+					LengthOffset: 0,
+					LengthSize:   2,
+					BigEndian:    true,
+				},
+				WirePlugins: []string{"vnc"},
+				Commands: []Command{{
+					RegexStr:     "(?s)^.{16}$",
+					Handler:      "failed",
+					CloseAfter:   true,
+					TLSUpgrade:   true,
+					BinaryOutput: true,
+					Patches:      []Patch{{Type: "random", Offset: 0, Length: 8}},
+				}},
+			},
+		},
+		{
+			name: "external command plugin name",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1",
+				Protocol:   "tcp",
+				Address:    ":19090",
+				Commands:   []Command{{RegexStr: "^hello$", Plugin: "hello-demon"}},
+			},
+		},
+		{
+			name: "LDAP BER framing",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1",
+				Protocol:   "tcp",
+				Address:    ":389",
+				Framing:    &Framing{Mode: "ber"},
+				Commands:   []Command{{RegexStr: "(?s).*", Handler: "ok"}},
+			},
+		},
+		{
 			name: "valid MCP",
 			config: BeelzebubServiceConfiguration{
 				ApiVersion: "v1",

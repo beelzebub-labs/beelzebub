@@ -16,6 +16,29 @@ func TestNewHistoryStore(t *testing.T) {
 	assert.NotNil(t, hs.sessions)
 }
 
+func TestAppendBoundedRetainsNewestMessages(t *testing.T) {
+	store := NewHistoryStore()
+	store.AppendBounded("session", 2,
+		plugins.Message{Role: "user", Content: "one"},
+		plugins.Message{Role: "assistant", Content: "two"},
+		plugins.Message{Role: "user", Content: "three"},
+	)
+	messages := store.Query("session")
+	if len(messages) != 2 || messages[0].Content != "two" || messages[1].Content != "three" {
+		t.Fatalf("bounded history = %#v", messages)
+	}
+}
+
+func TestQueryReturnsIndependentCopy(t *testing.T) {
+	store := NewHistoryStore()
+	store.Append("session", plugins.Message{Role: "user", Content: "original"})
+	messages := store.Query("session")
+	messages[0].Content = "mutated"
+	if got := store.Query("session")[0].Content; got != "original" {
+		t.Fatalf("stored message changed through Query result: %q", got)
+	}
+}
+
 func TestHasKey(t *testing.T) {
 	hs := NewHistoryStore()
 	hs.sessions["testKey"] = HistoryEvent{Messages: []plugins.Message{}}
@@ -82,6 +105,19 @@ func TestClose(t *testing.T) {
 	// After Close, the store is still usable for reads/writes
 	hs.Append("key", plugins.Message{Role: "user", Content: "test"})
 	assert.True(t, hs.HasKey("key"))
+}
+
+func TestCloseConcurrent(t *testing.T) {
+	hs := NewHistoryStore()
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hs.Close()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestAppend_Concurrent(t *testing.T) {

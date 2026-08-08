@@ -3,7 +3,6 @@ package TCP
 import (
 	"errors"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -24,13 +23,15 @@ const maxFrameSize = 1 << 20 // 1 MiB
 const maxOpportunisticBufferSize = 4 << 20 // 4 MiB
 
 var errOpportunisticBufferExceeded = errors.New("tcp opportunistic read buffer exceeded")
+var errInvalidFrame = errors.New("invalid TCP frame length")
 
 // connReader reads one logical protocol message at a time from a TCP connection.
 // It keeps a buffer of bytes read past the current message (pipelined data) so
 // the next call returns them instead of dropping them.
 type connReader struct {
-	conn    net.Conn
-	framing *parser.Framing
+	conn         net.Conn
+	framing      *parser.Framing
+	wireEncoding string
 	// cutoff is the absolute connection deadline. The opportunistic accumulation
 	// path temporarily lowers the read deadline to a short grace window, then
 	// restores it to cutoff — it never extends past cutoff, so the grace window
@@ -41,10 +42,10 @@ type connReader struct {
 }
 
 // nextMessage returns the next logical message. With a Framing spec it reads
-// exactly one length-prefixed frame (handling split reads and pipelining);
+// exactly one configured frame (handling split reads and pipelining);
 // otherwise it accumulates opportunistically: it returns as soon as any handler
-// matches, and only waits (up to accumulationGrace) when nothing matches yet, in
-// case the message is split across TCP segments. Because it stops the instant a
+// matches and keeps waiting in short intervals when nothing matches yet, until
+// the absolute connection deadline or EOF. Because it stops the instant a
 // handler matches, a config with a catch-all handler never incurs extra latency.
 func (r *connReader) nextMessage(commands []parser.Command) ([]byte, error) {
 	if r.framing != nil {
@@ -88,24 +89,32 @@ func (r *connReader) fillUntil(n int) error {
 // validFraming reports whether the framing spec is usable; a malformed spec
 // (e.g. lengthSize 0 or >8) would otherwise mis-slice the stream.
 func validFraming(f *parser.Framing) bool {
-	return f.LengthOffset >= 0 && f.LengthSize >= 1 && f.LengthSize <= 8 && f.HeaderSize >= 0
+	if f == nil {
+		return false
+	}
+	if f.Mode == "ber" {
+		return true
+	}
+	return (f.Mode == "" || f.Mode == "length-prefix") &&
+		f.LengthOffset >= 0 && f.LengthOffset <= maxFrameSize &&
+		f.LengthSize >= 1 && f.LengthSize <= 8 &&
+		f.HeaderSize >= 0 && f.HeaderSize <= maxFrameSize
 }
 
 func (r *connReader) nextFramed() ([]byte, error) {
 	f := r.framing
 	if !validFraming(f) {
-		// Misconfigured framing: degrade to a single read so the handler/catch_all
-		// can still respond rather than mis-framing every message.
-		if err := r.fill(); err != nil && len(r.buf) == 0 {
-			return nil, err
-		}
-		msg := r.buf
-		r.buf = nil
-		return msg, nil
+		return nil, errInvalidFrame
+	}
+	if f.Mode == "ber" {
+		return r.nextBERFrame()
+	}
+	if f.LengthOffset > maxFrameSize-f.LengthSize {
+		return nil, errInvalidFrame
 	}
 	headerEnd := f.LengthOffset + f.LengthSize
 	if err := r.fillUntil(headerEnd); err != nil {
-		return nil, err
+		return r.takeBuffer(), err
 	}
 	length := 0
 	for i := 0; i < f.LengthSize; i++ {
@@ -113,27 +122,67 @@ func (r *connReader) nextFramed() ([]byte, error) {
 		if !f.BigEndian {
 			idx = f.LengthOffset + (f.LengthSize - 1 - i)
 		}
+		if length > maxFrameSize>>8 {
+			return r.takeBuffer(), errInvalidFrame
+		}
 		length = (length << 8) | int(r.buf[idx])
 	}
 	total := length
 	if !f.LengthIncludesHeader {
+		if length > maxFrameSize-f.HeaderSize {
+			return r.takeBuffer(), errInvalidFrame
+		}
 		total = f.HeaderSize + length
 	}
 	// total must be at least the header we already consumed; a smaller value is
 	// bogus and would slice inside the header, desyncing the stream.
 	if total < headerEnd || total > maxFrameSize {
-		// Bogus length: fall back to returning what we have so the handler/
-		// catch_all can still respond, rather than looping forever.
-		msg := r.buf
-		r.buf = nil
-		return msg, nil
+		// Return the bytes already received for telemetry together with an error.
+		return r.takeBuffer(), errInvalidFrame
 	}
 	if err := r.fillUntil(total); err != nil {
-		return nil, err
+		return r.takeBuffer(), err
 	}
 	msg := r.buf[:total]
 	// Copy the leftover so the returned msg doesn't alias the retained buffer's
 	// backing array (and so the array isn't kept alive by a small leftover).
+	r.buf = append([]byte(nil), r.buf[total:]...)
+	return msg, nil
+}
+
+func (r *connReader) nextBERFrame() ([]byte, error) {
+	if err := r.fillUntil(2); err != nil {
+		return r.takeBuffer(), err
+	}
+	lengthByte := r.buf[1]
+	lengthBytes := 1
+	contentLength := 0
+	if lengthByte&0x80 == 0 {
+		contentLength = int(lengthByte)
+	} else {
+		count := int(lengthByte & 0x7f)
+		if count == 0 || count > 8 {
+			return r.takeBuffer(), errInvalidFrame
+		}
+		if err := r.fillUntil(2 + count); err != nil {
+			return r.takeBuffer(), err
+		}
+		lengthBytes += count
+		for i := 0; i < count; i++ {
+			if contentLength > maxFrameSize>>8 {
+				return r.takeBuffer(), errInvalidFrame
+			}
+			contentLength = (contentLength << 8) | int(r.buf[2+i])
+		}
+	}
+	total := 1 + lengthBytes + contentLength
+	if total < 2 || total > maxFrameSize {
+		return r.takeBuffer(), errInvalidFrame
+	}
+	if err := r.fillUntil(total); err != nil {
+		return r.takeBuffer(), err
+	}
+	msg := append([]byte(nil), r.buf[:total]...)
 	r.buf = append([]byte(nil), r.buf[total:]...)
 	return msg, nil
 }
@@ -149,7 +198,7 @@ func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error
 			return nil, errOpportunisticBufferExceeded
 		}
 	}
-	for !matchesAny(r.buf, commands) {
+	for !matchesAny(r.buf, commands, r.wireEncoding) {
 		if len(r.buf) > maxOpportunisticBufferSize {
 			return nil, errOpportunisticBufferExceeded
 		}
@@ -174,8 +223,16 @@ func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error
 			return nil, errOpportunisticBufferExceeded
 		}
 		if len(r.buf) == before {
-			// No progress within the grace window; deliver the bytes already
-			// buffered to the caller's not_found/catch-all path.
+			if timeoutErr, ok := err.(net.Error); ok && timeoutErr.Timeout() {
+				// A TCP segment can be delayed longer than accumulationGrace. Keep
+				// unmatched bytes until the configured absolute cutoff rather than
+				// splitting one logical message at an arbitrary timing boundary.
+				if r.cutoff.IsZero() || time.Now().Before(r.cutoff) {
+					continue
+				}
+				return r.takeBuffer(), err
+			}
+			// EOF or another terminal condition: deliver the buffered bytes.
 			break
 		}
 		if err != nil {
@@ -188,8 +245,8 @@ func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error
 }
 
 // matchesAny reports whether any configured handler matches the bytes so far.
-func matchesAny(raw []byte, commands []parser.Command) bool {
-	input := strings.TrimRight(rawBytesToLatin1(raw), "\r\n")
+func matchesAny(raw []byte, commands []parser.Command, wireEncoding string) bool {
+	input := commandMatchInput(raw, wireEncoding)
 	for i := range commands {
 		if commands[i].Regex != nil && commands[i].Regex.MatchString(input) {
 			return true

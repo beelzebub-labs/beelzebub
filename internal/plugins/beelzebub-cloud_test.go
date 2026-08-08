@@ -416,6 +416,55 @@ func TestVerifyConfigurationsChanged_ReturnsHTTPError(t *testing.T) {
 	}
 }
 
+func TestWatchConfigurations_RetainsBaselineAcrossTransientError(t *testing.T) {
+	client := resty.New()
+	httpmock.ActivateNonDefault(client.GetClient())
+	defer httpmock.DeactivateAndReset()
+
+	uri := "localhost:8081"
+	callCount := 0
+	httpmock.RegisterResponder("GET", fmt.Sprintf("%s/honeypots", uri),
+		func(req *http.Request) (*http.Response, error) {
+			callCount++
+			if callCount == 2 {
+				return httpmock.NewStringResponse(500, "temporary"), nil
+			}
+			address := ":2222"
+			if callCount >= 3 {
+				address = ":2223"
+			}
+			return httpmock.NewJsonResponse(200, &[]HoneypotConfigResponseDTO{{
+				ID:      "123456",
+				Config:  fmt.Sprintf("apiVersion: \"v1\"\nprotocol: \"ssh\"\naddress: \"%s\"\n", address),
+				TokenID: "1234567",
+			}})
+		},
+	)
+
+	exitCalled := make(chan struct{}, 1)
+	origExit := exitFunction
+	defer func() { exitFunction = origExit }()
+	exitFunction = func(int) { exitCalled <- struct{}{} }
+
+	cloud := InitBeelzebubCloud(uri, "token", false)
+	cloud.client = client
+	cloud.PollingInterval = 10 * time.Millisecond
+	cloud.watchDone = make(chan struct{})
+	go func() {
+		defer close(cloud.watchDone)
+		cloud.watchConfigurations()
+	}()
+
+	select {
+	case <-exitCalled:
+		assert.GreaterOrEqual(t, callCount, 3)
+	case <-time.After(2 * time.Second):
+		cloud.Stop()
+		t.Fatal("configuration change after transient error was not detected")
+	}
+	cloud.Stop()
+}
+
 func TestVerifyConfigurationsChanged_StopsOnContextAtTopOfLoop(t *testing.T) {
 	client := resty.New()
 	httpmock.ActivateNonDefault(client.GetClient())

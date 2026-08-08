@@ -105,7 +105,7 @@ type Tracer interface {
 
 type tracer struct {
 	strategy          Strategy
-	eventsChan        chan Event
+	eventsChans       []chan Event
 	eventsTotal       prometheus.Counter
 	eventsSSHTotal    prometheus.Counter
 	eventsTCPTotal    prometheus.Counter
@@ -124,8 +124,8 @@ var (
 func GetInstance(defaultStrategy Strategy) *tracer {
 	singletonOnce.Do(func() {
 		singleton = &tracer{
-			strategy:   defaultStrategy,
-			eventsChan: make(chan Event, Workers),
+			strategy:    defaultStrategy,
+			eventsChans: make([]chan Event, Workers),
 			eventsTotal: promauto.NewCounter(prometheus.CounterOpts{
 				Namespace: "beelzebub",
 				Name:      "events_total",
@@ -159,9 +159,10 @@ func GetInstance(defaultStrategy Strategy) *tracer {
 		}
 
 		for i := 0; i < Workers; i++ {
+			singleton.eventsChans[i] = make(chan Event, Workers)
 			go func(i int, tr *tracer) {
 				log.Debug("Trace worker: ", i)
-				for event := range tr.eventsChan {
+				for event := range tr.eventsChans[i] {
 					tr.GetStrategy()(event)
 				}
 			}(i, singleton)
@@ -185,9 +186,25 @@ func (tracer *tracer) GetStrategy() Strategy {
 func (tracer *tracer) TraceEvent(event Event) {
 	event.DateTime = time.Now().UTC().Format(time.RFC3339)
 
-	tracer.eventsChan <- event
+	tracer.eventsChans[eventWorker(event.ID)] <- event
 
 	tracer.updatePrometheusCounters(event.Protocol)
+}
+
+// eventWorker consistently assigns a session ID to one worker. Events for the
+// same session therefore retain FIFO order, while unrelated sessions are still
+// processed concurrently by different workers.
+func eventWorker(id string) int {
+	const (
+		offset32 = uint32(2166136261)
+		prime32  = uint32(16777619)
+	)
+	hash := offset32
+	for i := 0; i < len(id); i++ {
+		hash ^= uint32(id[i])
+		hash *= prime32
+	}
+	return int(hash % Workers)
 }
 
 func (tracer *tracer) updatePrometheusCounters(protocol string) {

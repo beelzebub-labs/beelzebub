@@ -28,7 +28,7 @@ func init() {
 	runCmd.Flags().IntVarP(&runMemLimitMiB, "mem-limit-mib", "m", 100, "Memory limit in MiB (-1 to disable)")
 }
 
-func runBeelzebub(cmd *cobra.Command, _ []string) error {
+func runBeelzebub(cmd *cobra.Command, _ []string) (err error) {
 	if runMemLimitMiB > 0 {
 		debug.SetMemoryLimit(int64(runMemLimitMiB) * 1024 * 1024)
 	}
@@ -64,7 +64,9 @@ func runBeelzebub(cmd *cobra.Command, _ []string) error {
 	if err = beelzebubBuilder.Run(); err != nil {
 		return fmt.Errorf("starting services: %w", err)
 	}
-	defer beelzebubBuilder.Close()
+	defer func() {
+		err = errors.Join(err, beelzebubBuilder.Close())
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

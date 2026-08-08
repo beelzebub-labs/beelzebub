@@ -33,6 +33,21 @@ func newReader(server net.Conn, framing *parser.Framing) *connReader {
 	return &connReader{conn: server, framing: framing, cutoff: cutoff}
 }
 
+func framingTestBERTLV(tag byte, value []byte) []byte {
+	length := len(value)
+	if length < 128 {
+		return append([]byte{tag, byte(length)}, value...)
+	}
+	var encoded [8]byte
+	i := len(encoded)
+	for n := length; n > 0; n >>= 8 {
+		i--
+		encoded[i] = byte(n)
+	}
+	header := append([]byte{tag, 0x80 | byte(len(encoded)-i)}, encoded[i:]...)
+	return append(header, value...)
+}
+
 // TestFraming_BigEndian_SingleFrame reads a TPKT-style frame: 16-bit big-endian
 // length at offset 2 that counts the whole PDU (lengthIncludesHeader).
 func TestFraming_BigEndian_SingleFrame(t *testing.T) {
@@ -97,8 +112,8 @@ func TestFraming_Pipelined(t *testing.T) {
 	}
 }
 
-// TestFraming_BogusLength falls back to returning buffered bytes rather than
-// blocking forever on an absurd length.
+// TestFraming_BogusLength returns the buffered prefix with an explicit error
+// rather than silently accepting an absurd length.
 func TestFraming_BogusLength(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
@@ -108,8 +123,8 @@ func TestFraming_BogusLength(t *testing.T) {
 	// Length 0xFFFFFFFF > maxFrameSize → fall back.
 	writeThenClose(t, client, 0, []byte{0xFF, 0xFF, 0xFF, 0xFF, 0x01})
 	msg, err := r.nextMessage(nil)
-	if err != nil {
-		t.Fatalf("nextMessage err: %v", err)
+	if !errors.Is(err, errInvalidFrame) {
+		t.Fatalf("nextMessage err = %v, want %v", err, errInvalidFrame)
 	}
 	if len(msg) == 0 {
 		t.Fatal("expected fallback to return buffered bytes")
@@ -150,6 +165,21 @@ func TestFraming_DataDeliveredWithEOF(t *testing.T) {
 	}
 }
 
+func TestFraming_PartialHeaderDeliveredWithEOF(t *testing.T) {
+	f := &parser.Framing{LengthOffset: 2, LengthSize: 2, BigEndian: true, LengthIncludesHeader: true}
+	conn := &eofWithDataConn{data: []byte{0x03, 0x00, 0x00}}
+	r := &connReader{conn: conn, framing: f}
+
+	msg, err := r.nextMessage(nil)
+
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("err = %v, want EOF", err)
+	}
+	if !bytes.Equal(msg, conn.data) {
+		t.Fatalf("partial header = %x, want %x", msg, conn.data)
+	}
+}
+
 // TestFraming_TotalSmallerThanHeader verifies a length that decodes below the
 // header size hits the bogus-length fallback instead of slicing inside the header.
 func TestFraming_TotalSmallerThanHeader(t *testing.T) {
@@ -160,8 +190,8 @@ func TestFraming_TotalSmallerThanHeader(t *testing.T) {
 	r := newReader(server, f)
 	writeThenClose(t, client, 0, []byte{0x03, 0x00, 0x00, 0x02, 0xAA, 0xBB})
 	msg, err := r.nextMessage(nil)
-	if err != nil {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errInvalidFrame) {
+		t.Fatalf("err = %v, want %v", err, errInvalidFrame)
 	}
 	// Fallback returns the whole buffer rather than a 2-byte mis-slice.
 	if len(msg) < 4 {
@@ -169,17 +199,50 @@ func TestFraming_TotalSmallerThanHeader(t *testing.T) {
 	}
 }
 
-// TestFraming_InvalidSpecDegrades verifies a malformed framing spec (lengthSize 0)
-// degrades to a single read instead of mis-framing.
-func TestFraming_InvalidSpecDegrades(t *testing.T) {
+func TestFraming_InvalidSpecIsRejected(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	f := &parser.Framing{LengthOffset: 0, LengthSize: 0} // invalid
 	r := newReader(server, f)
-	writeThenClose(t, client, 0, []byte("hello"))
 	msg, err := r.nextMessage(nil)
-	if err != nil || string(msg) != "hello" {
-		t.Fatalf("msg = %q err = %v, want \"hello\"", msg, err)
+	if !errors.Is(err, errInvalidFrame) || msg != nil {
+		t.Fatalf("msg = %q err = %v, want invalid-frame error", msg, err)
+	}
+}
+
+func TestFraming_OverflowingOffsetIsRejected(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	r := &connReader{framing: &parser.Framing{LengthOffset: maxInt, LengthSize: 8}}
+	msg, err := r.nextMessage(nil)
+	if !errors.Is(err, errInvalidFrame) || msg != nil {
+		t.Fatalf("msg = %q err = %v, want invalid-frame error", msg, err)
+	}
+}
+
+func TestFraming_BERSplitAndPipelined(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	r := newReader(server, &parser.Framing{Mode: "ber"})
+	first := framingTestBERTLV(0x30, bytes.Repeat([]byte{0x41}, 130))
+	second := framingTestBERTLV(0x30, []byte("second"))
+	combined := append(append([]byte(nil), first...), second...)
+	writeThenClose(t, client, 20*time.Millisecond, combined[:2], combined[2:50], combined[50:])
+
+	gotFirst, err := r.nextMessage(nil)
+	if err != nil || !bytes.Equal(gotFirst, first) {
+		t.Fatalf("first BER frame len=%d err=%v", len(gotFirst), err)
+	}
+	gotSecond, err := r.nextMessage(nil)
+	if err != nil || !bytes.Equal(gotSecond, second) {
+		t.Fatalf("second BER frame len=%d err=%v", len(gotSecond), err)
+	}
+}
+
+func TestFraming_BERRejectsIndefiniteLength(t *testing.T) {
+	r := &connReader{framing: &parser.Framing{Mode: "ber"}, buf: []byte{0x30, 0x80}}
+	msg, err := r.nextMessage(nil)
+	if !errors.Is(err, errInvalidFrame) || len(msg) != 2 {
+		t.Fatalf("msg=%x err=%v", msg, err)
 	}
 }
 
@@ -212,7 +275,7 @@ func TestOpportunistic_AccumulatesUntilMatch(t *testing.T) {
 	// Matches only the complete 8-byte message.
 	cmds := []parser.Command{{Regex: regexp.MustCompile(`(?s)^.{8}$`)}}
 
-	writeThenClose(t, client, 30*time.Millisecond, []byte("ABCD"), []byte("EFGH"))
+	writeThenClose(t, client, accumulationGrace+50*time.Millisecond, []byte("ABCD"), []byte("EFGH"))
 	msg, err := r.nextMessage(cmds)
 	if err != nil {
 		t.Fatalf("nextMessage err: %v", err)

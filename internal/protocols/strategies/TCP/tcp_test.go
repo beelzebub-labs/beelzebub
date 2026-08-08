@@ -72,6 +72,20 @@ func TestHandleTCPConnection_NoCommands_Legacy(t *testing.T) {
 	assert.Equal(t, tracer.Stateless.String(), events[0].Status)
 }
 
+func TestServeStateless_PreservesDataReturnedWithEOF(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	conn := &eofWithDataConn{Conn: server, data: []byte("final payload")}
+	mt := &mockTracer{}
+
+	serveStateless(conn, parser.BeelzebubServiceConfiguration{Description: "test"}, mt, "127.0.0.1", "1234")
+
+	events := mt.snapshot()
+	if len(events) != 1 || events[0].Command != "final payload" {
+		t.Fatalf("events = %#v, want EOF-adjacent payload preserved", events)
+	}
+}
+
 func TestHandleTCPConnection_WithBanner(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
@@ -240,6 +254,55 @@ func TestTCPStrategy_InitMultipleListeners(t *testing.T) {
 	}
 	if err := strategy.Shutdown(); err != nil {
 		t.Fatalf("Shutdown: %v", err)
+	}
+}
+
+func TestTCPStrategy_ShutdownClosesActiveConnections(t *testing.T) {
+	strategy := &TCPStrategy{}
+	mt := &mockTracer{}
+	servConf := parser.BeelzebubServiceConfiguration{
+		Address: "127.0.0.1:0",
+		Commands: []parser.Command{{
+			Regex: regexp.MustCompile(`^never$`),
+		}},
+	}
+	if err := strategy.Init(servConf, mt); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	addr := strategy.listeners[0].Addr().String()
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		strategy.activeMu.Lock()
+		active := len(strategy.activeConns)
+		strategy.activeMu.Unlock()
+		if active == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("connection was not registered as active")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- strategy.Shutdown() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown blocked with an active connection")
+	}
+	buf := make([]byte, 1)
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatal("active connection remained open after Shutdown")
 	}
 }
 

@@ -1,157 +1,187 @@
 package TCP
 
 import (
+	"context"
+	"errors"
 	"testing"
 
-	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
-	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
+	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
 )
 
-// mockWirePlugin demonstrates the generic contract: a wire-plugin may rewrite
-// the outbound response and enrich the trace event's Metadata.
-type mockWirePlugin struct{}
-
-func (mockWirePlugin) OnExchange(ctx *WireContext) {
-	*ctx.Response = []byte("rewritten")
-	if ctx.Event.Metadata == nil {
-		ctx.Event.Metadata = map[string]string{}
-	}
-	ctx.Event.Metadata["mock"] = ctx.Command.Name
+type testWirePlugin struct {
+	name     string
+	onWire   func(*plugin.WireContext) error
+	onClose  func(string) error
+	canClose bool
 }
 
-func setWirePluginsForTest(t *testing.T, plugins []registeredWirePlugin) {
+func (p *testWirePlugin) Metadata() plugin.Metadata {
+	return plugin.Metadata{Name: p.name, Version: "test"}
+}
+
+func (p *testWirePlugin) OnExchange(_ context.Context, exchange *plugin.WireContext) error {
+	if p.onWire == nil {
+		return nil
+	}
+	return p.onWire(exchange)
+}
+
+type testSessionWirePlugin struct{ *testWirePlugin }
+
+func (p *testSessionWirePlugin) OnSessionClose(_ context.Context, connID string) error {
+	if p.onClose == nil {
+		return nil
+	}
+	return p.onClose(connID)
+}
+
+func registerTestWire(t *testing.T, p plugin.WirePlugin) string {
 	t.Helper()
-	wirePluginsMu.Lock()
-	saved := append([]registeredWirePlugin(nil), wirePlugins...)
-	wirePlugins = plugins
-	wirePluginsMu.Unlock()
-	t.Cleanup(func() {
-		wirePluginsMu.Lock()
-		defer wirePluginsMu.Unlock()
-		wirePlugins = saved
-	})
+	name := "tcp-wire-" + t.Name()
+	switch typed := p.(type) {
+	case *testWirePlugin:
+		typed.name = name
+	case *testSessionWirePlugin:
+		typed.name = name
+	default:
+		t.Fatalf("unsupported test plugin %T", p)
+	}
+	plugin.Register(p)
+	return name
 }
 
-// TestWirePlugin_SeamDispatch verifies the generic seam: registered wire-plugins
-// run on each exchange and can mutate both the response bytes and the event.
-// This exercises the extension point independently of any protocol.
 func TestWirePlugin_SeamDispatch(t *testing.T) {
-	setWirePluginsForTest(t, nil)
-
-	RegisterWirePlugin("mock", mockWirePlugin{})
-
-	resp := []byte("original")
-	ev := &tracer.Event{}
-	runWirePlugins(&WireContext{
-		SessionKey: "s1",
-		Command:    &parser.Command{Name: "demo"},
-		Request:    []byte("req"),
-		Response:   &resp,
-		Event:      ev,
-	})
-
-	if string(resp) != "rewritten" {
-		t.Errorf("response = %q, want \"rewritten\" (wire-plugin did not mutate response)", resp)
+	p := &testWirePlugin{onWire: func(exchange *plugin.WireContext) error {
+		exchange.Response = []byte("rewritten")
+		if exchange.Metadata == nil {
+			exchange.Metadata = map[string]string{}
+		}
+		exchange.Metadata["mock"] = exchange.Command.Name
+		return nil
+	}}
+	name := registerTestWire(t, p)
+	exchange := &plugin.WireContext{
+		Command:  plugin.WireCommand{Name: "demo"},
+		Request:  []byte("req"),
+		Response: []byte("original"),
 	}
-	if ev.Metadata["mock"] != "demo" {
-		t.Errorf("Metadata[mock] = %q, want \"demo\" (wire-plugin did not enrich event)", ev.Metadata["mock"])
+
+	runWirePlugins(context.Background(), []string{name}, exchange)
+
+	if string(exchange.Response) != "rewritten" {
+		t.Errorf("response = %q, want rewritten", exchange.Response)
 	}
-}
-
-// TestWirePlugin_EmptyRegistryIsNoop verifies that with no wire-plugins
-// registered the dispatch is a harmless no-op (the default public build).
-func TestWirePlugin_EmptyRegistryIsNoop(t *testing.T) {
-	setWirePluginsForTest(t, nil)
-
-	resp := []byte("unchanged")
-	ev := &tracer.Event{}
-	runWirePlugins(&WireContext{
-		SessionKey: "s2",
-		Command:    &parser.Command{Name: "x"},
-		Response:   &resp,
-		Event:      ev,
-	})
-
-	if string(resp) != "unchanged" {
-		t.Errorf("response mutated by empty registry: %q", resp)
-	}
-	if ev.Metadata != nil {
-		t.Errorf("Metadata set by empty registry: %v", ev.Metadata)
+	if exchange.Metadata["mock"] != "demo" {
+		t.Errorf("Metadata[mock] = %q, want demo", exchange.Metadata["mock"])
 	}
 }
 
-// funcWirePlugin adapts a func to the WirePlugin interface for tests.
-type funcWirePlugin func(*WireContext)
-
-func (f funcWirePlugin) OnExchange(ctx *WireContext) { f(ctx) }
-
-// TestWirePlugin_PerServiceSelection verifies a service only runs the wire-plugins
-// named in its config, and runs all of them when the list is empty.
-func TestWirePlugin_PerServiceSelection(t *testing.T) {
-	run := func(enabled []string) []string {
-		var ran []string
-		setWirePluginsForTest(t, []registeredWirePlugin{
-			{name: "a", plugin: funcWirePlugin(func(*WireContext) { ran = append(ran, "a") })},
-			{name: "b", plugin: funcWirePlugin(func(*WireContext) { ran = append(ran, "b") })},
-		})
-		resp := []byte("x")
-		runWirePlugins(&WireContext{
-			Command:       &parser.Command{Name: "c"},
-			Response:      &resp,
-			Event:         &tracer.Event{},
-			ServiceConfig: parser.BeelzebubServiceConfiguration{WirePlugins: enabled},
-		})
-		return ran
-	}
-
-	if got := run([]string{"b"}); len(got) != 1 || got[0] != "b" {
-		t.Errorf("selection [b] ran %v, want [b]", got)
-	}
-	if got := run(nil); len(got) != 2 {
-		t.Errorf("empty selection ran %v, want both", got)
+func TestWirePlugin_EmptySelectionIsNoop(t *testing.T) {
+	exchange := &plugin.WireContext{Response: []byte("unchanged")}
+	runWirePlugins(context.Background(), nil, exchange)
+	if string(exchange.Response) != "unchanged" || exchange.Metadata != nil {
+		t.Fatalf("empty selection changed exchange: %#v", exchange)
 	}
 }
 
-// TestWirePlugin_SessionCloseRespectsSelection verifies OnSessionClose is only
-// dispatched to plugins enabled for the service.
+func TestWirePlugin_UsesConfigurationOrder(t *testing.T) {
+	var ran []string
+	a := &testWirePlugin{onWire: func(*plugin.WireContext) error {
+		ran = append(ran, "a")
+		return nil
+	}}
+	b := &testWirePlugin{onWire: func(*plugin.WireContext) error {
+		ran = append(ran, "b")
+		return nil
+	}}
+	nameA := registerTestWire(t, a)
+	nameB := nameA + "-b"
+	b.name = nameB
+	plugin.Register(b)
+
+	runWirePlugins(context.Background(), []string{nameB, nameA}, &plugin.WireContext{})
+	if len(ran) != 2 || ran[0] != "b" || ran[1] != "a" {
+		t.Fatalf("plugins ran in order %v, want [b a]", ran)
+	}
+}
+
 func TestWirePlugin_SessionCloseRespectsSelection(t *testing.T) {
-	sa := &sessionAwarePlugin{}
-	other := &sessionAwarePlugin{}
-	setWirePluginsForTest(t, []registeredWirePlugin{
-		{name: "wanted", plugin: sa},
-		{name: "skip", plugin: other},
-	})
+	var closed []string
+	wanted := &testSessionWirePlugin{testWirePlugin: &testWirePlugin{onClose: func(connID string) error {
+		closed = append(closed, connID)
+		return nil
+	}}}
+	wantedName := registerTestWire(t, wanted)
+	skipped := &testSessionWirePlugin{testWirePlugin: &testWirePlugin{onClose: func(string) error {
+		closed = append(closed, "unexpected")
+		return nil
+	}}}
+	skipped.name = wantedName + "-skipped"
+	plugin.Register(skipped)
 
-	closeWireSessions("conn-1", []string{"wanted"})
-
-	if len(sa.closed) != 1 || sa.closed[0] != "conn-1" {
-		t.Errorf("enabled plugin closed = %v, want [conn-1]", sa.closed)
-	}
-	if len(other.closed) != 0 {
-		t.Errorf("disabled plugin should not be closed, got %v", other.closed)
+	closeWireSessions(context.Background(), "conn-1", []string{wantedName})
+	if len(closed) != 1 || closed[0] != "conn-1" {
+		t.Fatalf("session close calls = %v, want [conn-1]", closed)
 	}
 }
 
-// sessionAwarePlugin records OnSessionClose calls to verify the teardown hook.
-type sessionAwarePlugin struct{ closed []string }
+func TestWirePlugin_ErrorAndPanicAreIsolated(t *testing.T) {
+	errPlugin := &testWirePlugin{onWire: func(exchange *plugin.WireContext) error {
+		exchange.Response = []byte("error mutation")
+		exchange.Metadata["error"] = "leaked"
+		return errors.New("expected")
+	}}
+	errName := registerTestWire(t, errPlugin)
+	panicPlugin := &testWirePlugin{onWire: func(exchange *plugin.WireContext) error {
+		exchange.Response = []byte("panic mutation")
+		exchange.Metadata["panic"] = "leaked"
+		panic("expected")
+	}}
+	panicPlugin.name = errName + "-panic"
+	plugin.Register(panicPlugin)
+	ran := false
+	after := &testWirePlugin{onWire: func(exchange *plugin.WireContext) error {
+		ran = true
+		if string(exchange.Response) != "original" || len(exchange.Metadata) != 0 {
+			t.Fatalf("failed plugin mutations leaked into next hook: %#v", exchange)
+		}
+		return nil
+	}}
+	after.name = errName + "-after"
+	plugin.Register(after)
 
-func (p *sessionAwarePlugin) OnExchange(_ *WireContext) {}
-func (p *sessionAwarePlugin) OnSessionClose(sessionKey string) {
-	p.closed = append(p.closed, sessionKey)
+	exchange := &plugin.WireContext{Request: []byte("request"), Response: []byte("original"), Metadata: map[string]string{}}
+	runWirePlugins(context.Background(), []string{errName, panicPlugin.name, after.name}, exchange)
+	if !ran {
+		t.Fatal("plugin after failures did not run")
+	}
+	if string(exchange.Response) != "original" || len(exchange.Metadata) != 0 {
+		t.Fatalf("failed plugin mutations were committed: %#v", exchange)
+	}
 }
 
-// TestWirePlugin_SessionClose verifies closeWireSessions calls OnSessionClose
-// on SessionAware plugins (and is a harmless no-op for plain ones).
-func TestWirePlugin_SessionClose(t *testing.T) {
-	sa := &sessionAwarePlugin{}
-	setWirePluginsForTest(t, []registeredWirePlugin{
-		{name: "mock", plugin: mockWirePlugin{}}, // NOT SessionAware
-		{name: "sa", plugin: sa},
-	})
+func TestWirePlugin_ImmutableFieldsAndReturnedAliasesAreIsolated(t *testing.T) {
+	response := []byte("rewritten")
+	p := &testWirePlugin{onWire: func(exchange *plugin.WireContext) error {
+		exchange.Request[0] = 'X'
+		exchange.Command.Name = "changed"
+		exchange.Response = response
+		exchange.Metadata = map[string]string{"result": "ok"}
+		return nil
+	}}
+	name := registerTestWire(t, p)
+	exchange := &plugin.WireContext{
+		Request:  []byte("request"),
+		Response: []byte("original"),
+		Command:  plugin.WireCommand{Name: "original"},
+	}
 
-	closeWireSessions("TCP1.2.3.4", nil)
-
-	if len(sa.closed) != 1 || sa.closed[0] != "TCP1.2.3.4" {
-		t.Errorf("OnSessionClose calls = %v, want [TCP1.2.3.4]", sa.closed)
+	runWirePlugins(context.Background(), []string{name}, exchange)
+	response[0] = 'X'
+	if string(exchange.Request) != "request" || exchange.Command.Name != "original" {
+		t.Fatalf("plugin changed immutable fields: %#v", exchange)
+	}
+	if string(exchange.Response) != "rewritten" || exchange.Metadata["result"] != "ok" {
+		t.Fatalf("mutable fields were not committed: %#v", exchange)
 	}
 }

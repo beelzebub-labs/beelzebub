@@ -90,17 +90,21 @@ type BeelzebubServiceConfiguration struct {
 	TLSCertPath            string    `yaml:"tlsCertPath" json:"tlsCertPath,omitempty"`
 	TLSKeyPath             string    `yaml:"tlsKeyPath" json:"tlsKeyPath,omitempty"`
 	// MaxHistory caps how many session history entries are kept for LLM context
-	// on interactive TCP sessions. Zero or negative means use the built-in
+	// on interactive TCP sessions. Zero means use the built-in
 	// default of 20 entries.
 	MaxHistory int `yaml:"maxHistory,omitempty" json:"maxHistory,omitempty"`
-	// Framing, when set, tells the TCP read loop how to delimit one message
-	// using a length-prefix field, so length-prefixed binary protocols are read
-	// one frame at a time (handling split reads and pipelined messages). When
-	// nil, the loop accumulates bytes opportunistically until a handler matches.
+	// Framing, when set, tells the TCP read loop how to delimit one message,
+	// so binary protocols are read one frame at a time (handling split reads and
+	// pipelined messages). When nil, the loop accumulates bytes opportunistically
+	// until a handler matches.
 	Framing *Framing `yaml:"framing,omitempty" json:"framing,omitempty"`
+	// WireEncoding controls how TCP regexes and static handlers map strings to
+	// bytes. The zero value and "utf8" preserve the historical text behavior;
+	// "latin1" provides a one-rune-per-byte mapping for binary protocols.
+	WireEncoding string `yaml:"wireEncoding,omitempty" json:"wireEncoding,omitempty"`
 	// WirePlugins names the protocol wire-plugins this service should run (e.g.
-	// "vnc", "ntlm", "smb", "ldap"). Empty means run every registered plugin
-	// (backward compatible). Scoping plugins per service avoids, e.g., the NTLM
+	// "vnc", "ntlm", "smb", "ldap"). Empty means run no wire plugins.
+	// Scoping plugins per service avoids, e.g., the NTLM
 	// signature scanner running on unrelated text services.
 	WirePlugins []string `yaml:"wirePlugins,omitempty" json:"wirePlugins,omitempty"`
 	// TrustedProxies is a list of CIDRs (or bare IPs) of upstream proxies whose
@@ -128,15 +132,17 @@ func (bsc BeelzebubServiceConfiguration) HashCode() (string, error) {
 // The total message length is read from a big/little-endian integer field of
 // LengthSize bytes at LengthOffset; HeaderSize is the number of bytes before the
 // payload the length value refers to. If LengthIncludesHeader is true the length
-// field counts the header bytes as well (e.g. SMB/NetBIOS), otherwise the total
-// frame is HeaderSize + length (e.g. TPKT counts itself, TDS does too — tune per
-// protocol in the config).
+// field counts the header bytes as well (e.g. TPKT/TDS), otherwise the total
+// frame is HeaderSize + length. Tune these fields for the target protocol.
 type Framing struct {
-	LengthOffset         int  `yaml:"lengthOffset"`
-	LengthSize           int  `yaml:"lengthSize"`
-	HeaderSize           int  `yaml:"headerSize"`
-	BigEndian            bool `yaml:"bigEndian"`
-	LengthIncludesHeader bool `yaml:"lengthIncludesHeader"`
+	// Mode selects "length-prefix" (the default) or "ber". BER framing reads a
+	// complete top-level TLV and is suitable for LDAPMessage streams.
+	Mode                 string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	LengthOffset         int    `yaml:"lengthOffset" json:"lengthOffset,omitempty"`
+	LengthSize           int    `yaml:"lengthSize" json:"lengthSize,omitempty"`
+	HeaderSize           int    `yaml:"headerSize" json:"headerSize,omitempty"`
+	BigEndian            bool   `yaml:"bigEndian" json:"bigEndian,omitempty"`
+	LengthIncludesHeader bool   `yaml:"lengthIncludesHeader" json:"lengthIncludesHeader,omitempty"`
 }
 
 // Patch describes a binary patch to apply to a static handler response before
@@ -148,9 +154,9 @@ type Framing struct {
 // Additional patch types may be defined by wire-plugins and are interpreted
 // by those plugins rather than the generic engine.
 type Patch struct {
-	Type   string `yaml:"type"`
-	Offset int    `yaml:"offset"`
-	Length int    `yaml:"length"`
+	Type   string `yaml:"type" json:"type"`
+	Offset int    `yaml:"offset" json:"offset,omitempty"`
+	Length int    `yaml:"length" json:"length,omitempty"`
 }
 
 // Command is the struct that contains the configurations of the commands
@@ -165,6 +171,7 @@ type Command struct {
 	Name       string         `yaml:"name" json:"name,omitempty"`
 	CloseAfter bool           `yaml:"closeAfter" json:"closeAfter,omitempty"`
 	TLSUpgrade bool           `yaml:"tlsUpgrade" json:"tlsUpgrade,omitempty"`
+	TLSFraming *Framing       `yaml:"tlsFraming,omitempty" json:"tlsFraming,omitempty"`
 	Patches    []Patch        `yaml:"patches" json:"patches,omitempty"`
 	// BinaryOutput marks a plugin's output as raw (Latin-1 encoded) bytes rather
 	// than UTF-8 text, so it is written byte-for-byte like a static handler.

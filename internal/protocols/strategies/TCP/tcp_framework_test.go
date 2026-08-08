@@ -3,6 +3,7 @@ package TCP
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"io"
 	"net"
@@ -78,6 +79,15 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 	}
 	if cert == nil || len(cert.Certificate) == 0 {
 		t.Fatal("nil/empty certificate")
+	}
+	if cert.Leaf == nil || cert.Leaf.IsCA {
+		t.Fatal("TLS certificate must be a parsed end-entity certificate")
+	}
+	if cert.Leaf.KeyUsage != x509.KeyUsageDigitalSignature {
+		t.Fatalf("ECDSA key usage = %v, want digitalSignature only", cert.Leaf.KeyUsage)
+	}
+	if len(cert.Leaf.ExtKeyUsage) != 1 || cert.Leaf.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth {
+		t.Fatalf("extended key usage = %v, want serverAuth", cert.Leaf.ExtKeyUsage)
 	}
 	// Empty common name falls back to localhost (must still succeed).
 	if _, err := generateSelfSignedCert(""); err != nil {
@@ -210,6 +220,83 @@ func TestHandleTCPConnection_TLSUpgrade(t *testing.T) {
 	}
 }
 
+func TestTLSUpgradeDoesNotExtendAbsoluteDeadline(t *testing.T) {
+	server, client := net.Pipe()
+	defer client.Close()
+
+	cert, err := generateSelfSignedCert("deadline.test")
+	if err != nil {
+		t.Fatalf("generate certificate: %v", err)
+	}
+	session := &tcpSession{
+		servConf: parser.BeelzebubServiceConfiguration{DeadlineTimeoutSeconds: 1},
+		tlsState: &tlsCertificateState{cert: cert, commonName: "deadline.test"},
+		cutoff:   time.Now().Add(50 * time.Millisecond),
+	}
+
+	upgraded := make(chan bool, 1)
+	go func() {
+		defer server.Close()
+		_, ok := session.upgradeTLS(server)
+		upgraded <- ok
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	tlsClient := tls.Client(client, &tls.Config{InsecureSkipVerify: true})
+	_ = tlsClient.SetDeadline(time.Now().Add(time.Second))
+	if err := tlsClient.Handshake(); err == nil {
+		t.Fatal("TLS handshake succeeded after the connection's absolute deadline")
+	}
+	if ok := <-upgraded; ok {
+		t.Fatal("server extended the absolute deadline during TLS upgrade")
+	}
+}
+
+func TestTCPStrategy_UsesDistinctTLSCertificatePerService(t *testing.T) {
+	strategy := &TCPStrategy{}
+	tr := &vncTracer{}
+	for _, name := range []string{"ldap.example.invalid", "rdp.example.invalid"} {
+		if err := strategy.Init(parser.BeelzebubServiceConfiguration{
+			Address:    "127.0.0.1:0",
+			ServerName: name,
+			Commands: []parser.Command{{
+				Regex:      regexp.MustCompile(`^start$`),
+				Handler:    "ready",
+				TLSUpgrade: true,
+			}},
+		}, tr); err != nil {
+			t.Fatalf("Init %s: %v", name, err)
+		}
+	}
+	t.Cleanup(func() { _ = strategy.Shutdown() })
+
+	for i, wantName := range []string{"ldap.example.invalid", "rdp.example.invalid"} {
+		conn, err := net.DialTimeout("tcp", strategy.listeners[i].Addr().String(), time.Second)
+		if err != nil {
+			t.Fatalf("dial %s: %v", wantName, err)
+		}
+		if _, err := conn.Write([]byte("start")); err != nil {
+			t.Fatalf("write %s: %v", wantName, err)
+		}
+		response := make([]byte, len("ready"))
+		if _, err := io.ReadFull(conn, response); err != nil {
+			t.Fatalf("read %s: %v", wantName, err)
+		}
+		tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true})
+		if err := tlsConn.Handshake(); err != nil {
+			t.Fatalf("handshake %s: %v", wantName, err)
+		}
+		certificates := tlsConn.ConnectionState().PeerCertificates
+		if len(certificates) != 1 {
+			t.Fatalf("service %d presented %d certificates, want 1", i, len(certificates))
+		}
+		if gotName := certificates[0].Subject.CommonName; gotName != wantName {
+			t.Fatalf("service %d certificate CN = %q, want %q", i, gotName, wantName)
+		}
+		tlsConn.Close()
+	}
+}
+
 func TestHandleTCPConnection_PluginDispatch(t *testing.T) {
 	addr, tr := startCfg(t, parser.BeelzebubServiceConfiguration{
 		Commands: []parser.Command{{
@@ -245,15 +332,14 @@ func TestHandleTCPConnection_PluginDispatch(t *testing.T) {
 }
 
 func TestCurrentTLSCert_RegeneratesOnExpiry(t *testing.T) {
-	s := &TCPStrategy{tlsCN: "DC01.company.local"}
 	cert, err := generateSelfSignedCert("DC01.company.local")
 	if err != nil {
 		t.Fatalf("gen: %v", err)
 	}
 	cert.Leaf.NotAfter = time.Now().Add(-time.Hour) // force expired
-	s.tlsCert = cert
+	state := &tlsCertificateState{cert: cert, commonName: "DC01.company.local"}
 
-	got := s.currentTLSCert()
+	got := state.current()
 	if got == nil {
 		t.Fatal("nil cert")
 	}
@@ -261,8 +347,42 @@ func TestCurrentTLSCert_RegeneratesOnExpiry(t *testing.T) {
 		t.Error("expected a regenerated, non-expired certificate")
 	}
 	// a still-valid cert must be returned unchanged (not regenerated)
-	if again := s.currentTLSCert(); again != got {
+	if again := state.current(); again != got {
 		t.Error("valid cert should not be regenerated")
+	}
+}
+
+func TestTCPStaticResponsePreservesUTF8ByDefault(t *testing.T) {
+	addr, _ := startCfg(t, parser.BeelzebubServiceConfiguration{
+		Commands: []parser.Command{{
+			Regex:   regexp.MustCompile(`^caffè$`),
+			Handler: "già pronto",
+		}},
+	})
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("caffè\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, 32)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got := string(buf[:n]); got != "già pronto" {
+		t.Fatalf("UTF-8 response = %q", got)
+	}
+}
+
+func TestTCPHistoryKeySeparatesServices(t *testing.T) {
+	host := "192.0.2.10"
+	ldap := tcpHistoryKey(parser.BeelzebubServiceConfiguration{Address: ":389"}, host)
+	smb := tcpHistoryKey(parser.BeelzebubServiceConfiguration{Address: ":445"}, host)
+	if ldap == smb {
+		t.Fatalf("LDAP and SMB history keys collide: %q", ldap)
 	}
 }
 

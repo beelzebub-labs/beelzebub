@@ -52,6 +52,22 @@ func TestTCPValidator_NoTLSSet(t *testing.T) {
 	assert.Empty(t, issues)
 }
 
+func TestTCPValidator_WirePluginRegistry(t *testing.T) {
+	v := &TCPValidator{}
+
+	issues := v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "tcp", WirePlugins: []string{"vnc"}})
+	assert.Empty(t, issues)
+
+	issues = v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "tcp", WirePlugins: []string{"missing-wire-plugin"}})
+	assert.Len(t, issues, 1)
+	assert.Equal(t, parser.LevelError, issues[0].Level)
+	assert.Contains(t, issues[0].Message, "not registered")
+
+	issues = v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "tcp", WirePlugins: []string{"vnc", "vnc"}})
+	assert.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Message, "declared more than once")
+}
+
 func TestTCPValidator_OnlyCert(t *testing.T) {
 	v := &TCPValidator{}
 	config := parser.BeelzebubServiceConfiguration{

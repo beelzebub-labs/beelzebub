@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -57,6 +58,23 @@ func TestBuildBeelzebub_BeelzebubCloud(t *testing.T) {
 
 	// Verify the strategy is callable without panicking.
 	d.beelzebubCloudStrategy(tracer.Event{})
+}
+
+func TestBuildBeelzebub_RollsBackLoggerWhenRabbitMQFails(t *testing.T) {
+	b := NewBuilder()
+	d := NewDirector(b)
+	coreConfig := &parser.BeelzebubCoreConfigurations{}
+	coreConfig.Core.Logging.LogsPath = filepath.Join(t.TempDir(), "beelzebub.log")
+	coreConfig.Core.Tracings.RabbitMQ.Enabled = true
+	coreConfig.Core.Tracings.RabbitMQ.URI = "invalid-uri"
+
+	result, err := d.BuildBeelzebub(coreConfig, nil)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Nil(t, b.logsFile)
+	assert.Nil(t, b.rabbitMQChannel)
+	assert.Nil(t, b.rabbitMQConnection)
 }
 
 func TestStandardOutStrategy(t *testing.T) {

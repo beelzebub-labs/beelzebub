@@ -205,7 +205,7 @@ func validatePluginConfig(svc BeelzebubServiceConfiguration) []ValidationIssue {
 	if (svc.Protocol == "tcp" || svc.Protocol == "telnet" || svc.Protocol == "ssh") && svc.DeadlineTimeoutSeconds == 0 && len(svc.Commands) > 0 {
 		issues = append(issues, ValidationIssue{
 			Level:   LevelWarning,
-			Message: "deadlineTimeoutSeconds is not set, connections may be closed immediately",
+			Message: "deadlineTimeoutSeconds is not set, connections have no deadline",
 		})
 	}
 

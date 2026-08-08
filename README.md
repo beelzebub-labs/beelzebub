@@ -57,7 +57,7 @@ Beelzebub is an open-source deception runtime that deploys adaptive, LLM-powered
 - **Adaptive deception engine**: LLM integration (OpenAI, Ollama) generates contextually accurate responses in real time, keeping attackers engaged long enough to collect actionable TTPs
 - **Low-code service definition**: YAML-based configuration with regex command matching — no custom code required to deploy a new decoy service
 - **Multi-protocol coverage**: SSH, HTTP, TCP, TELNET, MCP  from infrastructure targets to AI agent attack surfaces
-- **Extensible plugin system**: Implement the `CommandPlugin` or `HTTPPlugin` interface and register via `init()`  no core changes required
+- **Extensible plugin system**: Implement `CommandPlugin`, `HTTPPlugin`, or the binary TCP `WirePlugin` interface and register via `init()` with no core changes required
 - **Full observability stack**: Prometheus metrics, RabbitMQ event streaming
 - **Production-ready runtime**: Docker, Kubernetes (Helm), graceful shutdown, per-service memory limits
 
@@ -159,7 +159,33 @@ type HTTPPlugin interface {
     Metadata() Metadata
     HandleHTTP(r *http.Request) HTTPResponse
 }
+
+// WirePlugin observes and may rewrite matched binary TCP exchanges.
+type WirePlugin interface {
+    Metadata() Metadata
+    OnExchange(ctx context.Context, exchange *WireContext) error
+}
+
+// WireSessionCloser is optional and releases per-connection plugin state.
+type WireSessionCloser interface {
+    OnSessionClose(ctx context.Context, connID string) error
+}
 ```
+
+TCP services enable installed wire plugins explicitly and in execution order:
+
+```yaml
+wirePlugins:
+  - vnc
+```
+
+`WireContext` exposes raw request/response bytes, the matched command, service
+identity, history, connection ID, and event metadata without exposing internal
+runtime packages. Hooks can run concurrently across connections; only response,
+command output, and metadata changes are committed, and only after a nil error.
+The shipped VNC service is the reference implementation: its
+wire plugin correlates each random challenge with the client's authentication
+response and records a John the Ripper-compatible value.
 
 ### Writing a Plugin
 
