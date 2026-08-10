@@ -41,6 +41,10 @@ func (m *Manager) clone(ctx context.Context, src RepoSource, ref, dst string) er
 	}
 
 	if _, err := m.git(ctx, "", "clone", "--depth", "1", url, dst); err != nil {
+		if m.token == "" && !src.SSH && !src.Local && isGitHubHost(src.Host) {
+			return fmt.Errorf("cannot read %s/%s — if it is private, pass --token or set BEELZEBUB_GITHUB_TOKEN: %w",
+				src.Owner, src.Repo, err)
+		}
 		return err
 	}
 

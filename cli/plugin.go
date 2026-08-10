@@ -155,6 +155,15 @@ func calm(out io.Writer, err error) error {
 func printInstalled(out io.Writer, p pluginmgr.LockedPlugin) {
 	fmt.Fprintf(out, "%s Installed %s %s %s\n",
 		green("✓"), bold(p.Name), p.Version, dim("("+p.Module+" @ "+shortCommit(p.Commit)+")"))
+
+	if p.ConfigPath == "" {
+		return
+	}
+	kept := ""
+	if !p.ConfigNew {
+		kept = dim(" (kept)")
+	}
+	fmt.Fprintf(out, "  %s %s%s\n", dim("config:"), bold(p.ConfigPath), kept)
 }
 
 // finishInstall applies the newly wired plugins to the deployment (local build,
@@ -177,7 +186,7 @@ func finishInstall(cmd *cobra.Command, mgr pluginManager) error {
 	if mode == "docker" {
 		fmt.Fprintf(out, "%s Rebuilt the image and restarted the container.\n", green("✓"))
 	} else {
-		fmt.Fprintf(out, "%s Built ./beelzebub %s\n", green("✓"), dim("— restart it to load the change"))
+		fmt.Fprintf(out, "%s Built ./beelzebub %s\n", green("✓"), dim("— restart to load it"))
 	}
 
 	return nil

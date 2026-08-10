@@ -23,6 +23,9 @@ type LockedPlugin struct {
 	Ref        string `yaml:"ref,omitempty"`      // requested tag/branch/commit ("" = default branch)
 	Commit     string `yaml:"commit"`
 	Entrypoint string `yaml:"entrypoint,omitempty"`
+
+	ConfigPath string `yaml:"-"`
+	ConfigNew  bool   `yaml:"-"`
 }
 
 type LockFile struct {
