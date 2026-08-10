@@ -61,7 +61,7 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 			config: BeelzebubServiceConfiguration{
 				ApiVersion: "v1",
 				Protocol:   "http", Address: ":8080",
-				Commands: []Command{{RegexStr: ".*", Methods: []string{"GET", "POST"}, Handler: "ok"}},
+				Commands: []Command{{RegexStr: ".*", Methods: []string{"GET", "custom!#$%&'*+-.^_`|~"}, Handler: "ok"}},
 			},
 		},
 		{
@@ -231,6 +231,14 @@ func TestValidateConfigSchema_Invalid(t *testing.T) {
 				Commands: []Command{{RegexStr: ".*", Methods: []string{"GET", "GET"}, Handler: "ok"}},
 			},
 			msg: "equal",
+		},
+		{
+			name: "HTTP method with delimiter",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "http", Address: ":8080",
+				Commands: []Command{{RegexStr: ".*", Methods: []string{"GET/POST"}, Handler: "ok"}},
+			},
+			msg: "pattern",
 		},
 	}
 

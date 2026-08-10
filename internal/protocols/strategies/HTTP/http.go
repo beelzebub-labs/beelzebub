@@ -69,6 +69,7 @@ func newHTTPHandler(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tra
 			resp.StatusCode = http.StatusMethodNotAllowed
 			resp.Headers = []string{"Allow:" + strings.Join(allowedMethods, ", ")}
 			resp.Body = http.StatusText(http.StatusMethodNotAllowed)
+			traceRequest(request, tr, parser.Command{}, servConf.Description, "", servConf.TrustedProxiesNets)
 		} else {
 			// If none of the main commands matched, and we have a fallback command configured, process it here.
 			// The regexp is ignored for fallback commands, as they are catch-all for any request.

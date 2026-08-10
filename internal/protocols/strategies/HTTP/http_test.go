@@ -606,14 +606,16 @@ func TestHTTPHandler_MethodRouting(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(tt.method, tt.path, nil)
+			mt := &mockTracer{}
 			newHTTPHandler(parser.BeelzebubServiceConfiguration{
 				Commands:        tt.commands,
 				FallbackCommand: tt.fallback,
-			}, &mockTracer{}).ServeHTTP(recorder, request)
+			}, mt).ServeHTTP(recorder, request)
 
 			assert.Equal(t, tt.wantStatus, recorder.Code)
 			assert.Equal(t, tt.wantBody, recorder.Body.String())
 			assert.Equal(t, tt.wantAllow, recorder.Header().Get("Allow"))
+			assert.Len(t, mt.events, 1)
 		})
 	}
 }

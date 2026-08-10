@@ -13,7 +13,7 @@
             "properties": {
               "methods": {
                 "type": "array",
-                "items": { "type": "string", "minLength": 1 },
+                "items": { "type": "string", "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$" },
                 "uniqueItems": true
               }
             }
