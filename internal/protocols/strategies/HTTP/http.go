@@ -29,7 +29,32 @@ type httpResponse struct {
 func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
 	serverMux := http.NewServeMux()
 
-	serverMux.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
+	serverMux.HandleFunc("/", newHTTPHandler(servConf, tr))
+	go func() {
+		var err error
+		// Launch a TLS supporting server if we are supplied a TLS Key and Certificate.
+		// If relative paths are supplied, they are relative to the CWD of the binary.
+		// The can be self-signed, only the client will validate this (or not).
+		if servConf.TLSKeyPath != "" && servConf.TLSCertPath != "" {
+			err = http.ListenAndServeTLS(servConf.Address, servConf.TLSCertPath, servConf.TLSKeyPath, serverMux)
+		} else {
+			err = http.ListenAndServe(servConf.Address, serverMux)
+		}
+		if err != nil {
+			log.Errorf("error during init HTTP Protocol: %v", err)
+			return
+		}
+	}()
+
+	log.WithFields(log.Fields{
+		"port":     servConf.Address,
+		"commands": len(servConf.Commands),
+	}).Infof("Init service: %s", servConf.Description)
+	return nil
+}
+
+func newHTTPHandler(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) http.HandlerFunc {
+	return func(responseWriter http.ResponseWriter, request *http.Request) {
 		var resp httpResponse
 		var err error
 		command, allowedMethods := matchHTTPCommand(servConf.Commands, request)
@@ -59,29 +84,7 @@ func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfigurat
 		}
 		setResponseHeaders(responseWriter, resp.Headers, resp.StatusCode)
 		fmt.Fprint(responseWriter, resp.Body)
-
-	})
-	go func() {
-		var err error
-		// Launch a TLS supporting server if we are supplied a TLS Key and Certificate.
-		// If relative paths are supplied, they are relative to the CWD of the binary.
-		// The can be self-signed, only the client will validate this (or not).
-		if servConf.TLSKeyPath != "" && servConf.TLSCertPath != "" {
-			err = http.ListenAndServeTLS(servConf.Address, servConf.TLSCertPath, servConf.TLSKeyPath, serverMux)
-		} else {
-			err = http.ListenAndServe(servConf.Address, serverMux)
-		}
-		if err != nil {
-			log.Errorf("error during init HTTP Protocol: %v", err)
-			return
-		}
-	}()
-
-	log.WithFields(log.Fields{
-		"port":     servConf.Address,
-		"commands": len(servConf.Commands),
-	}).Infof("Init service: %s", servConf.Description)
-	return nil
+	}
 }
 
 func matchHTTPCommand(commands []parser.Command, request *http.Request) (*parser.Command, []string) {

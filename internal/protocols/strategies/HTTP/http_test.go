@@ -524,56 +524,80 @@ func TestTraceRequest_RemoteAddr_IPv6WithoutPort(t *testing.T) {
 	assert.Equal(t, "2001:db8::42", ev.RemoteAddr)
 }
 
-func TestMatchHTTPCommand(t *testing.T) {
-	commands := []parser.Command{
-		{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodGet}, Handler: "get"},
-		{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodPost}, Handler: "post"},
-		{Regex: regexp.MustCompile(`^/open$`), Handler: "open"},
-	}
+func TestHTTPHandler_MethodRouting(t *testing.T) {
 	tests := []struct {
-		name        string
-		method      string
-		path        string
-		wantHandler string
-		wantAllow   []string
+		name       string
+		method     string
+		path       string
+		commands   []parser.Command
+		fallback   parser.Command
+		wantStatus int
+		wantBody   string
+		wantAllow  string
 	}{
 		{
-			name:        "later command accepts method",
-			method:      http.MethodPost,
-			path:        "/same",
-			wantHandler: "post",
+			name:       "allowed method",
+			method:     http.MethodPost,
+			path:       "/api/generate",
+			commands:   []parser.Command{{Regex: regexp.MustCompile(`^/api/generate$`), Methods: []string{http.MethodPost}, Handler: "generated", StatusCode: http.StatusOK}},
+			wantStatus: http.StatusOK,
+			wantBody:   "generated",
 		},
 		{
-			name:        "missing methods accepts every method",
-			method:      http.MethodPatch,
-			path:        "/open",
-			wantHandler: "open",
+			name:       "missing list accepts every method",
+			method:     http.MethodPatch,
+			path:       "/open",
+			commands:   []parser.Command{{Regex: regexp.MustCompile(`^/open$`), Handler: "open", StatusCode: http.StatusOK}},
+			wantStatus: http.StatusOK,
+			wantBody:   "open",
 		},
 		{
-			name:      "known path rejects method",
-			method:    http.MethodDelete,
-			path:      "/same",
-			wantAllow: []string{http.MethodGet, http.MethodPost},
+			name:   "later command accepts method",
+			method: http.MethodPost,
+			path:   "/same",
+			commands: []parser.Command{
+				{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodGet}, Handler: "get", StatusCode: http.StatusOK},
+				{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodPost}, Handler: "post", StatusCode: http.StatusCreated},
+			},
+			wantStatus: http.StatusCreated,
+			wantBody:   "post",
 		},
 		{
-			name:   "unknown path has no allowed methods",
-			method: http.MethodGet,
-			path:   "/missing",
+			name:   "known URL rejects method",
+			method: http.MethodDelete,
+			path:   "/same",
+			commands: []parser.Command{
+				{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodGet, http.MethodPost}, Handler: "wrong", StatusCode: http.StatusOK},
+				{Regex: regexp.MustCompile(`^/same$`), Methods: []string{http.MethodPost}, Handler: "wrong", StatusCode: http.StatusOK},
+			},
+			fallback:   parser.Command{Handler: "fallback", StatusCode: http.StatusNotFound},
+			wantStatus: http.StatusMethodNotAllowed,
+			wantBody:   http.StatusText(http.StatusMethodNotAllowed),
+			wantAllow:  "GET, POST",
+		},
+		{
+			name:       "unknown URL uses fallback",
+			method:     http.MethodGet,
+			path:       "/missing",
+			commands:   []parser.Command{{Regex: regexp.MustCompile(`^/known$`), Methods: []string{http.MethodGet}, Handler: "known", StatusCode: http.StatusOK}},
+			fallback:   parser.Command{Handler: "fallback", StatusCode: http.StatusNotFound},
+			wantStatus: http.StatusNotFound,
+			wantBody:   "fallback",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(tt.method, tt.path, nil)
-			command, allowedMethods := matchHTTPCommand(commands, request)
+			newHTTPHandler(parser.BeelzebubServiceConfiguration{
+				Commands:        tt.commands,
+				FallbackCommand: tt.fallback,
+			}, &mockTracer{}).ServeHTTP(recorder, request)
 
-			if tt.wantHandler == "" {
-				assert.Nil(t, command)
-			} else {
-				require.NotNil(t, command)
-				assert.Equal(t, tt.wantHandler, command.Handler)
-			}
-			assert.Equal(t, tt.wantAllow, allowedMethods)
+			assert.Equal(t, tt.wantStatus, recorder.Code)
+			assert.Equal(t, tt.wantBody, recorder.Body.String())
+			assert.Equal(t, tt.wantAllow, recorder.Header().Get("Allow"))
 		})
 	}
 }
