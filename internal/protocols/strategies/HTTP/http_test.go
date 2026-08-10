@@ -584,6 +584,22 @@ func TestHTTPHandler_MethodRouting(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 			wantBody:   "fallback",
 		},
+		{
+			name:       "matched plugin error returns internal server error",
+			method:     http.MethodGet,
+			path:       "/error",
+			commands:   []parser.Command{{Regex: regexp.MustCompile(`^/error$`), Plugin: plugins.LLMPluginName}},
+			wantStatus: http.StatusInternalServerError,
+			wantBody:   "500 Internal Server Error",
+		},
+		{
+			name:       "fallback plugin error returns internal server error",
+			method:     http.MethodGet,
+			path:       "/missing",
+			fallback:   parser.Command{Plugin: plugins.LLMPluginName},
+			wantStatus: http.StatusInternalServerError,
+			wantBody:   "500 Internal Server Error",
+		},
 	}
 
 	for _, tt := range tests {
