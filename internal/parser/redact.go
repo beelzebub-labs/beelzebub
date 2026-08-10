@@ -5,12 +5,9 @@ import (
 	"strings"
 )
 
-// redactedPlaceholder replaces secret values when a configuration struct is
-// formatted for logging.
 const redactedPlaceholder = "[REDACTED]"
 
-// redactSecret hides a secret value while preserving the distinction between
-// "configured" and "not configured", which debug logs still need to be useful.
+// redactSecret keeps the distinction between "configured" and "not configured".
 func redactSecret(value string) string {
 	if value == "" {
 		return ""
@@ -20,16 +17,10 @@ func redactSecret(value string) string {
 
 // Format redacts the OpenAI secret key whenever a Plugin is printed.
 //
-// Debug logging dumps the whole service configuration (see readConfigurationsServices),
-// so redaction belongs on the struct rather than at each call site: any future
-// log line that formats a configuration is then safe by construction.
-//
-// Implementing fmt.Formatter rather than fmt.Stringer preserves the caller's
-// verb and flags, so "%+v" keeps printing field names.
-//
-// This deliberately does not touch MarshalJSON: HashCode marshals the
-// configuration to detect drift, and redacting there would make the hash of
-// every secret-bearing configuration identical.
+// fmt.Formatter rather than fmt.Stringer so "%+v" keeps printing field names.
+// MarshalJSON is deliberately left alone: HashCode marshals the configuration
+// to detect drift, and redacting there would make every secret-bearing config
+// hash alike.
 func (plugin Plugin) Format(state fmt.State, verb rune) {
 	type plain Plugin
 
@@ -39,21 +30,17 @@ func (plugin Plugin) Format(state fmt.State, verb rune) {
 	fmt.Fprintf(state, fmt.FormatString(state, verb), redacted)
 }
 
-// sensitiveConfigKeys are the configuration keys whose values are secrets.
-//
-// Matching is exact rather than by substring on purpose: "passwordRegex" is not
-// a secret, and redacting it would make debug logs useless for the SSH
-// honeypot. A new secret-bearing configuration field must be added here.
+// sensitiveConfigKeys is matched exactly, not by substring: "passwordRegex" is
+// not a secret. New secret-bearing fields must be added here.
 var sensitiveConfigKeys = map[string]struct{}{
 	"openaisecretkey": {},
 	"auth-token":      {},
 	"authtoken":       {},
 }
 
-// Format redacts secrets whenever a service configuration is printed.
-//
-// The typed Plugin field is handled by Plugin.Format, but RawConfig holds the
-// original parsed document and would otherwise reprint every secret verbatim.
+// Format redacts secrets whenever a service configuration is printed. The typed
+// Plugin field is handled by Plugin.Format; RawConfig holds the original parsed
+// document and would otherwise reprint every secret verbatim.
 func (config BeelzebubServiceConfiguration) Format(state fmt.State, verb rune) {
 	type plain BeelzebubServiceConfiguration
 
@@ -63,8 +50,19 @@ func (config BeelzebubServiceConfiguration) Format(state fmt.State, verb rune) {
 	fmt.Fprintf(state, fmt.FormatString(state, verb), redacted)
 }
 
-// redactRawConfig returns a copy of a parsed configuration document with secret
-// values replaced. It copies rather than edits in place: the caller is only
+// redactSensitiveValue hides a secret whatever its type: configuration supplied
+// as JSON can hold a non-string scalar. Null means "not configured".
+func redactSensitiveValue(value any) any {
+	if value == nil {
+		return nil
+	}
+	if text, ok := value.(string); ok {
+		return redactSecret(text)
+	}
+	return redactedPlaceholder
+}
+
+// redactRawConfig copies rather than edits in place: the caller is only
 // formatting the configuration, and must not damage the one being served.
 func redactRawConfig(value any) any {
 	switch typed := value.(type) {
@@ -72,10 +70,8 @@ func redactRawConfig(value any) any {
 		result := make(map[string]any, len(typed))
 		for key, nested := range typed {
 			if _, sensitive := sensitiveConfigKeys[strings.ToLower(key)]; sensitive {
-				if text, ok := nested.(string); ok {
-					result[key] = redactSecret(text)
-					continue
-				}
+				result[key] = redactSensitiveValue(nested)
+				continue
 			}
 			result[key] = redactRawConfig(nested)
 		}

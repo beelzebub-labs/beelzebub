@@ -9,8 +9,7 @@ import (
 
 const fakeSecret = "sk-proj-000NOTAREALKEY111DEADBEEF222"
 
-// Debug logging formats the whole service configuration with the fmt verbs, so
-// every secret-bearing struct must redact itself when printed. See issue #349.
+// See issue #349: debug logging formats the whole service configuration.
 func TestPluginStringRedactsOpenAISecretKey(t *testing.T) {
 	plugin := Plugin{
 		OpenAISecretKey: fakeSecret,
@@ -22,7 +21,6 @@ func TestPluginStringRedactsOpenAISecretKey(t *testing.T) {
 
 	assert.NotContains(t, printed, fakeSecret)
 	assert.Contains(t, printed, redactedPlaceholder)
-	// Non-sensitive fields must survive, or debug logging loses its purpose.
 	assert.Contains(t, printed, "gpt-4o")
 	assert.Contains(t, printed, "openai")
 }
@@ -30,13 +28,12 @@ func TestPluginStringRedactsOpenAISecretKey(t *testing.T) {
 func TestPluginStringKeepsEmptySecretEmpty(t *testing.T) {
 	printed := fmt.Sprintf("%v", Plugin{LLMModel: "gpt-4o"})
 
-	// An unset key is not a secret; printing [REDACTED] would be misleading.
+	// An unset key is not a secret.
 	assert.NotContains(t, printed, redactedPlaceholder)
 	assert.Contains(t, printed, "gpt-4o")
 }
 
-// The leak in #349 is a whole-config dump, so redaction has to survive being
-// reached through the parent struct and through a pointer to it.
+// Redaction must survive the parent struct and a pointer to it.
 func TestServiceConfigurationStringRedactsNestedSecret(t *testing.T) {
 	config := &BeelzebubServiceConfiguration{
 		Protocol:    "http",
@@ -52,8 +49,7 @@ func TestServiceConfigurationStringRedactsNestedSecret(t *testing.T) {
 	}
 }
 
-// RawConfig keeps the original parsed document, so the secret survives there
-// even after the typed field is redacted. This is the path that actually leaked.
+// RawConfig keeps the original parsed document. This is the path that leaked.
 func TestServiceConfigurationStringRedactsRawConfig(t *testing.T) {
 	config := &BeelzebubServiceConfiguration{
 		Protocol: "http",
@@ -72,8 +68,7 @@ func TestServiceConfigurationStringRedactsRawConfig(t *testing.T) {
 	assert.Contains(t, printed, "gpt-4o")
 }
 
-// Redacting the printed copy must not mutate the configuration itself, or the
-// second log line would print a configuration whose key has been destroyed.
+// Formatting must not mutate the configuration being served.
 func TestRawConfigRedactionDoesNotMutateOriginal(t *testing.T) {
 	plugin := map[string]any{"openAISecretKey": fakeSecret}
 	config := &BeelzebubServiceConfiguration{
@@ -85,14 +80,55 @@ func TestRawConfigRedactionDoesNotMutateOriginal(t *testing.T) {
 	assert.Equal(t, fakeSecret, plugin["openAISecretKey"])
 }
 
-// passwordRegex is not a secret. Over-redaction would make debug logs useless
-// for the SSH honeypot, so key matching must be exact rather than substring.
+// passwordRegex is not a secret; key matching must be exact, not substring.
 func TestRawConfigKeepsNonSecretLookalikeKeys(t *testing.T) {
 	config := &BeelzebubServiceConfiguration{
 		RawConfig: map[string]any{"passwordRegex": "^(root|admin)$"},
 	}
 
 	assert.Contains(t, fmt.Sprintf("%v", config), "^(root|admin)$")
+}
+
+// Real documents nest secrets under lists, so the walk must descend slices.
+func TestRawConfigRedactsSecretNestedInList(t *testing.T) {
+	config := &BeelzebubServiceConfiguration{
+		RawConfig: map[string]any{
+			"services": []any{
+				map[string]any{"plugin": map[string]any{"openAISecretKey": fakeSecret}},
+				map[string]any{"description": "second service"},
+			},
+		},
+	}
+
+	printed := fmt.Sprintf("%v", config)
+
+	assert.NotContains(t, printed, fakeSecret)
+	assert.Contains(t, printed, "second service")
+}
+
+// Configuration supplied as JSON can hold a non-string scalar.
+func TestRawConfigRedactsNonStringSecret(t *testing.T) {
+	config := &BeelzebubServiceConfiguration{
+		RawConfig: map[string]any{
+			"plugin": map[string]any{"openAISecretKey": 1234567890},
+		},
+	}
+
+	printed := fmt.Sprintf("%v", config)
+
+	assert.NotContains(t, printed, "1234567890")
+	assert.Contains(t, printed, redactedPlaceholder)
+}
+
+// A null key is not configured, so it must not read as a secret.
+func TestRawConfigLeavesNullSecretAlone(t *testing.T) {
+	config := &BeelzebubServiceConfiguration{
+		RawConfig: map[string]any{
+			"plugin": map[string]any{"openAISecretKey": nil},
+		},
+	}
+
+	assert.NotContains(t, fmt.Sprintf("%v", config), redactedPlaceholder)
 }
 
 func TestBeelzebubCloudStringRedactsAuthToken(t *testing.T) {
@@ -109,8 +145,7 @@ func TestBeelzebubCloudStringRedactsAuthToken(t *testing.T) {
 	assert.Contains(t, printed, "https://cloud.example/events")
 }
 
-// HashCode feeds config-drift detection, so redaction must not reach the JSON
-// encoder: a redacted hash would change on every deployment that sets a key.
+// Redaction must not reach the JSON encoder that HashCode uses.
 func TestHashCodeIsUnaffectedByRedaction(t *testing.T) {
 	withSecret := BeelzebubServiceConfiguration{
 		Protocol: "http", Address: ":8080",
