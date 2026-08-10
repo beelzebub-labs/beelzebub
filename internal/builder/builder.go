@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/SSH"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/TCP"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
+	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -32,6 +34,8 @@ type Builder struct {
 	rabbitMQChannel                *amqp.Channel
 	rabbitMQConnection             *amqp.Connection
 	logsFile                       *os.File
+	startedServices                []plugin.ServicePlugin
+	servicesCancel                 context.CancelFunc
 }
 
 func (b *Builder) setTraceStrategy(traceStrategy tracer.Strategy) {
@@ -85,6 +89,15 @@ func (b *Builder) buildRabbitMQ(rabbitMQURI string) error {
 }
 
 func (b *Builder) Close() error {
+	// Stop background service plugins first so their goroutines drain before
+	// other teardown.
+	if b.servicesCancel != nil {
+		b.servicesCancel()
+	}
+	for _, svc := range b.startedServices {
+		svc.Stop()
+	}
+
 	// Close log file if it was opened
 	if b.logsFile != nil {
 		if err := b.logsFile.Close(); err != nil {
@@ -123,6 +136,18 @@ Deception runtime framework, happy hacking!`)
 			}
 		}
 	}()
+
+	// Start registered background service plugins.
+	svcCtx, cancel := context.WithCancel(context.Background())
+	b.servicesCancel = cancel
+	for _, svc := range plugin.Services() {
+		if err := svc.Start(svcCtx); err != nil {
+			log.Errorf("Error starting service plugin %q, continuing without it: %s",
+				svc.Metadata().Name, err.Error())
+			continue
+		}
+		b.startedServices = append(b.startedServices, svc)
+	}
 
 	// Init Protocol strategies
 	secureShellStrategy := &SSH.SSHStrategy{}

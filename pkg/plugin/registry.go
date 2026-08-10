@@ -54,6 +54,22 @@ func GetHTTP(name string) (HTTPPlugin, bool) {
 	return hp, ok
 }
 
+// Services returns sorted list of  all registered plugins that implement ServicePlugin
+func Services() []ServicePlugin {
+	mu.RLock()
+	defer mu.RUnlock()
+	var svcs []ServicePlugin
+	for _, p := range registry {
+		if sp, ok := p.(ServicePlugin); ok {
+			svcs = append(svcs, sp)
+		}
+	}
+	sort.Slice(svcs, func(i, j int) bool {
+		return svcs[i].Metadata().Name < svcs[j].Metadata().Name
+	})
+	return svcs
+}
+
 // List returns the metadata for all registered plugins, sorted by name.
 func List() []Metadata {
 	mu.RLock()

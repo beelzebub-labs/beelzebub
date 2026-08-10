@@ -41,6 +41,14 @@ type HTTPPlugin interface {
 	HandleHTTP(r *http.Request) HTTPResponse
 }
 
+// ServicePlugin is a long-running background service started alongside the
+// honeypot
+type ServicePlugin interface {
+	Plugin
+	Start(ctx context.Context) error
+	Stop()
+}
+
 // CommandRequest carries everything a CommandPlugin needs per invocation.
 type CommandRequest struct {
 	// Command is the raw input received from the attacker.

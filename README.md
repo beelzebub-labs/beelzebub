@@ -15,26 +15,42 @@ Beelzebub is an open-source deception runtime that deploys adaptive, LLM-powered
 
 ## Table of Contents
 
-- [Key Features](#key-features)
-- [Quick Start](#quick-start)
-- [CLI Reference](#cli-reference)
-- [Plugin System](#plugin-system)
-- [Observability](#observability)
-  - [Prometheus Metrics](#prometheus-metrics)
-  - [RabbitMQ Integration](#rabbitmq-integration)
-- [Testing](#testing)
-- [Code Quality](#code-quality)
-- [Contributing](#contributing)
-- [License](#license)
-- [Configuration Reference](#configuration-reference)
-  - [Core Configuration](#core-configuration)
-  - [Service Configuration](#service-configuration)
-- [Deception Services](#deception-services)
-  - [MCP Deception Service](#mcp-deception-service)
-  - [HTTP Deception Service](#http-deception-service)
-  - [SSH Deception Service](#ssh-deception-service)
-  - [TELNET Deception Service](#telnet-deception-service)
-  - [TCP Deception Service](#tcp-deception-service)
+- [Beelzebub](#beelzebub)
+  - [Table of Contents](#table-of-contents)
+  - [Key Features](#key-features)
+  - [LLM Deception Demo](#llm-deception-demo)
+  - [Quick Start](#quick-start)
+    - [Installer](#installer)
+    - [Local (Go)](#local-go)
+    - [Docker](#docker)
+    - [Using Helm (Kubernetes)](#using-helm-kubernetes)
+  - [CLI Reference](#cli-reference)
+    - [`beelzebub run`](#beelzebub-run)
+    - [`beelzebub validate`](#beelzebub-validate)
+    - [`beelzebub plugin`](#beelzebub-plugin)
+    - [`beelzebub version`](#beelzebub-version)
+  - [Plugin System](#plugin-system)
+    - [Interfaces](#interfaces)
+    - [Writing a Plugin](#writing-a-plugin)
+    - [Installing External Plugins](#installing-external-plugins)
+  - [Observability](#observability)
+    - [Prometheus Metrics](#prometheus-metrics)
+    - [RabbitMQ Integration](#rabbitmq-integration)
+  - [Testing](#testing)
+  - [Code Quality](#code-quality)
+  - [License](#license)
+  - [Contributing](#contributing)
+  - [Configuration Reference](#configuration-reference)
+    - [Core Configuration](#core-configuration)
+    - [Service Configuration](#service-configuration)
+  - [Deception Services](#deception-services)
+    - [MCP Deception Service](#mcp-deception-service)
+      - [How It Works](#how-it-works)
+    - [HTTP Deception Service](#http-deception-service)
+    - [SSH Deception Service](#ssh-deception-service)
+    - [TELNET Deception Service](#telnet-deception-service)
+    - [TCP Deception Service](#tcp-deception-service)
+  - [Supported By](#supported-by)
 
 ## Key Features
 
@@ -51,19 +67,27 @@ Beelzebub is an open-source deception runtime that deploys adaptive, LLM-powered
 
 ## Quick Start
 
-### Using Docker Compose
+### Installer
 
 ```bash
-docker compose build
-docker compose up -d
+./install.sh     # asks local or Docker, checks prerequisites, and starts it
 ```
 
-### Using Go
+Non-interactive: `./install.sh --local` or `./install.sh --docker`. Use
+`./install.sh --local --no-run` to install and build without starting the local
+runtime. On non-root hosts, local installation does not auto-start when the
+default configuration includes privileged ports.
+
+### Local (Go)
 
 ```bash
-go mod download
-go build -o beelzebub .
-./beelzebub run
+make start     # installs any declared plugins, compiles them in, and runs
+```
+
+### Docker
+
+```bash
+make docker    # builds an image with declared plugins baked in, then runs it
 ```
 
 ### Using Helm (Kubernetes)
@@ -93,18 +117,20 @@ Flags:
 
 ### `beelzebub validate`
 
-Parse and validate all configuration files without starting any services. Useful in CI pipelines.
+Parse and validate all configuration files without starting any services. Useful in CI pipelines. See [Configuration Validation](docs/configuration-validation.md) for the validation architecture and rule reference.
 
 ```bash
 beelzebub validate --conf-core ./configurations/beelzebub.yaml --conf-services ./configurations/services/
 ```
 
-### `beelzebub plugin list`
+### `beelzebub plugin`
 
-List all registered plugins available in the current build.
+Install, list, and remove plugins fetched from GitHub. See [Plugin System](#plugin-system).
 
 ```bash
+beelzebub plugin install github.com/your-org/beelzebub-myplugin
 beelzebub plugin list
+beelzebub plugin remove myplugin
 ```
 
 ### `beelzebub version`
@@ -165,15 +191,52 @@ func init() {
 }
 ```
 
-### Loading an External Plugin
+### Installing External Plugins
 
-Add a blank import to your `main.go` fork:
 
-```go
-import _ "github.com/your-org/beelzebub-myplugin"
+```bash
+# Declare plugins in configurations/plugins.yaml, or:
+beelzebub plugin install github.com/your-org/myplugin   # also appends to the config
+
+make start     # local:  install declared plugins → build → run   (needs Go)
+make docker    # docker:  image with plugins baked in → run        (needs Docker)
 ```
 
-The plugin self-registers on startup and is immediately available as a `plugin` reference in any service YAML.
+| Command | What it does |
+|---|---|
+| `plugin install <link>` | fetch a plugin, wire it in, rebuild; also adds it to `configurations/plugins.yaml` |
+| `plugin install` | install everything declared in `configurations/plugins.yaml` |
+| `plugin list` | show installed plugins vs. what's compiled into the binary |
+| `plugin update [name]` | re-fetch at the declared ref and re-pin the commit |
+| `plugin remove <name>` | remove a plugin from `configurations/plugins.yaml`, unwire it, and print the rebuild step |
+
+Deployment plugin sources are configured in `configurations/plugins.yaml`:
+
+```yaml
+plugins:
+  - source: github.com/your-org/myplugin
+  - source: github.com/your-org/private-plugin@v1.2.0
+```
+
+Future per-plugin runtime configuration can live under `configurations/plugins/`
+as one YAML file per plugin.
+
+
+Each plugin repo must ship a `plugins.yaml` manifest and self-register in `init()`
+(see [Writing a Plugin](#writing-a-plugin)):
+
+```yaml
+name: myplugin
+version: 1.0.0
+module: github.com/your-org/myplugin   # must match its go.mod
+entrypoint: .                          # package that calls plugin.Register (default ".")
+min-core-version: v3.8.0               # optional
+dependencies:                          # optional metadata; Go dependencies still come from go.mod
+  - github.com/your-org/shared@v1.2.3
+```
+
+Installed plugins are compiled into the Beelzebub binary and run in the same
+process as the runtime. Install plugins only from repositories you trust.
 
 ## Observability
 
@@ -266,6 +329,8 @@ Environment variable overrides are supported for all fields (e.g. `BEELZEBUB_RAB
 ### Service Configuration
 
 Each decoy service is defined in a separate YAML file placed in the `services/` directory. The `protocol` field determines the deception engine used. Commands use `regex` for request matching and either a static `handler` or a `plugin` reference for dynamic responses.
+
+When using the **LLMHoneypot** plugin, it is highly recommended to use guardrails to prevent the LLM from being jailbroken or otherwise manipulated in ways that could compromise the honeypot. See the [LLMHoneypot plugin documentation](https://docs.beelzebub.ai/basics/beelzebub-api-v1#llmhoneypot-plugin) for details.
 
 ## Deception Services
 

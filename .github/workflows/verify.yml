@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set Up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
 
         with:
           cache: true
@@ -44,10 +44,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set Up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
 
         with:
           cache: true

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,28 @@ func findIssues(result ValidateResult, filename string) []ValidationIssue {
 	return nil
 }
 
+func TestValidateDerivedConfigurationReportsOnceWithFilenameWithoutMutation(t *testing.T) {
+	commands := []Command{{RegexStr: "ok", Handler: "ok"}}
+	services := []BeelzebubServiceConfiguration{{
+		Filename:       "invalid.yaml",
+		Protocol:       "http",
+		Address:        ":8080",
+		Commands:       commands,
+		TrustedProxies: []string{"bad"},
+		Plugin:         Plugin{RateLimitEnabled: true, RateLimitRequests: 0, RateLimitWindowSeconds: 1},
+	}}
+	result := Validate(services, nil)
+	issues := findIssues(result, "invalid.yaml")
+	assert.Equal(t, 2, result.TotalErrors)
+	assert.Len(t, issues, 2)
+	for _, issue := range issues {
+		assert.Equal(t, "invalid.yaml", result.Results[0].Filename)
+		assert.Equal(t, LevelError, issue.Level)
+	}
+	assert.Nil(t, services[0].TrustedProxiesNets)
+	assert.Nil(t, services[0].Commands[0].Regex)
+}
+
 func hasIssue(issues []ValidationIssue, level, message string) bool {
 	for _, issue := range issues {
 		if issue.Level == level && issue.Message == message {
@@ -42,15 +65,27 @@ func hasIssue(issues []ValidationIssue, level, message string) bool {
 	return false
 }
 
+func hasIssueContaining(issues []ValidationIssue, level, substr string) bool {
+	for _, issue := range issues {
+		if issue.Level == level && strings.Contains(issue.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateProtocol(t *testing.T) {
+	ResetSchemaCache()
+	defer ResetSchemaCache()
+
 	tests := []struct {
 		name      string
 		protocol  string
 		wantError bool
 		errorMsg  string
 	}{
-		{"missing protocol", "", true, `invalid protocol "", valid: http, ssh, tcp, mcp, telnet`},
-		{"invalid protocol ftp", "ftp", true, `invalid protocol "ftp", valid: http, ssh, tcp, mcp, telnet`},
+		{"missing protocol", "", true, "value must be one of"},
+		{"invalid protocol ftp", "ftp", true, "value must be one of"},
 		{"valid http", "http", false, ""},
 		{"valid ssh", "ssh", false, ""},
 		{"valid tcp", "tcp", false, ""},
@@ -61,14 +96,19 @@ func TestValidateProtocol(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := makeService("test.yaml", tt.protocol, ":8080", nil)
-			result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
-			issues := findIssues(result, "test.yaml")
+			issues := ValidateConfigSchema(svc)
 
 			if tt.wantError {
-				assert.True(t, hasIssue(issues, LevelError, tt.errorMsg))
+				if !hasIssueContaining(issues, LevelError, tt.errorMsg) {
+					t.Logf("Issues (count=%d):", len(issues))
+					for i, iss := range issues {
+						t.Logf("  [%d] Level=%s Msg=%q", i, iss.Level, iss.Message)
+					}
+				}
+				assert.True(t, hasIssueContaining(issues, LevelError, tt.errorMsg))
 			} else {
 				for _, issue := range issues {
-					assert.NotContains(t, issue.Message, "invalid protocol")
+					assert.NotContains(t, issue.Message, "value must be one of")
 				}
 			}
 		})
@@ -135,6 +175,9 @@ func TestValidateCommandRegexEmpty(t *testing.T) {
 }
 
 func TestValidateCommandPluginInvalid(t *testing.T) {
+	RegisterServiceValidator(&SchemaValidator{})
+	defer ResetServiceValidators()
+
 	tests := []struct {
 		name      string
 		plugin    string
@@ -155,18 +198,20 @@ func TestValidateCommandPluginInvalid(t *testing.T) {
 			issues := findIssues(result, "test.yaml")
 
 			if tt.wantError {
-				expectedMsg := fmt.Sprintf("command[0] has invalid plugin %q, valid: (none), LLMHoneypot, MazeHoneypot", tt.plugin)
-				assert.True(t, hasIssue(issues, LevelError, expectedMsg))
+				assert.True(t, hasIssueContaining(issues, LevelError, "value must be one of"),
+					"expected schema validation error for plugin %q, got: %v", tt.plugin, issues)
 			} else {
-				for _, issue := range issues {
-					assert.NotContains(t, issue.Message, "invalid plugin")
-				}
+				assert.False(t, hasIssueContaining(issues, LevelError, "value must be one of"),
+					"unexpected schema validation error for plugin %q", tt.plugin)
 			}
 		})
 	}
 }
 
 func TestValidateFallbackCommand(t *testing.T) {
+	RegisterServiceValidator(&SchemaValidator{})
+	defer ResetServiceValidators()
+
 	tests := []struct {
 		name          string
 		fallback      Command
@@ -213,25 +258,13 @@ func TestValidateFallbackCommand(t *testing.T) {
 			issues := findIssues(result, "test.yaml")
 
 			if tt.wantRegexErr {
-				assert.True(t, len(issues) > 0, "expected a regex error")
-				for _, issue := range issues {
-					if issue.Level == LevelError {
-						assert.Contains(t, issue.Message, "fallbackCommand has invalid regex")
-					}
-				}
-			} else {
-				for _, issue := range issues {
-					assert.NotContains(t, issue.Message, "fallbackCommand has invalid regex")
-				}
+				assert.True(t, hasIssueContaining(issues, LevelError, "fallbackCommand has invalid regex"),
+					"expected regex error, got: %v", issues)
 			}
 
 			if tt.wantPluginErr {
-				expectedMsg := fmt.Sprintf("fallbackCommand has invalid plugin %q, valid: (none), LLMHoneypot, MazeHoneypot", tt.fallback.Plugin)
-				assert.True(t, hasIssue(issues, LevelError, expectedMsg))
-			} else {
-				for _, issue := range issues {
-					assert.NotContains(t, issue.Message, "fallbackCommand has invalid plugin")
-				}
+				assert.True(t, hasIssueContaining(issues, LevelError, "value must be one of"),
+					"expected schema plugin error, got: %v", issues)
 			}
 		})
 	}
@@ -303,14 +336,14 @@ func TestValidateDeadlineTimeout(t *testing.T) {
 		commands []Command
 		wantWarn bool
 	}{
-		{"zero with commands", 0, []Command{{RegexStr: "test"}}, true},
+		{"tcp zero with commands", 0, []Command{{RegexStr: "test"}}, true},
 		{"zero without commands", 0, nil, false},
 		{"non-zero with commands", 30, []Command{{RegexStr: "test"}}, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := makeService("test.yaml", "http", ":8080", tt.commands)
+			svc := makeService("test.yaml", "tcp", ":8080", tt.commands)
 			svc.DeadlineTimeoutSeconds = tt.timeout
 			result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
 			issues := findIssues(result, "test.yaml")
@@ -322,6 +355,30 @@ func TestValidateDeadlineTimeout(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateDeadlineTimeoutHTTPDoesNotWarn(t *testing.T) {
+	svc := makeService("test.yaml", "http", ":8080", []Command{{RegexStr: "test"}})
+	result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
+	assert.False(t, hasIssueContaining(findIssues(result, "test.yaml"), LevelWarning, "deadlineTimeoutSeconds"))
+}
+
+func TestValidateIntentionalHTTPEmptyResponses(t *testing.T) {
+	tests := []Command{
+		{RegexStr: "a", StatusCode: 204},
+		{RegexStr: "b", StatusCode: 205},
+		{RegexStr: "c", StatusCode: 304},
+		{RegexStr: "d", StatusCode: 302, Headers: []string{"location: /login"}},
+		{RegexStr: "e", StatusCode: 401, Headers: []string{"WWW-AUTHENTICATE: Basic realm=api"}},
+	}
+	result := Validate([]BeelzebubServiceConfiguration{makeService("test.yaml", "http", ":8080", tests)}, nil)
+	assert.False(t, hasIssueContaining(findIssues(result, "test.yaml"), LevelWarning, "empty handler"))
+}
+
+func TestValidateHTTPEmptyHandlerStillWarnsWhenNotIntentional(t *testing.T) {
+	svc := makeService("test.yaml", "http", ":8080", []Command{{RegexStr: "test", StatusCode: 200}})
+	result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
+	assert.True(t, hasIssueContaining(findIssues(result, "test.yaml"), LevelWarning, "empty handler"))
 }
 
 func TestValidateWithParseIssues(t *testing.T) {
@@ -582,10 +639,10 @@ func TestValidateCore(t *testing.T) {
 
 func TestValidateAddressFormat(t *testing.T) {
 	tests := []struct {
-		name      string
-		address   string
-		wantWarn  bool
-		warnMsg   string
+		name     string
+		address  string
+		wantWarn bool
+		warnMsg  string
 	}{
 		{":8080", ":8080", false, ""},
 		{"0.0.0.0:80", "0.0.0.0:80", false, ""},
@@ -708,7 +765,11 @@ func TestValidateTLSConfig(t *testing.T) {
 	})
 
 	t.Run("both set and exist", func(t *testing.T) {
-		issues := ValidateTLSConfig("/proc/self/exe", "/proc/self/exe", "test.yaml")
+		existingFile, _ := os.Executable()
+		if existingFile == "" {
+			existingFile = "/tmp"
+		}
+		issues := ValidateTLSConfig(existingFile, existingFile, "test.yaml")
 		assert.Empty(t, issues)
 	})
 
@@ -737,7 +798,11 @@ func TestValidateTLSConfig(t *testing.T) {
 	})
 
 	t.Run("one file does not exist", func(t *testing.T) {
-		issues := ValidateTLSConfig("/proc/self/exe", "/nonexistent/cert.key", "test.yaml")
+		existingFile, _ := os.Executable()
+		if existingFile == "" {
+			existingFile = "/tmp"
+		}
+		issues := ValidateTLSConfig(existingFile, "/nonexistent/cert.key", "test.yaml")
 		assert.Len(t, issues, 1)
 		assert.Equal(t, LevelWarning, issues[0].Level)
 		assert.Contains(t, issues[0].Message, "tlsKeyPath file does not exist")

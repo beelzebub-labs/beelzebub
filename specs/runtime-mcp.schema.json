@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://beelzebub-labs.github.io/specs/runtime-mcp.schema.json",
+  "title": "Beelzebub MCP Honeypot Configuration",
+  "allOf": [
+    { "$ref": "runtime-config.schema.json" },
+    {
+      "required": ["tools"],
+      "properties": {
+        "tools": { "minItems": 1 },
+        "commands": false
+      }
+    }
+  ]
+}
