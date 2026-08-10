@@ -409,7 +409,7 @@ address: ":80"
 description: "Wordpress 6.0"
 commands:
   - regex: "^(/index.php|/index.html|/)$"
-    methods: [GET]
+    methods: [GET, HEAD]
     handler: |
       <html><header><title>Wordpress 6 test page</title></header>
       <body><h1>Hello from Wordpress</h1></body></html>
@@ -419,7 +419,7 @@ commands:
       - "X-Powered-By: PHP/7.4.29"
     statusCode: 200
   - regex: "^(/wp-login.php|/wp-admin)$"
-    methods: [GET, POST]
+    methods: [GET, HEAD, POST]
     handler: |
       <html><body>
         <form method="post">
@@ -439,7 +439,7 @@ commands:
     statusCode: 404
 ```
 
-Each command may declare an optional `methods` list. A request returns `405 Method Not Allowed` and an `Allow` header only when one or more command regexes match but none accepts its method; an unrestricted catch-all still handles every method. Omitting `methods` accepts every method.
+Each command may declare an optional `methods` list. A request returns `405 Method Not Allowed` and an `Allow` header only when one or more command regexes match but none accepts its method; an unrestricted catch-all still handles every method. Omitting `methods` accepts every method. `GET` does not automatically imply `HEAD`; configure each method explicitly according to the emulated stack.
 
 **LLM-powered HTTP service**  add a `fallbackCommand` with `plugin: LLMHoneypot` to generate dynamic responses for any unmatched request.
 
