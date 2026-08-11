@@ -1,5 +1,7 @@
 # Beelzebub
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fbeelzebub-labs%2Fbeelzebub.svg)](https://mcptoplist.com/server/glama%2Fbeelzebub-labs%2Fbeelzebub)
+
 [![CI](https://github.com/beelzebub-labs/beelzebub/actions/workflows/main.yml/badge.svg)](https://github.com/beelzebub-labs/beelzebub/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/beelzebub-labs/beelzebub/v3)](https://goreportcard.com/report/github.com/beelzebub-labs/beelzebub/v3)
 [![codecov](https://codecov.io/gh/beelzebub-labs/beelzebub/graph/badge.svg?token=8XTK7D4WHE)](https://codecov.io/gh/beelzebub-labs/beelzebub)
