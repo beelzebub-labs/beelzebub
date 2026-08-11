@@ -77,11 +77,10 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		commandRaw := ""
 
 		if n, err := conn.Read(buffer); err == nil {
-			command = string(buffer[:n])
 			if !utf8.Valid(buffer[:n]) {
 				commandRaw = hexEscapeNonPrintable(buffer[:n])
 			}
-			command = internal.PlainOrBase64([]byte(commandRaw))
+			command = internal.PlainOrBase64(buffer[:n])
 		}
 
 		tr.TraceEvent(tracer.Event{
@@ -134,8 +133,8 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		// protocols), so the forensic record survives string()'s U+FFFD
 		// substitution. Empty for UTF-8 traffic.
 		commandRaw := ""
-		if !utf8.Valid([]byte(commandInput)) {
-			commandRaw = hexEscapeNonPrintable([]byte(commandInput))
+		if !utf8.Valid(buffer[:n]) {
+			commandRaw = hexEscapeNonPrintable(buffer[:n])
 		}
 
 		// Match command against regexes
