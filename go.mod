@@ -10,7 +10,7 @@ require (
 	github.com/mark3labs/mcp-go v0.58.0
 	github.com/melbahja/goph v1.5.2
 	github.com/prometheus/client_golang v1.24.1
-	github.com/rabbitmq/amqp091-go v1.13.0
+	github.com/rabbitmq/amqp091-go v1.14.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sirupsen/logrus v1.10.0
 	github.com/spf13/cobra v1.10.2
