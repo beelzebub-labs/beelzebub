@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,19 +133,19 @@ func (b *Builder) closeResources() error {
 		cloudWatcher.Stop()
 	}
 
-	// Stop background service plugins first so their goroutines drain before
-	// other teardown.
+	// Drain TCP handlers before stopping service plugins. A plugin can implement
+	// both ServicePlugin and WirePlugin, and its exchange hooks may still need the
+	// resources owned by the service until every active connection has closed.
+	if tcpStrategy != nil {
+		if closeErr := tcpStrategy.Shutdown(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}
 	if servicesCancel != nil {
 		servicesCancel()
 	}
 	for _, svc := range startedServices {
 		svc.Stop()
-	}
-
-	if tcpStrategy != nil {
-		if closeErr := tcpStrategy.Shutdown(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
 	}
 	if prometheusServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -249,6 +250,9 @@ Deception runtime framework, happy hacking!`)
 			if len(honeypotsConfiguration) == 0 {
 				return errors.New("no honeypots configuration found")
 			}
+			if err := validateCloudConfigurations(honeypotsConfiguration); err != nil {
+				return err
+			}
 			b.beelzebubServicesConfiguration = honeypotsConfiguration
 		}
 	}
@@ -281,6 +285,23 @@ Deception runtime framework, happy hacking!`)
 	}
 
 	return nil
+}
+
+func validateCloudConfigurations(configurations []parser.BeelzebubServiceConfiguration) error {
+	result := parser.Validate(configurations, nil)
+	if result.TotalErrors == 0 {
+		return nil
+	}
+
+	messages := make([]string, 0, result.TotalErrors)
+	for _, validationResult := range result.Results {
+		for _, issue := range validationResult.Issues {
+			if issue.Level == parser.LevelError {
+				messages = append(messages, issue.Message)
+			}
+		}
+	}
+	return fmt.Errorf("invalid honeypot configuration from cloud: %s", strings.Join(messages, "; "))
 }
 
 func (b *Builder) startPrometheus() error {

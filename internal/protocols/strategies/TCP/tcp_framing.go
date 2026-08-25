@@ -224,13 +224,23 @@ func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error
 		}
 		if len(r.buf) == before {
 			if timeoutErr, ok := err.(net.Error); ok && timeoutErr.Timeout() {
-				// A TCP segment can be delayed longer than accumulationGrace. Keep
-				// unmatched bytes until the configured absolute cutoff rather than
-				// splitting one logical message at an arbitrary timing boundary.
-				if r.cutoff.IsZero() || time.Now().Before(r.cutoff) {
+				// A TCP segment can be delayed longer than accumulationGrace. After
+				// the first grace timeout, block on the restored absolute deadline
+				// (or with no deadline) instead of waking on a timer every grace
+				// interval for the lifetime of an idle connection.
+				err = r.fill()
+				if len(r.buf) > maxOpportunisticBufferSize {
+					return nil, errOpportunisticBufferExceeded
+				}
+				if len(r.buf) > before {
+					if err != nil {
+						break
+					}
 					continue
 				}
-				return r.takeBuffer(), err
+				if cutoffErr, ok := err.(net.Error); ok && cutoffErr.Timeout() {
+					return r.takeBuffer(), err
+				}
 			}
 			// EOF or another terminal condition: deliver the buffered bytes.
 			break

@@ -79,7 +79,7 @@ func vncStartService(t *testing.T, yamlPath string) (string, *vncTracer) {
 // IP (same SessionKey) keep independent challenge state, keyed by ConnID. Before
 // the ConnID fix, the second connection's challenge clobbered the first's.
 func TestVNC_ConnIDIsolation(t *testing.T) {
-	p := vncWirePlugin{}
+	p := &vncWirePlugin{}
 	challengeHandler := plugin.WireCommand{Name: vncChallengeHandler}
 	responseHandler := plugin.WireCommand{Name: vncResponseHandler}
 

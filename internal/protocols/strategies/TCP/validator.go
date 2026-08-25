@@ -40,6 +40,13 @@ func (v *TCPValidator) Validate(config parser.BeelzebubServiceConfiguration) []p
 	seen := make(map[string]struct{}, len(config.WirePlugins))
 	for _, rawName := range config.WirePlugins {
 		name := strings.TrimSpace(rawName)
+		if name != rawName {
+			issues = append(issues, parser.ValidationIssue{
+				Level:   parser.LevelError,
+				Message: fmt.Sprintf("wirePlugin %q must not contain surrounding whitespace", rawName),
+			})
+			continue
+		}
 		if _, duplicate := seen[name]; duplicate {
 			issues = append(issues, parser.ValidationIssue{Level: parser.LevelError, Message: fmt.Sprintf("wirePlugin %q is declared more than once", name)})
 			continue

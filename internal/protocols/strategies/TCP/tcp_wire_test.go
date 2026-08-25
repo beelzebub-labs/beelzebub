@@ -76,6 +76,21 @@ func TestWirePlugin_SeamDispatch(t *testing.T) {
 	}
 }
 
+func TestWirePlugin_RuntimeTrimsConfiguredNameDefensively(t *testing.T) {
+	ran := false
+	p := &testWirePlugin{onWire: func(*plugin.WireContext) error {
+		ran = true
+		return nil
+	}}
+	name := registerTestWire(t, p)
+
+	runWirePlugins(context.Background(), []string{" " + name + " "}, &plugin.WireContext{})
+
+	if !ran {
+		t.Fatal("registered plugin was skipped because the configured name contained whitespace")
+	}
+}
+
 func TestWirePlugin_EmptySelectionIsNoop(t *testing.T) {
 	exchange := &plugin.WireContext{Response: []byte("unchanged")}
 	runWirePlugins(context.Background(), nil, exchange)

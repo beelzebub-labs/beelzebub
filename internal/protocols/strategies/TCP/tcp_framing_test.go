@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -282,6 +283,44 @@ func TestOpportunistic_AccumulatesUntilMatch(t *testing.T) {
 	}
 	if string(msg) != "ABCDEFGH" {
 		t.Fatalf("accumulated msg = %q, want ABCDEFGH", msg)
+	}
+}
+
+type deadlineCountingConn struct {
+	net.Conn
+	mu               sync.Mutex
+	nonZeroDeadlines int
+}
+
+func (c *deadlineCountingConn) SetReadDeadline(deadline time.Time) error {
+	if !deadline.IsZero() {
+		c.mu.Lock()
+		c.nonZeroDeadlines++
+		c.mu.Unlock()
+	}
+	return c.Conn.SetReadDeadline(deadline)
+}
+
+func (c *deadlineCountingConn) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.nonZeroDeadlines
+}
+
+func TestOpportunistic_IdlePartialMessageDoesNotPollGraceDeadline(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	counted := &deadlineCountingConn{Conn: server}
+	r := &connReader{conn: counted}
+	cmds := []parser.Command{{Regex: regexp.MustCompile(`^ABCDEFGH$`)}}
+
+	writeThenClose(t, client, 2*accumulationGrace+50*time.Millisecond, []byte("ABCD"), []byte("EFGH"))
+	msg, err := r.nextMessage(cmds)
+	if err != nil || string(msg) != "ABCDEFGH" {
+		t.Fatalf("msg = %q err=%v, want ABCDEFGH", msg, err)
+	}
+	if got := counted.count(); got != 1 {
+		t.Fatalf("non-zero read deadlines = %d, want 1; idle partial reads must block after the grace period", got)
 	}
 }
 

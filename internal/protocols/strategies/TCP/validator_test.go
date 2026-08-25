@@ -66,6 +66,11 @@ func TestTCPValidator_WirePluginRegistry(t *testing.T) {
 	issues = v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "tcp", WirePlugins: []string{"vnc", "vnc"}})
 	assert.Len(t, issues, 1)
 	assert.Contains(t, issues[0].Message, "declared more than once")
+
+	issues = v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "tcp", WirePlugins: []string{" vnc "}})
+	assert.Len(t, issues, 1)
+	assert.Equal(t, parser.LevelError, issues[0].Level)
+	assert.Contains(t, issues[0].Message, "surrounding whitespace")
 }
 
 func TestTCPValidator_OnlyCert(t *testing.T) {

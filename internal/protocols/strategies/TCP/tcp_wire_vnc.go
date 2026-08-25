@@ -29,14 +29,14 @@ const (
 	vncResponseHandler  = "vnc_auth_response"
 )
 
-// vncChallengeStore maps ConnID → 16-byte challenge sent to the client. Keyed
-// per-connection (not per-source) so concurrent VNC handshakes from the same
-// client IP don't clobber each other's challenge.
-var vncChallengeStore sync.Map
+// vncWirePlugin retains challenges by ConnID. Per-instance state avoids a
+// process-global session store while still isolating concurrent handshakes from
+// the same client IP.
+type vncWirePlugin struct {
+	challenges sync.Map
+}
 
-type vncWirePlugin struct{}
-
-func (vncWirePlugin) Metadata() plugin.Metadata {
+func (*vncWirePlugin) Metadata() plugin.Metadata {
 	return plugin.Metadata{
 		Name:        "vnc",
 		Version:     "1.0.0",
@@ -45,7 +45,7 @@ func (vncWirePlugin) Metadata() plugin.Metadata {
 	}
 }
 
-func (vncWirePlugin) OnExchange(_ context.Context, ctx *plugin.WireContext) error {
+func (p *vncWirePlugin) OnExchange(_ context.Context, ctx *plugin.WireContext) error {
 	switch ctx.Command.Name {
 	case vncChallengeHandler:
 		// The outbound response is the 16-byte challenge (already randomised
@@ -53,14 +53,14 @@ func (vncWirePlugin) OnExchange(_ context.Context, ctx *plugin.WireContext) erro
 		if len(ctx.Response) >= 16 {
 			challenge := make([]byte, 16)
 			copy(challenge, ctx.Response[:16])
-			vncChallengeStore.Store(ctx.ConnID, challenge)
+			p.challenges.Store(ctx.ConnID, challenge)
 		}
 	case vncResponseHandler:
 		// The inbound request is the 16-byte DES-encrypted response.
 		if len(ctx.Request) < 16 {
 			return nil
 		}
-		v, ok := vncChallengeStore.Load(ctx.ConnID)
+		v, ok := p.challenges.Load(ctx.ConnID)
 		if !ok {
 			return nil
 		}
@@ -77,18 +77,18 @@ func (vncWirePlugin) OnExchange(_ context.Context, ctx *plugin.WireContext) erro
 		// John the Ripper VNC format (--format=vnc).
 		ctx.Metadata["vnc_john"] = fmt.Sprintf("$vnc$*%s*%s",
 			hex.EncodeToString(challenge), hex.EncodeToString(response))
-		vncChallengeStore.Delete(ctx.ConnID)
+		p.challenges.Delete(ctx.ConnID)
 	}
 	return nil
 }
 
 // OnSessionClose purges any stored challenge for the ended connection, so an
 // incomplete handshake (challenge sent, response never received) does not leak.
-func (vncWirePlugin) OnSessionClose(_ context.Context, connID string) error {
-	vncChallengeStore.Delete(connID)
+func (p *vncWirePlugin) OnSessionClose(_ context.Context, connID string) error {
+	p.challenges.Delete(connID)
 	return nil
 }
 
 func init() {
-	plugin.Register(vncWirePlugin{})
+	plugin.Register(&vncWirePlugin{})
 }

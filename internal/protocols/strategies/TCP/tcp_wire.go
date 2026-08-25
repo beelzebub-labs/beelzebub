@@ -3,6 +3,7 @@ package TCP
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	pluginapi "github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
 	log "github.com/sirupsen/logrus"
@@ -13,7 +14,8 @@ import (
 // them before startup. A faulty external plugin is isolated to its own hook so
 // the remaining plugins and the TCP connection can continue.
 func runWirePlugins(ctx context.Context, enabled []string, exchange *pluginapi.WireContext) {
-	for _, name := range enabled {
+	for _, configuredName := range enabled {
+		name := strings.TrimSpace(configuredName)
 		wirePlugin, ok := pluginapi.GetWire(name)
 		if !ok {
 			continue
@@ -67,7 +69,8 @@ func cloneStringMap(values map[string]string) map[string]string {
 
 // closeWireSessions notifies enabled plugins that retain per-connection state.
 func closeWireSessions(ctx context.Context, connID string, enabled []string) {
-	for _, name := range enabled {
+	for _, configuredName := range enabled {
+		name := strings.TrimSpace(configuredName)
 		wirePlugin, ok := pluginapi.GetWire(name)
 		if !ok {
 			continue

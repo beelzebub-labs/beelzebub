@@ -103,7 +103,7 @@ type BeelzebubServiceConfiguration struct {
 	// "latin1" provides a one-rune-per-byte mapping for binary protocols.
 	WireEncoding string `yaml:"wireEncoding,omitempty" json:"wireEncoding,omitempty"`
 	// WirePlugins names the protocol wire-plugins this service should run (e.g.
-	// "vnc", "ntlm", "smb", "ldap"). Empty means run no wire plugins.
+	// "vnc" or an externally installed plugin). Empty means run no wire plugins.
 	// Scoping plugins per service avoids, e.g., the NTLM
 	// signature scanner running on unrelated text services.
 	WirePlugins []string `yaml:"wirePlugins,omitempty" json:"wirePlugins,omitempty"`
