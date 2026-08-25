@@ -598,6 +598,9 @@ func (s *tcpSession) serve(conn net.Conn) {
 
 			ev, outputBytes, newEntries := s.handleMatch(command, rawBuffer, commandInput, commandRaw, histories)
 			histories = append(histories, newEntries...)
+			if maxHistory := s.maxHistoryEntries(); len(histories) > maxHistory {
+				histories = histories[len(histories)-maxHistory:]
+			}
 
 			// Write the (possibly wire-plugin-modified) response.
 			if len(outputBytes) > 0 {

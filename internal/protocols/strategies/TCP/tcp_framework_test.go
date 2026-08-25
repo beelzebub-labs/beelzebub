@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,26 @@ type mockCmdPlugin struct{}
 func (mockCmdPlugin) Metadata() plugin.Metadata { return plugin.Metadata{Name: "MockTCPPlugin"} }
 func (mockCmdPlugin) Execute(_ context.Context, _ plugin.CommandRequest) (string, error) {
 	return "plugin-output", nil
+}
+
+type historyCapturePlugin struct {
+	name string
+	mu   sync.Mutex
+	lens []int
+}
+
+func (p *historyCapturePlugin) Metadata() plugin.Metadata { return plugin.Metadata{Name: p.name} }
+func (p *historyCapturePlugin) Execute(_ context.Context, req plugin.CommandRequest) (string, error) {
+	p.mu.Lock()
+	p.lens = append(p.lens, len(req.History))
+	p.mu.Unlock()
+	return "ok", nil
+}
+
+func (p *historyCapturePlugin) snapshot() []int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]int(nil), p.lens...)
 }
 
 func init() {
@@ -408,6 +429,47 @@ func TestHandleTCPConnection_PluginDispatch(t *testing.T) {
 	}
 	if !found {
 		t.Error("no interaction event with plugin output")
+	}
+}
+
+func TestTCPConnection_MaxHistoryBoundsCurrentSession(t *testing.T) {
+	p := &historyCapturePlugin{name: "HistoryCapture_" + t.Name()}
+	plugin.Register(p)
+	addr, _ := startCfg(t, parser.BeelzebubServiceConfiguration{
+		MaxHistory: 2,
+		Commands: []parser.Command{{
+			Regex:  regexp.MustCompile(`(?s).*`),
+			Plugin: p.name,
+		}},
+	})
+
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	for _, request := range []string{"one", "two", "three"} {
+		if _, err := conn.Write([]byte(request)); err != nil {
+			t.Fatalf("write %q: %v", request, err)
+		}
+		response := make([]byte, len("ok"))
+		if _, err := io.ReadFull(conn, response); err != nil {
+			t.Fatalf("read %q response: %v", request, err)
+		}
+	}
+
+	got := p.snapshot()
+	want := []int{0, 2, 2}
+	if len(got) != len(want) {
+		t.Fatalf("history lengths = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("history lengths = %v, want %v", got, want)
+		}
 	}
 }
 
