@@ -5,8 +5,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/pem"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 	"time"
@@ -218,6 +221,83 @@ func TestHandleTCPConnection_TLSUpgrade(t *testing.T) {
 	if cs := tlsConn.ConnectionState(); len(cs.PeerCertificates) == 0 {
 		t.Error("no peer certificate presented after TLS upgrade")
 	}
+}
+
+func TestHandleTCPConnection_TLSUpgradeUsesConfiguredCertificate(t *testing.T) {
+	configured, err := generateSelfSignedCert("configured.example.invalid")
+	if err != nil {
+		t.Fatalf("generate configured certificate: %v", err)
+	}
+	certPath, keyPath := writeTLSKeyPair(t, configured)
+
+	addr, _ := startCfg(t, parser.BeelzebubServiceConfiguration{
+		ServerName:  "generated.example.invalid",
+		TLSCertPath: certPath,
+		TLSKeyPath:  keyPath,
+		Commands: []parser.Command{{
+			Regex:      regexp.MustCompile(`(?s).*`),
+			Handler:    "ready",
+			TLSUpgrade: true,
+		}},
+	})
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	response := make([]byte, len("ready"))
+	if _, err := io.ReadFull(conn, response); err != nil {
+		t.Fatalf("read cleartext response: %v", err)
+	}
+
+	tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true})
+	if err := tlsConn.Handshake(); err != nil {
+		t.Fatalf("TLS handshake: %v", err)
+	}
+	peer := tlsConn.ConnectionState().PeerCertificates
+	if len(peer) != 1 {
+		t.Fatalf("peer certificate count = %d, want 1", len(peer))
+	}
+	if got := peer[0].SerialNumber; got.Cmp(configured.Leaf.SerialNumber) != 0 {
+		t.Fatalf("peer serial = %s, configured serial = %s", got, configured.Leaf.SerialNumber)
+	}
+	if got := peer[0].Subject.CommonName; got != "configured.example.invalid" {
+		t.Fatalf("peer common name = %q, want configured.example.invalid", got)
+	}
+}
+
+func TestNewTLSCertificateStateRejectsPartialConfiguredPair(t *testing.T) {
+	_, err := newTLSCertificateState(parser.BeelzebubServiceConfiguration{TLSCertPath: "cert.pem"})
+	if err == nil {
+		t.Fatal("expected an error for a certificate without a key")
+	}
+}
+
+func writeTLSKeyPair(t *testing.T, cert *tls.Certificate) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "server.crt")
+	keyPath := filepath.Join(dir, "server.key")
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	keyDER, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		t.Fatalf("marshal private key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("write certificate: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+	return certPath, keyPath
 }
 
 func TestTLSUpgradeDoesNotExtendAbsoluteDeadline(t *testing.T) {

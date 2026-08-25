@@ -175,6 +175,8 @@ type tlsCertificateState struct {
 	mu         sync.Mutex
 	cert       *tls.Certificate
 	commonName string
+	certPath   string
+	keyPath    string
 }
 
 func (state *tlsCertificateState) current() *tls.Certificate {
@@ -187,14 +189,54 @@ func (state *tlsCertificateState) current() *tls.Certificate {
 		return nil
 	}
 	if leaf := state.cert.Leaf; leaf != nil && time.Now().After(leaf.NotAfter) {
-		cert, err := generateSelfSignedCert(state.commonName)
+		cert, err := state.load()
 		if err != nil {
-			log.Errorf("TLS cert regeneration failed: %v", err)
+			log.Errorf("TLS certificate reload failed: %v", err)
 			return nil
 		}
 		state.cert = cert
 	}
 	return state.cert
+}
+
+func (state *tlsCertificateState) load() (*tls.Certificate, error) {
+	if state.certPath != "" || state.keyPath != "" {
+		return loadTLSKeyPair(state.certPath, state.keyPath)
+	}
+	return generateSelfSignedCert(state.commonName)
+}
+
+func newTLSCertificateState(servConf parser.BeelzebubServiceConfiguration) (*tlsCertificateState, error) {
+	if (servConf.TLSCertPath == "") != (servConf.TLSKeyPath == "") {
+		return nil, errors.New("both tlsCertPath and tlsKeyPath must be set for TLS, or neither")
+	}
+
+	state := &tlsCertificateState{
+		commonName: servConf.ServerName,
+		certPath:   servConf.TLSCertPath,
+		keyPath:    servConf.TLSKeyPath,
+	}
+	cert, err := state.load()
+	if err != nil {
+		return nil, err
+	}
+	state.cert = cert
+	return state, nil
+}
+
+func loadTLSKeyPair(certPath, keyPath string) (*tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading TLS certificate and key: %w", err)
+	}
+	if len(cert.Certificate) == 0 {
+		return nil, errors.New("loading TLS certificate and key: certificate chain is empty")
+	}
+	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("parsing TLS leaf certificate: %w", err)
+	}
+	return &cert, nil
 }
 
 // generateSelfSignedCert creates an ephemeral P-256 ECDSA self-signed certificate
@@ -250,11 +292,11 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 	var tlsState *tlsCertificateState
 	for _, cmd := range servConf.Commands {
 		if cmd.TLSUpgrade {
-			cert, err := generateSelfSignedCert(servConf.ServerName)
+			var err error
+			tlsState, err = newTLSCertificateState(servConf)
 			if err != nil {
-				return fmt.Errorf("generating TCP TLS certificate: %w", err)
+				return fmt.Errorf("initializing TCP TLS certificate: %w", err)
 			}
-			tlsState = &tlsCertificateState{cert: cert, commonName: servConf.ServerName}
 			break
 		}
 	}
@@ -391,13 +433,13 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		if !command.TLSUpgrade {
 			continue
 		}
-		cert, err := generateSelfSignedCert(servConf.ServerName)
+		var err error
+		tlsState, err = newTLSCertificateState(servConf)
 		if err != nil {
-			log.Errorf("TLS cert generation failed: %v", err)
+			log.Errorf("TLS certificate initialization failed: %v", err)
 			conn.Close()
 			return
 		}
-		tlsState = &tlsCertificateState{cert: cert, commonName: servConf.ServerName}
 		break
 	}
 	handleTCPConnectionWithState(conn, servConf, tr, tcpStrategy, tlsState, context.Background())
@@ -755,7 +797,8 @@ func (s *tcpSession) handleMatch(command parser.Command, rawBuffer []byte, comma
 	return ev, outputBytes, newEntries
 }
 
-// upgradeTLS wraps conn in a TLS server using the strategy's self-signed cert
+// upgradeTLS wraps conn in a TLS server using the strategy's configured or
+// generated certificate
 // and performs the handshake. It returns the encrypted connection and true on
 // success, or (nil, false) if no cert is available or the handshake fails (the
 // caller should then close the connection).
