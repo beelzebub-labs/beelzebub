@@ -188,6 +188,10 @@ func (r *connReader) nextBERFrame() ([]byte, error) {
 }
 
 func (r *connReader) nextOpportunistic(commands []parser.Command) ([]byte, error) {
+	// The loop has three phases: perform the initial blocking read, use one short
+	// grace window to reassemble a split message, then restore the absolute
+	// connection deadline for any remaining wait. Every terminal path that has
+	// buffered bytes returns them through takeBuffer(), including EOF-with-data.
 	if len(r.buf) == 0 {
 		// Only surface the error if nothing was read; bytes delivered alongside
 		// io.EOF must still be processed.

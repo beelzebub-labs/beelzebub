@@ -139,18 +139,22 @@ func applyPatches(buf []byte, patches []parser.Patch) []byte {
 	for _, p := range patches {
 		switch p.Type {
 		case "random":
-			if p.Length > 0 && p.Offset >= 0 && p.Length <= len(out) && p.Offset <= len(out)-p.Length {
-				randomBytes := make([]byte, p.Length)
-				if _, err := rand.Read(randomBytes); err != nil {
-					log.Errorf("random patch: crypto/rand read failed: %v", err)
-				} else {
-					copy(out[p.Offset:p.Offset+p.Length], randomBytes)
-				}
+			if p.Length <= 0 || p.Offset < 0 || p.Length > len(out) || p.Offset > len(out)-p.Length {
+				log.Warnf("skipping random patch outside response: offset=%d length=%d response_size=%d", p.Offset, p.Length, len(out))
+				continue
+			}
+			randomBytes := make([]byte, p.Length)
+			if _, err := rand.Read(randomBytes); err != nil {
+				log.Errorf("random patch: crypto/rand read failed: %v", err)
+			} else {
+				copy(out[p.Offset:p.Offset+p.Length], randomBytes)
 			}
 		case "filetime":
-			if p.Offset >= 0 && p.Offset <= len(out)-8 {
-				copy(out[p.Offset:], toWindowsFileTime(time.Now()))
+			if p.Offset < 0 || p.Offset > len(out)-8 {
+				log.Warnf("skipping filetime patch outside response: offset=%d length=8 response_size=%d", p.Offset, len(out))
+				continue
 			}
+			copy(out[p.Offset:], toWindowsFileTime(time.Now()))
 		}
 	}
 	return out

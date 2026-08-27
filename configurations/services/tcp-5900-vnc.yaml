@@ -9,12 +9,11 @@ banner: "RFB 003.008"
 wirePlugins:
   - "vnc"
 commands:
-  # NOTE: handler order matters — commands are matched top-to-bottom, first
-  # match wins. The version regex must come before vnc_auth_response. The
-  # 16-byte match below is
-  # intentionally broad (it matches any 16-byte message) to capture brute-force
-  # auth attempts; for a honeypot, capturing unexpected 16-byte traffic as an
-  # auth response is acceptable.
+  # NOTE: handler order matters because commands are matched top-to-bottom and
+  # the first match wins. The 16-byte auth-response regex below is intentionally
+  # broad to capture brute-force attempts; future 16-byte commands must be
+  # placed before it. The 12-byte RFB version and 1-byte security selection do
+  # not overlap with this match.
 
   # Client echoes the ProtocolVersion → offer a single security type:
   # VNC Authentication (type 2, the DES challenge-response scheme).

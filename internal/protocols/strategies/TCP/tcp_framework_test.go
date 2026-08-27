@@ -1,6 +1,7 @@
 package TCP
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -11,12 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
+	log "github.com/sirupsen/logrus"
 )
 
 // mockCmdPlugin is a CommandPlugin used to exercise the TCP plugin-dispatch path.
@@ -146,8 +149,20 @@ func TestApplyPatches_RandomAndFiletime(t *testing.T) {
 	if year < 2020 {
 		t.Errorf("filetime year = %d, want >= 2020", year)
 	}
-	// out-of-range offsets must be ignored, not panic.
-	_ = applyPatches(buf, []parser.Patch{{Type: "random", Offset: 100, Length: 8}})
+	// Out-of-range offsets must not panic or fail silently.
+	var logs bytes.Buffer
+	logger := log.StandardLogger()
+	originalOutput := logger.Out
+	logger.SetOutput(&logs)
+	t.Cleanup(func() { logger.SetOutput(originalOutput) })
+	_ = applyPatches(buf, []parser.Patch{
+		{Type: "random", Offset: 100, Length: 8},
+		{Type: "filetime", Offset: 100},
+	})
+	if got := logs.String(); !strings.Contains(got, "skipping random patch outside response") ||
+		!strings.Contains(got, "skipping filetime patch outside response") {
+		t.Fatalf("out-of-range patches were not reported: %q", got)
+	}
 	// no-op when no patches.
 	if got := applyPatches(buf, nil); len(got) != 16 {
 		t.Error("nil patches should return buffer unchanged")
