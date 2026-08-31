@@ -1,12 +1,10 @@
 package tracer
 
 import (
-	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,7 +28,7 @@ func TestTraceEvent(t *testing.T) {
 
 	tracer := GetInstance(mockStrategy)
 
-	tracer.SetStrategy(mockStrategy)
+	tracer.strategy = mockStrategy
 
 	wg.Add(1)
 	tracer.TraceEvent(Event{
@@ -106,7 +104,7 @@ func newTracerWithMockCounters(strategy Strategy) (*tracer, map[string]*mockCoun
 	}
 	tr := &tracer{
 		strategy:          strategy,
-		eventsChans:       make([]chan Event, Workers),
+		eventsChan:        make(chan Event, Workers),
 		eventsTotal:       counters["total"],
 		eventsSSHTotal:    counters["ssh"],
 		eventsTCPTotal:    counters["tcp"],
@@ -115,56 +113,6 @@ func newTracerWithMockCounters(strategy Strategy) (*tracer, map[string]*mockCoun
 		eventsTelnetTotal: counters["telnet"],
 	}
 	return tr, counters
-}
-
-func TestEventWorkerKeepsSessionOnOneShard(t *testing.T) {
-	for i := 0; i < 100; i++ {
-		id := fmt.Sprintf("session-%d", i)
-		first := eventWorker(id)
-		for repeat := 0; repeat < 10; repeat++ {
-			assert.Equal(t, first, eventWorker(id))
-		}
-		assert.GreaterOrEqual(t, first, 0)
-		assert.Less(t, first, Workers)
-	}
-}
-
-func TestTraceEventPreservesOrderWithinSession(t *testing.T) {
-	var (
-		mu       sync.Mutex
-		received []string
-		wg       sync.WaitGroup
-	)
-	tr, _ := newTracerWithMockCounters(func(event Event) {
-		if event.Msg == "start" {
-			time.Sleep(25 * time.Millisecond)
-		}
-		mu.Lock()
-		received = append(received, event.Msg)
-		mu.Unlock()
-		wg.Done()
-	})
-	for i := range tr.eventsChans {
-		tr.eventsChans[i] = make(chan Event, Workers)
-		go func(worker int) {
-			for event := range tr.eventsChans[worker] {
-				tr.GetStrategy()(event)
-			}
-		}(i)
-	}
-	t.Cleanup(func() {
-		for _, events := range tr.eventsChans {
-			close(events)
-		}
-	})
-
-	wg.Add(3)
-	for _, msg := range []string{"start", "interaction", "end"} {
-		tr.TraceEvent(Event{ID: "same-session", Protocol: TCP.String(), Msg: msg})
-	}
-	wg.Wait()
-
-	assert.Equal(t, []string{"start", "interaction", "end"}, received)
 }
 
 func TestUpdatePrometheusCounters(t *testing.T) {

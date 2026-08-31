@@ -45,9 +45,8 @@ type Event struct {
 	SourcePort      string
 	TLSServerName   string
 	Handler         string
-	// Metadata carries arbitrary protocol-specific key/value pairs contributed
-	// by plugins (e.g. extracted credentials, protocol fingerprints). The core
-	// makes no assumptions about its contents.
+	// Metadata carries protocol-specific values contributed by plugins without
+	// coupling the tracer to any wire protocol implementation.
 	Metadata map[string]string `json:",omitempty"`
 }
 
@@ -105,7 +104,7 @@ type Tracer interface {
 
 type tracer struct {
 	strategy          Strategy
-	eventsChans       []chan Event
+	eventsChan        chan Event
 	eventsTotal       prometheus.Counter
 	eventsSSHTotal    prometheus.Counter
 	eventsTCPTotal    prometheus.Counter
@@ -116,58 +115,61 @@ type tracer struct {
 	strategyMutex sync.RWMutex
 }
 
-var (
-	singletonOnce sync.Once
-	singleton     *tracer
-)
+var lock = &sync.Mutex{}
+var singleton *tracer
 
 func GetInstance(defaultStrategy Strategy) *tracer {
-	singletonOnce.Do(func() {
-		singleton = &tracer{
-			strategy:    defaultStrategy,
-			eventsChans: make([]chan Event, Workers),
-			eventsTotal: promauto.NewCounter(prometheus.CounterOpts{
-				Namespace: "beelzebub",
-				Name:      "events_total",
-				Help:      "The total number of events",
-			}),
-			eventsSSHTotal: promauto.NewCounter(prometheus.CounterOpts{
-				Namespace: "beelzebub",
-				Name:      "ssh_events_total",
-				Help:      "The total number of SSH events",
-			}),
-			eventsTCPTotal: promauto.NewCounter(prometheus.CounterOpts{
-				Namespace: "beelzebub",
-				Name:      "tcp_events_total",
-				Help:      "The total number of TCP events",
-			}),
-			eventsHTTPTotal: promauto.NewCounter(prometheus.CounterOpts{
-				Namespace: "beelzebub",
-				Name:      "http_events_total",
-				Help:      "The total number of HTTP events",
-			}),
-			eventsMCPTotal: promauto.NewCounter(prometheus.CounterOpts{
-				Namespace: "beelzebub",
-				Name:      "mcp_events_total",
-				Help:      "The total number of MCP events",
-			}),
-			eventsTelnetTotal: promauto.NewCounter(prometheus.CounterOpts{
-				Namespace: "beelzebub",
-				Name:      "telnet_events_total",
-				Help:      "The total number of TELNET events",
-			}),
-		}
+	if singleton == nil {
+		lock.Lock()
+		defer lock.Unlock()
+		// This is to prevent expensive lock operations every time the GetInstance method is called
+		if singleton == nil {
+			singleton = &tracer{
+				strategy:   defaultStrategy,
+				eventsChan: make(chan Event, Workers),
+				eventsTotal: promauto.NewCounter(prometheus.CounterOpts{
+					Namespace: "beelzebub",
+					Name:      "events_total",
+					Help:      "The total number of events",
+				}),
+				eventsSSHTotal: promauto.NewCounter(prometheus.CounterOpts{
+					Namespace: "beelzebub",
+					Name:      "ssh_events_total",
+					Help:      "The total number of SSH events",
+				}),
+				eventsTCPTotal: promauto.NewCounter(prometheus.CounterOpts{
+					Namespace: "beelzebub",
+					Name:      "tcp_events_total",
+					Help:      "The total number of TCP events",
+				}),
+				eventsHTTPTotal: promauto.NewCounter(prometheus.CounterOpts{
+					Namespace: "beelzebub",
+					Name:      "http_events_total",
+					Help:      "The total number of HTTP events",
+				}),
+				eventsMCPTotal: promauto.NewCounter(prometheus.CounterOpts{
+					Namespace: "beelzebub",
+					Name:      "mcp_events_total",
+					Help:      "The total number of MCP events",
+				}),
+				eventsTelnetTotal: promauto.NewCounter(prometheus.CounterOpts{
+					Namespace: "beelzebub",
+					Name:      "telnet_events_total",
+					Help:      "The total number of TELNET events",
+				}),
+			}
 
-		for i := 0; i < Workers; i++ {
-			singleton.eventsChans[i] = make(chan Event, Workers)
-			go func(i int, tr *tracer) {
-				log.Debug("Trace worker: ", i)
-				for event := range tr.eventsChans[i] {
-					tr.GetStrategy()(event)
-				}
-			}(i, singleton)
+			for i := 0; i < Workers; i++ {
+				go func(i int) {
+					log.Debug("Trace worker: ", i)
+					for event := range singleton.eventsChan {
+						singleton.strategy(event)
+					}
+				}(i)
+			}
 		}
-	})
+	}
+
 	return singleton
 }
 
@@ -186,25 +188,9 @@ func (tracer *tracer) GetStrategy() Strategy {
 func (tracer *tracer) TraceEvent(event Event) {
 	event.DateTime = time.Now().UTC().Format(time.RFC3339)
 
-	tracer.eventsChans[eventWorker(event.ID)] <- event
+	tracer.eventsChan <- event
 
 	tracer.updatePrometheusCounters(event.Protocol)
-}
-
-// eventWorker consistently assigns a session ID to one worker. Events for the
-// same session therefore retain FIFO order, while unrelated sessions are still
-// processed concurrently by different workers.
-func eventWorker(id string) int {
-	const (
-		offset32 = uint32(2166136261)
-		prime32  = uint32(16777619)
-	)
-	hash := offset32
-	for i := 0; i < len(id); i++ {
-		hash ^= uint32(id[i])
-		hash *= prime32
-	}
-	return int(hash % Workers)
 }
 
 func (tracer *tracer) updatePrometheusCounters(protocol string) {

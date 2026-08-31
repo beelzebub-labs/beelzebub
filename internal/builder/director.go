@@ -1,9 +1,8 @@
 package builder
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
-
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
@@ -22,16 +21,10 @@ func NewDirector(builder *Builder) *Director {
 	}
 }
 
-func (d *Director) BuildBeelzebub(beelzebubCoreConfigurations *parser.BeelzebubCoreConfigurations, beelzebubServicesConfiguration []parser.BeelzebubServiceConfiguration) (result *Builder, err error) {
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, d.builder.Close())
-		}
-	}()
-
+func (d *Director) BuildBeelzebub(beelzebubCoreConfigurations *parser.BeelzebubCoreConfigurations, beelzebubServicesConfiguration []parser.BeelzebubServiceConfiguration) (*Builder, error) {
 	d.builder.beelzebubServicesConfiguration = beelzebubServicesConfiguration
 	d.builder.beelzebubCoreConfigurations = beelzebubCoreConfigurations
-	if err = d.builder.buildLogger(beelzebubCoreConfigurations.Core.Logging); err != nil {
+	if err := d.builder.buildLogger(beelzebubCoreConfigurations.Core.Logging); err != nil {
 		return nil, err
 	}
 
@@ -39,7 +32,8 @@ func (d *Director) BuildBeelzebub(beelzebubCoreConfigurations *parser.BeelzebubC
 
 	if beelzebubCoreConfigurations.Core.Tracings.RabbitMQ.Enabled {
 		d.builder.setTraceStrategy(d.rabbitMQTraceStrategy)
-		if err = d.builder.buildRabbitMQ(beelzebubCoreConfigurations.Core.Tracings.RabbitMQ.URI); err != nil {
+		err := d.builder.buildRabbitMQ(beelzebubCoreConfigurations.Core.Tracings.RabbitMQ.URI)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -93,10 +87,7 @@ func (d *Director) rabbitMQTraceStrategy(event tracer.Event) {
 
 	publishing := amqp.Publishing{ContentType: "application/json", Body: eventJSON}
 
-	if err = d.builder.publishRabbitMQ(publishing); errors.Is(err, errRabbitMQUnavailable) {
-		log.Debug("RabbitMQ channel unavailable; dropping event during shutdown")
-		return
-	} else if err != nil {
+	if err = d.builder.rabbitMQChannel.PublishWithContext(context.TODO(), "", RabbitmqQueueName, false, false, publishing); err != nil {
 		log.Error(err.Error())
 	} else {
 		log.WithFields(log.Fields{

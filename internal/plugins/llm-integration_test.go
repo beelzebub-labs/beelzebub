@@ -108,34 +108,27 @@ func TestBuildPromptTelnet(t *testing.T) {
 
 func TestBuildPromptTCPWithCustomPrompt(t *testing.T) {
 	honeypot := LLMHoneypot{
-		Histories: []Message{
-			{Role: USER.String(), Content: "prev"},
-		},
+		Histories:    []Message{{Role: USER.String(), Content: "previous request"}},
 		Protocol:     tracer.TCP,
-		CustomPrompt: "act as a PostgreSQL server",
+		CustomPrompt: "act as a binary protocol server",
 	}
 
-	prompt, err := honeypot.buildPrompt("SELECT 1")
+	prompt, err := honeypot.buildPrompt("request")
 
-	assert.Nil(t, err)
-	// system custom prompt + 1 history entry + user command
-	assert.Equal(t, "act as a PostgreSQL server", prompt[0].Content)
+	assert.NoError(t, err)
+	assert.Equal(t, "act as a binary protocol server", prompt[0].Content)
 	assert.Equal(t, SYSTEM.String(), prompt[0].Role)
-	assert.Equal(t, "prev", prompt[1].Content)
-	assert.Equal(t, "SELECT 1", prompt[len(prompt)-1].Content)
-	assert.Equal(t, USER.String(), prompt[len(prompt)-1].Role)
+	assert.Equal(t, "previous request", prompt[1].Content)
+	assert.Equal(t, "request", prompt[2].Content)
+	assert.Equal(t, USER.String(), prompt[2].Role)
 }
 
 func TestBuildPromptTCPRequiresCustomPrompt(t *testing.T) {
-	honeypot := LLMHoneypot{
-		Histories: []Message{},
-		Protocol:  tracer.TCP,
-		// no CustomPrompt
-	}
+	honeypot := LLMHoneypot{Protocol: tracer.TCP}
 
-	_, err := honeypot.buildPrompt("SELECT 1")
+	_, err := honeypot.buildPrompt("request")
 
-	assert.Error(t, err)
+	assert.EqualError(t, err, "TCP protocol requires a custom prompt in plugin configuration")
 }
 
 func TestBuildInputValidationPromptDefault(t *testing.T) {

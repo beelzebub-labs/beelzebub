@@ -654,7 +654,7 @@ func (s *tcpSession) loadHistory() []plugins.Message {
 	if !s.strategy.Sessions.HasKey(s.sessionKey) {
 		return nil
 	}
-	all := s.strategy.Sessions.Query(s.sessionKey)
+	all := append([]plugins.Message(nil), s.strategy.Sessions.Query(s.sessionKey)...)
 	if len(all) > maxHistoryEntries {
 		log.Debugf("session %s: history truncated from %d to %d entries", s.sessionKey, len(all), maxHistoryEntries)
 		all = all[len(all)-maxHistoryEntries:]

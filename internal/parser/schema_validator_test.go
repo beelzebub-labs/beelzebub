@@ -91,8 +91,12 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 					Handler:      "failed",
 					CloseAfter:   true,
 					TLSUpgrade:   true,
+					TLSFraming:   &Framing{Mode: "ber"},
 					BinaryOutput: true,
-					Patches:      []Patch{{Type: "random", Offset: 0, Length: 8}},
+					Patches: []Patch{
+						{Type: "random", Offset: 0, Length: 8},
+						{Type: "vendor-message-id", Offset: 8, Length: 4},
+					},
 				}},
 			},
 		},
@@ -106,7 +110,7 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 			},
 		},
 		{
-			name: "LDAP BER framing",
+			name: "BER framed TCP service",
 			config: BeelzebubServiceConfiguration{
 				ApiVersion: "v1",
 				Protocol:   "tcp",
@@ -176,6 +180,21 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 			} else {
 				assert.Empty(t, issues)
 			}
+		})
+	}
+}
+
+func TestValidateConfigSchema_PublicServiceConfigurations(t *testing.T) {
+	t.Setenv("BEELZEBUB_SERVICES_CONFIG", "")
+	servicesDir := filepath.Join("..", "..", "configurations", "services")
+	services, err := Init("", servicesDir).ReadConfigurationsServices()
+	assert.NoError(t, err)
+	assert.NotEmpty(t, services)
+
+	for _, service := range services {
+		service := service
+		t.Run(service.Filename, func(t *testing.T) {
+			assert.Empty(t, ValidateConfigSchema(service))
 		})
 	}
 }
@@ -256,6 +275,42 @@ func TestValidateConfigSchema_Invalid(t *testing.T) {
 			config: BeelzebubServiceConfiguration{
 				Protocol: "mcp", Address: ":8000",
 				Commands: []Command{{RegexStr: ".*", Handler: "ok"}},
+			},
+			msg: "false",
+		},
+		{
+			name: "TCP tlsFraming without tlsUpgrade",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "tcp", Address: ":19000",
+				Commands: []Command{{RegexStr: ".*", Handler: "ok", TLSFraming: &Framing{Mode: "ber"}}},
+			},
+			msg: "tlsUpgrade",
+		},
+		{
+			name: "TCP random patch without positive length",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "tcp", Address: ":19001",
+				Commands: []Command{{
+					RegexStr: ".*", Handler: "ok",
+					Patches: []Patch{{Type: "random", Offset: 0, Length: 0}},
+				}},
+			},
+			msg: "length",
+		},
+		{
+			name: "SSH with TCP wire encoding",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "ssh", Address: ":22",
+				ServerVersion: "OpenSSH", PasswordRegex: ".+", WireEncoding: "latin1",
+				Commands: []Command{{RegexStr: ".*", Handler: "ok"}},
+			},
+			msg: "false",
+		},
+		{
+			name: "HTTP command with TCP closeAfter",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "http", Address: ":8080",
+				Commands: []Command{{RegexStr: ".*", Handler: "ok", CloseAfter: true}},
 			},
 			msg: "false",
 		},

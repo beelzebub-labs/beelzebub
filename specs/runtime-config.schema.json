@@ -7,12 +7,20 @@
   "properties": {
     "apiVersion": {
       "type": "string",
-      "enum": ["v1"],
+      "enum": [
+        "v1"
+      ],
       "description": "Configuration format version. Currently only 'v1' is supported."
     },
     "protocol": {
       "type": "string",
-      "enum": ["ssh", "http", "tcp", "telnet", "mcp"],
+      "enum": [
+        "ssh",
+        "http",
+        "tcp",
+        "telnet",
+        "mcp"
+      ],
       "description": "Honeypot protocol type. Determines which per-protocol schema and validators are applied."
     },
     "address": {
@@ -20,37 +28,89 @@
       "pattern": "^(\\[[^\\]]+\\]|[^:\\s]+)?:[0-9]{1,5}$|^/[^:]+$",
       "description": "Listen address in host:port format (e.g. :22, 0.0.0.0:8080, [::1]:443). Unix sockets use /path format."
     },
-    "description": { "type": "string", "description": "Human-readable label for this honeypot service." },
-    "serverVersion": { "type": "string", "description": "Banner/version string sent to clients during handshake (e.g. OpenSSH, Apache/2.4.53)." },
-    "serverName": { "type": "string", "description": "Hostname reported by the honeypot (e.g. ubuntu, mail.internal.company.com)." },
-    "deadlineTimeoutSeconds": { "type": "integer", "minimum": 0, "description": "Connection deadline in seconds for TCP, TELNET, and SSH. HTTP does not use this field; 0 disables the deadline." },
-    "maxHistory": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "Maximum number of TCP conversation messages retained per service and source. 0 uses the runtime default." },
-    "wireEncoding": { "type": "string", "enum": ["utf8", "latin1"], "description": "Encoding used by TCP regexes and static handlers. Defaults to utf8." },
-    "framing": { "$ref": "#/definitions/Framing" },
+    "description": {
+      "type": "string",
+      "description": "Human-readable label for this honeypot service."
+    },
+    "serverVersion": {
+      "type": "string",
+      "description": "Banner/version string sent to clients during handshake (e.g. OpenSSH, Apache/2.4.53)."
+    },
+    "serverName": {
+      "type": "string",
+      "description": "Hostname reported by the honeypot (e.g. ubuntu, mail.internal.company.com)."
+    },
+    "deadlineTimeoutSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Connection deadline in seconds for TCP, TELNET, and SSH. HTTP does not use this field. TCP and SSH treat 0 as no deadline; TELNET preserves its existing immediate-deadline behavior."
+    },
+    "maxHistory": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "description": "Maximum number of TCP conversation messages retained per service and source. 0 uses the runtime default."
+    },
+    "wireEncoding": {
+      "type": "string",
+      "enum": [
+        "utf8",
+        "latin1"
+      ],
+      "description": "Encoding used by TCP regexes and static handlers. Defaults to utf8."
+    },
+    "framing": {
+      "$ref": "#/definitions/Framing"
+    },
     "wirePlugins": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "uniqueItems": true,
       "maxItems": 32,
       "description": "Names of registered TCP wire plugins enabled for this service, in execution order. Empty means none."
     },
-    "banner": { "type": "string", "description": "Initial banner sent on connection (TCP) or greeting (HTTP). Can include binary wire format." },
-    "passwordRegex": { "type": "string", "description": "Regex pattern for accepted passwords. Required for SSH and TELNET. Syntax validated by Go at runtime." },
+    "banner": {
+      "type": "string",
+      "description": "Initial banner sent on connection (TCP) or greeting (HTTP). Can include binary wire format."
+    },
+    "passwordRegex": {
+      "type": "string",
+      "description": "Regex pattern for accepted passwords. Required for SSH and TELNET. Syntax validated by Go at runtime."
+    },
     "trustedProxies": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "CIDRs or IPs of trusted reverse proxies. Affects X-Forwarded-For / X-Real-IP parsing."
     },
-    "tlsCertPath": { "type": "string", "description": "Path to TLS certificate file. Must be paired with tlsKeyPath. File existence checked by Go at runtime." },
-    "tlsKeyPath": { "type": "string", "description": "Path to TLS private key file. Must be paired with tlsCertPath." },
+    "tlsCertPath": {
+      "type": "string",
+      "description": "Path to TLS certificate file. Must be paired with tlsKeyPath. File existence checked by Go at runtime."
+    },
+    "tlsKeyPath": {
+      "type": "string",
+      "description": "Path to TLS private key file. Must be paired with tlsCertPath."
+    },
     "commands": {
       "type": "array",
       "items": {
         "allOf": [
-          { "$ref": "#/definitions/Command" },
           {
-            "required": ["regex"],
-            "properties": { "regex": { "minLength": 1 } }
+            "$ref": "#/definitions/Command"
+          },
+          {
+            "required": [
+              "regex"
+            ],
+            "properties": {
+              "regex": {
+                "minLength": 1
+              }
+            }
           }
         ]
       },
@@ -58,17 +118,31 @@
     },
     "tools": {
       "type": "array",
-      "items": { "$ref": "#/definitions/Tool" },
+      "items": {
+        "$ref": "#/definitions/Tool"
+      },
       "maxItems": 100
     },
-    "fallbackCommand": { "$ref": "#/definitions/Command" },
-    "plugin": { "$ref": "#/definitions/Plugin" }
+    "fallbackCommand": {
+      "$ref": "#/definitions/Command"
+    },
+    "plugin": {
+      "$ref": "#/definitions/Plugin"
+    }
   },
-  "required": ["apiVersion", "protocol", "address"],
+  "required": [
+    "apiVersion",
+    "protocol",
+    "address"
+  ],
   "additionalProperties": false,
   "dependencies": {
-    "tlsCertPath": ["tlsKeyPath"],
-    "tlsKeyPath": ["tlsCertPath"]
+    "tlsCertPath": [
+      "tlsKeyPath"
+    ],
+    "tlsKeyPath": [
+      "tlsCertPath"
+    ]
   },
   "allOf": [
     {
@@ -76,35 +150,60 @@
       "if": {
         "anyOf": [
           {
-            "required": ["commands"],
+            "required": [
+              "commands"
+            ],
             "properties": {
               "commands": {
                 "contains": {
-                  "properties": { "plugin": { "const": "LLMHoneypot" } },
-                  "required": ["plugin"]
+                  "properties": {
+                    "plugin": {
+                      "const": "LLMHoneypot"
+                    }
+                  },
+                  "required": [
+                    "plugin"
+                  ]
                 }
               }
             }
           },
           {
-            "required": ["fallbackCommand"],
+            "required": [
+              "fallbackCommand"
+            ],
             "properties": {
               "fallbackCommand": {
-                "required": ["plugin"],
-                "properties": { "plugin": { "const": "LLMHoneypot" } }
+                "required": [
+                  "plugin"
+                ],
+                "properties": {
+                  "plugin": {
+                    "const": "LLMHoneypot"
+                  }
+                }
               }
             }
           }
         ]
       },
       "then": {
-        "required": ["plugin"],
+        "required": [
+          "plugin"
+        ],
         "properties": {
           "plugin": {
-            "required": ["llmProvider", "llmModel"],
+            "required": [
+              "llmProvider",
+              "llmModel"
+            ],
             "properties": {
-              "llmModel": { "minLength": 1 },
-              "llmProvider": { "minLength": 1 }
+              "llmModel": {
+                "minLength": 1
+              },
+              "llmProvider": {
+                "minLength": 1
+              }
             }
           }
         }
@@ -115,22 +214,38 @@
       "if": {
         "anyOf": [
           {
-            "required": ["commands"],
+            "required": [
+              "commands"
+            ],
             "properties": {
               "commands": {
                 "contains": {
-                  "properties": { "plugin": { "const": "MazeHoneypot" } },
-                  "required": ["plugin"]
+                  "properties": {
+                    "plugin": {
+                      "const": "MazeHoneypot"
+                    }
+                  },
+                  "required": [
+                    "plugin"
+                  ]
                 }
               }
             }
           },
           {
-            "required": ["fallbackCommand"],
+            "required": [
+              "fallbackCommand"
+            ],
             "properties": {
               "fallbackCommand": {
-                "required": ["plugin"],
-                "properties": { "plugin": { "const": "MazeHoneypot" } }
+                "required": [
+                  "plugin"
+                ],
+                "properties": {
+                  "plugin": {
+                    "const": "MazeHoneypot"
+                  }
+                }
               }
             }
           }
@@ -138,28 +253,45 @@
       },
       "then": {
         "properties": {
-          "protocol": { "const": "http" }
+          "protocol": {
+            "const": "http"
+          }
         }
       }
     },
     {
       "$comment": "Rate limiting: if plugin.rateLimitEnabled is true, rateLimitRequests and rateLimitWindowSeconds must be > 0",
       "if": {
-        "required": ["plugin"],
+        "required": [
+          "plugin"
+        ],
         "properties": {
           "plugin": {
-            "required": ["rateLimitEnabled"],
-            "properties": { "rateLimitEnabled": { "const": true } }
+            "required": [
+              "rateLimitEnabled"
+            ],
+            "properties": {
+              "rateLimitEnabled": {
+                "const": true
+              }
+            }
           }
         }
       },
       "then": {
         "properties": {
           "plugin": {
-            "required": ["rateLimitRequests", "rateLimitWindowSeconds"],
+            "required": [
+              "rateLimitRequests",
+              "rateLimitWindowSeconds"
+            ],
             "properties": {
-              "rateLimitRequests": { "minimum": 1 },
-              "rateLimitWindowSeconds": { "minimum": 1 }
+              "rateLimitRequests": {
+                "minimum": 1
+              },
+              "rateLimitWindowSeconds": {
+                "minimum": 1
+              }
             }
           }
         }
@@ -170,31 +302,54 @@
     "Command": {
       "type": "object",
       "properties": {
-        "regex": { "type": "string" },
+        "regex": {
+          "type": "string"
+        },
         "methods": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "uniqueItems": true
         },
-        "handler": { "type": "string" },
+        "handler": {
+          "type": "string"
+        },
         "headers": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "statusCode": {
           "type": "integer",
           "minimum": 100,
           "maximum": 599
         },
-        "plugin": { "type": "string" },
-        "name": { "type": "string" },
-        "closeAfter": { "type": "boolean" },
-        "tlsUpgrade": { "type": "boolean" },
-        "tlsFraming": { "$ref": "#/definitions/Framing" },
-        "binaryOutput": { "type": "boolean" },
+        "plugin": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "closeAfter": {
+          "type": "boolean"
+        },
+        "tlsUpgrade": {
+          "type": "boolean"
+        },
+        "tlsFraming": {
+          "$ref": "#/definitions/Framing"
+        },
+        "binaryOutput": {
+          "type": "boolean"
+        },
         "patches": {
           "type": "array",
-          "items": { "$ref": "#/definitions/Patch" },
+          "items": {
+            "$ref": "#/definitions/Patch"
+          },
           "maxItems": 32
         }
       },
@@ -203,66 +358,163 @@
     "Framing": {
       "type": "object",
       "properties": {
-        "mode": { "type": "string", "enum": ["length-prefix", "ber"] },
-        "lengthOffset": { "type": "integer", "minimum": 0, "maximum": 64 },
-        "lengthSize": { "type": "integer", "minimum": 1, "maximum": 8 },
-        "headerSize": { "type": "integer", "minimum": 0, "maximum": 256 },
-        "bigEndian": { "type": "boolean" },
-        "lengthIncludesHeader": { "type": "boolean" }
+        "mode": {
+          "type": "string",
+          "enum": [
+            "length-prefix",
+            "ber"
+          ]
+        },
+        "lengthOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "lengthSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "headerSize": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "bigEndian": {
+          "type": "boolean"
+        },
+        "lengthIncludesHeader": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false,
       "allOf": [
         {
           "if": {
-            "required": ["mode"],
-            "properties": { "mode": { "const": "ber" } }
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "const": "ber"
+              }
+            }
           },
-          "else": { "required": ["lengthSize"] }
+          "else": {
+            "required": [
+              "lengthSize"
+            ]
+          }
         }
       ]
     },
     "Patch": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "minLength": 1 },
-        "offset": { "type": "integer", "minimum": 0 },
-        "length": { "type": "integer", "minimum": 0 }
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
-      "required": ["type"],
-      "additionalProperties": false
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "random"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "length"
+            ],
+            "properties": {
+              "length": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "Tool": {
       "type": "object",
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
         "params": {
           "type": "array",
-          "items": { "$ref": "#/definitions/ToolParam" }
+          "items": {
+            "$ref": "#/definitions/ToolParam"
+          }
         },
-        "handler": { "type": "string" },
-        "annotations": { "$ref": "#/definitions/ToolAnnotations" }
+        "handler": {
+          "type": "string"
+        },
+        "annotations": {
+          "$ref": "#/definitions/ToolAnnotations"
+        }
       },
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false
     },
     "ToolParam": {
       "type": "object",
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
       },
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false
     },
     "ToolAnnotations": {
       "type": "object",
       "properties": {
-        "title": { "type": "string" },
-        "readOnlyHint": { "type": "boolean" },
-        "destructiveHint": { "type": "boolean" },
-        "idempotentHint": { "type": "boolean" },
-        "openWorldHint": { "type": "boolean" }
+        "title": {
+          "type": "string"
+        },
+        "readOnlyHint": {
+          "type": "boolean"
+        },
+        "destructiveHint": {
+          "type": "boolean"
+        },
+        "idempotentHint": {
+          "type": "boolean"
+        },
+        "openWorldHint": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
@@ -271,19 +523,45 @@
       "properties": {
         "llmProvider": {
           "type": "string",
-          "enum": ["", "ollama", "openai"]
+          "enum": [
+            "",
+            "ollama",
+            "openai"
+          ]
         },
-        "llmModel": { "type": "string" },
-        "prompt": { "type": "string" },
-        "openAISecretKey": { "type": "string" },
-        "host": { "type": "string" },
-        "inputValidationEnabled": { "type": "boolean" },
-        "inputValidationPrompt": { "type": "string" },
-        "outputValidationEnabled": { "type": "boolean" },
-        "outputValidationPrompt": { "type": "string" },
-        "rateLimitEnabled": { "type": "boolean" },
-        "rateLimitRequests": { "type": "integer" },
-        "rateLimitWindowSeconds": { "type": "integer" }
+        "llmModel": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "openAISecretKey": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "inputValidationEnabled": {
+          "type": "boolean"
+        },
+        "inputValidationPrompt": {
+          "type": "string"
+        },
+        "outputValidationEnabled": {
+          "type": "boolean"
+        },
+        "outputValidationPrompt": {
+          "type": "string"
+        },
+        "rateLimitEnabled": {
+          "type": "boolean"
+        },
+        "rateLimitRequests": {
+          "type": "integer"
+        },
+        "rateLimitWindowSeconds": {
+          "type": "integer"
+        }
       },
       "additionalProperties": false
     }

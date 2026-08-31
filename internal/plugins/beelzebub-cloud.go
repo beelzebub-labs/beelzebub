@@ -52,7 +52,6 @@ type beelzebubCloud struct {
 	PollingInterval time.Duration
 	ctx             context.Context
 	cancel          context.CancelFunc
-	watchDone       chan struct{}
 }
 
 type HoneypotConfigResponseDTO struct {
@@ -73,39 +72,13 @@ func InitBeelzebubCloud(uri, authToken string, enableVerifyConfigurationsChanged
 		cancel:          cancel,
 	}
 	if enableVerifyConfigurationsChanged {
-		beelzebubCloud.watchDone = make(chan struct{})
 		go func() {
-			defer close(beelzebubCloud.watchDone)
-			beelzebubCloud.watchConfigurations()
+			if err := beelzebubCloud.verifyConfigurationsChanged(); err != nil {
+				log.Fatalf("Error verify configurations changed: %s", err.Error())
+			}
 		}()
 	}
 	return beelzebubCloud
-}
-
-func (beelzebubCloud *beelzebubCloud) watchConfigurations() {
-	lastHash := ""
-	for {
-		newHash, changed, err := beelzebubCloud.checkConfigurationsChanged(lastHash)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-			log.Errorf("Error verify configurations changed: %s", err.Error())
-		} else if changed {
-			log.Debug("Configurations changed.")
-			exitFunction(0)
-			return
-		} else {
-			lastHash = newHash
-		}
-		timer := time.NewTimer(beelzebubCloud.PollingInterval)
-		select {
-		case <-timer.C:
-		case <-beelzebubCloud.ctx.Done():
-			timer.Stop()
-			return
-		}
-	}
 }
 
 func (beelzebubCloud *beelzebubCloud) SendEvent(event tracer.Event) (bool, error) {
@@ -124,7 +97,6 @@ func (beelzebubCloud *beelzebubCloud) SendEvent(event tracer.Event) (bool, error
 	}
 
 	response, err := beelzebubCloud.client.R().
-		SetContext(beelzebubCloud.ctx).
 		SetHeader("Content-Type", "application/json").
 		SetBody(requestJson).
 		SetHeader("Authorization", beelzebubCloud.AuthToken).
@@ -146,7 +118,6 @@ func (beelzebubCloud *beelzebubCloud) GetHoneypotsConfigurations() ([]parser.Bee
 	}
 
 	response, err := beelzebubCloud.client.R().
-		SetContext(beelzebubCloud.ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Authorization", beelzebubCloud.AuthToken).
 		SetResult([]HoneypotConfigResponseDTO{}).
@@ -190,6 +161,7 @@ func (beelzebubCloud *beelzebubCloud) GetHoneypotsConfigurations() ([]parser.Bee
 		}
 
 	}
+
 	return servicesConfiguration, localHashBuilder.String(), nil
 }
 
@@ -197,9 +169,6 @@ var exitFunction func(code int) = os.Exit
 
 func (beelzebubCloud *beelzebubCloud) Stop() {
 	beelzebubCloud.cancel()
-	if beelzebubCloud.watchDone != nil {
-		<-beelzebubCloud.watchDone
-	}
 }
 
 func (beelzebubCloud *beelzebubCloud) checkConfigurationsChanged(lastHash string) (newHash string, changed bool, err error) {

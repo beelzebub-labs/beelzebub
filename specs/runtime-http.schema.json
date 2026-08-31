@@ -3,20 +3,45 @@
   "$id": "https://beelzebub-labs.github.io/specs/runtime-http.schema.json",
   "title": "Beelzebub HTTP Honeypot Configuration",
   "allOf": [
-    { "$ref": "runtime-config.schema.json" },
     {
-      "required": ["commands"],
+      "$ref": "runtime-config.schema.json"
+    },
+    {
+      "required": [
+        "commands"
+      ],
       "properties": {
+        "maxHistory": false,
+        "wireEncoding": false,
+        "framing": false,
+        "wirePlugins": false,
         "commands": {
           "minItems": 1,
           "items": {
             "properties": {
               "methods": {
                 "type": "array",
-                "items": { "type": "string", "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$" },
+                "items": {
+                  "type": "string",
+                  "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+                },
                 "uniqueItems": true
-              }
+              },
+              "closeAfter": false,
+              "tlsUpgrade": false,
+              "tlsFraming": false,
+              "binaryOutput": false,
+              "patches": false
             }
+          }
+        },
+        "fallbackCommand": {
+          "properties": {
+            "closeAfter": false,
+            "tlsUpgrade": false,
+            "tlsFraming": false,
+            "binaryOutput": false,
+            "patches": false
           }
         },
         "tools": false

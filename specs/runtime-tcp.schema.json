@@ -3,10 +3,95 @@
   "$id": "https://beelzebub-labs.github.io/specs/runtime-tcp.schema.json",
   "title": "Beelzebub TCP Honeypot Configuration",
   "allOf": [
-    { "$ref": "runtime-config.schema.json" },
+    {
+      "$ref": "runtime-config.schema.json"
+    },
     {
       "properties": {
-        "tools": false
+        "protocol": {
+          "const": "tcp"
+        },
+        "tools": false,
+        "maxHistory": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Maximum conversation entries retained per TCP service and source. 0 uses the runtime default."
+        },
+        "wireEncoding": {
+          "type": "string",
+          "enum": [
+            "utf8",
+            "latin1"
+          ],
+          "description": "Maps configured regexes and static handlers to TCP bytes. utf8 preserves text behavior; latin1 provides a one-codepoint-per-byte mapping."
+        },
+        "framing": {
+          "$ref": "runtime-config.schema.json#/definitions/Framing",
+          "description": "Optional message framing used by the TCP reader before command matching."
+        },
+        "wirePlugins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "uniqueItems": true,
+          "maxItems": 32,
+          "description": "Registered WirePlugin names enabled for this service, executed in declaration order."
+        },
+        "commands": {
+          "items": {
+            "allOf": [
+              {
+                "properties": {
+                  "closeAfter": {
+                    "type": "boolean",
+                    "description": "Close the TCP connection after writing this response."
+                  },
+                  "tlsUpgrade": {
+                    "type": "boolean",
+                    "description": "Upgrade the connection to TLS after writing this response."
+                  },
+                  "tlsFraming": {
+                    "$ref": "runtime-config.schema.json#/definitions/Framing",
+                    "description": "Replace the service framing after a successful TLS upgrade."
+                  },
+                  "binaryOutput": {
+                    "type": "boolean",
+                    "description": "Interpret CommandPlugin output as latin1-mapped raw bytes instead of UTF-8 text."
+                  },
+                  "patches": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "runtime-config.schema.json#/definitions/Patch"
+                    },
+                    "maxItems": 32,
+                    "description": "Generic or WirePlugin-defined transformations applied to the response."
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "tlsFraming"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "tlsUpgrade"
+                  ],
+                  "properties": {
+                    "tlsUpgrade": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
       }
     }
   ]
