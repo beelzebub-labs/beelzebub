@@ -1,6 +1,7 @@
 package TCP
 
 import (
+	"encoding/base64"
 	"net"
 	"regexp"
 	"strings"
@@ -269,4 +270,48 @@ func TestHandleTCPConnection_SessionStart(t *testing.T) {
 	}
 	assert.True(t, hasStart, "expected session start event")
 	assert.True(t, hasEnd, "expected session end event")
+}
+
+func TestHandleTCPConnection_CommandWithNoHandlerAndUnprintableBytes(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	mt := &mockTracer{}
+	servConf := parser.BeelzebubServiceConfiguration{
+		Description:            "test",
+		DeadlineTimeoutSeconds: 5,
+		Commands:               []parser.Command{},
+	}
+	strategy := newStrategyWithSessions()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handleTCPConnection(server, servConf, mt, strategy)
+	}()
+
+	// This is a load of unprintable bytes to test the base64 encoding of the command in the event
+	inputData := []byte{94, 92, 117, 102, 102, 102, 100, 92, 92, 206, 141, 92, 117, 102, 102, 102, 100, 92, 117, 102,
+		102, 102, 100, 92, 117, 102, 102, 102, 100, 92, 117, 102, 102, 102, 100, 92, 117, 48, 48, 49, 53, 92, 117, 102,
+	}
+
+	client.Write(inputData)
+	time.Sleep(100 * time.Millisecond)
+	client.Close()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout")
+	}
+
+	found := false
+	for _, e := range mt.events {
+		if e.Command == base64.StdEncoding.EncodeToString(inputData) {
+			found = true
+			break
+		}
+	}
+
+	assert.True(t, found, "expected an interaction event with command")
 }
