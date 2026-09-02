@@ -2,6 +2,7 @@ package HTTP
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -24,6 +25,42 @@ type httpResponse struct {
 	StatusCode int
 	Headers    []string
 	Body       string
+}
+
+// llmHTTPResponse represents the structured JSON response from the LLM for HTTP honeypots.
+type llmHTTPResponse struct {
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
+	StatusCode int               `json:"statusCode"`
+}
+
+// parseLLMHTTPResponse attempts to parse the LLM output as a structured JSON response
+// with headers, body, and optional status code. If parsing fails, it falls back to
+// using the raw output as the response body.
+func parseLLMHTTPResponse(completions string, resp *httpResponse) {
+	var llmResp llmHTTPResponse
+	if err := json.Unmarshal([]byte(completions), &llmResp); err != nil {
+		resp.Body = completions
+		return
+	}
+
+	resp.Body = llmResp.Body
+	for key, value := range llmResp.Headers {
+		// Skip headers managed by Go's HTTP server to avoid conflicts
+		lower := strings.ToLower(key)
+		if lower == "content-length" || lower == "date" || lower == "transfer-encoding" || lower == "connection" {
+			continue
+		}
+		// Strip CR/LF from header values; net/http would panic if they reached Header().Add.
+		// A prompt-injected LLM is the realistic path for this to happen.
+		if strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+			continue
+		}
+		resp.Headers = append(resp.Headers, fmt.Sprintf("%s: %s", key, value))
+	}
+	if llmResp.StatusCode >= 100 && llmResp.StatusCode < 600 {
+		resp.StatusCode = llmResp.StatusCode
+	}
 }
 
 func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
@@ -137,7 +174,11 @@ func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.
 				resp.Body = "404 Not Found!"
 				return resp, fmt.Errorf("plugin %q execute error: %w", command.Plugin, err)
 			}
-			resp.Body = output
+			if command.Plugin == plugins.LLMPluginName {
+				parseLLMHTTPResponse(output, &resp)
+			} else {
+				resp.Body = output
+			}
 		} else if hp, ok := plugin.GetHTTP(command.Plugin); ok {
 			// For HTTP-specific plugins (e.g. MazeHoneypot) that need full
 			// request context and return their own status/headers.
@@ -299,9 +340,10 @@ func mapCookiesToString(cookies []*http.Cookie) string {
 
 func setResponseHeaders(responseWriter http.ResponseWriter, headers []string, statusCode int) {
 	for _, headerStr := range headers {
-		keyValue := strings.Split(headerStr, ":")
-		if len(keyValue) > 1 {
-			responseWriter.Header().Add(keyValue[0], keyValue[1])
+		// SplitN(_, 2) preserves colons inside the value (Location URLs, CSP, Set-Cookie).
+		keyValue := strings.SplitN(headerStr, ":", 2)
+		if len(keyValue) == 2 {
+			responseWriter.Header().Add(strings.TrimSpace(keyValue[0]), strings.TrimSpace(keyValue[1]))
 		}
 	}
 	// http.StatusText(statusCode): empty string if the code is unknown.
