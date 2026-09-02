@@ -4,6 +4,11 @@ address: ":5900"
 description: "VNC Server (RFB Protocol) with VNC Authentication credential capture"
 wireEncoding: "latin1"
 banner: "RFB 003.008"
+framing:
+  # RFB starts with a fixed 12-byte ProtocolVersion. Commands transition the
+  # same buffered reader to the 1-byte selection and 16-byte auth response.
+  mode: "fixed"
+  fixedSize: 12
 # Only the VNC wire-plugin runs for this service (avoids unrelated plugins
 # scanning VNC traffic). Empty/absent runs no wire plugins.
 wirePlugins:
@@ -17,9 +22,12 @@ commands:
 
   # Client echoes the ProtocolVersion → offer a single security type:
   # VNC Authentication (type 2, the DES challenge-response scheme).
-  - regex: "RFB 003.008"
+  - regex: "^RFB 003\\.008\\n$"
     handler: "\x01\x02"
     name: "vnc_security_types"
+    nextFraming:
+      mode: "fixed"
+      fixedSize: 1
 
   # Client sends its 16-byte DES-encrypted response to our challenge.
   # The vnc wire-plugin extracts it (correlated with the stored challenge);
@@ -45,6 +53,9 @@ commands:
       - type: "random"
         offset: 0
         length: 16
+    nextFraming:
+      mode: "fixed"
+      fixedSize: 16
 
 deadlineTimeoutSeconds: 30
 serverName: "VNC-SERVER-01"

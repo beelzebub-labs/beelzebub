@@ -24,6 +24,7 @@
             "closeAfter": false,
             "tlsUpgrade": false,
             "tlsFraming": false,
+            "nextFraming": false,
             "binaryOutput": false,
             "patches": false
           }

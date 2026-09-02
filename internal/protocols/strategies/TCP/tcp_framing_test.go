@@ -113,6 +113,59 @@ func TestFraming_Pipelined(t *testing.T) {
 	}
 }
 
+func TestFraming_FixedSplitAndPipelined(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	r := newReader(server, &parser.Framing{Mode: "fixed", FixedSize: 4})
+
+	writeThenClose(t, client, 20*time.Millisecond, []byte("AB"), []byte("CDEFGH"))
+	first, err := r.nextMessage(nil)
+	if err != nil || string(first) != "ABCD" {
+		t.Fatalf("first fixed frame = %q err=%v, want ABCD", first, err)
+	}
+	second, err := r.nextMessage(nil)
+	if err != nil || string(second) != "EFGH" {
+		t.Fatalf("second fixed frame = %q err=%v, want EFGH", second, err)
+	}
+}
+
+func TestFraming_VarintSplitAndPipelined(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	r := newReader(server, &parser.Framing{
+		Mode:           "varint-length-prefix",
+		LengthOffset:   1,
+		MaxLengthBytes: 4,
+	})
+
+	// The first payload is 130 bytes, encoded as the two-byte base-128 varint
+	// 0x82 0x01. The second packet uses a one-byte length.
+	first := append([]byte{0x30, 0x82, 0x01}, bytes.Repeat([]byte{0x41}, 130)...)
+	second := []byte{0x30, 0x02, 0x42, 0x43}
+	combined := append(append([]byte(nil), first...), second...)
+	writeThenClose(t, client, 20*time.Millisecond, combined[:2], combined[2:50], combined[50:])
+
+	gotFirst, err := r.nextMessage(nil)
+	if err != nil || !bytes.Equal(gotFirst, first) {
+		t.Fatalf("first varint frame len=%d err=%v", len(gotFirst), err)
+	}
+	gotSecond, err := r.nextMessage(nil)
+	if err != nil || !bytes.Equal(gotSecond, second) {
+		t.Fatalf("second varint frame = %x err=%v, want %x", gotSecond, err, second)
+	}
+}
+
+func TestFraming_VarintRejectsUnterminatedLength(t *testing.T) {
+	r := &connReader{
+		framing: &parser.Framing{Mode: "varint-length-prefix", LengthOffset: 1, MaxLengthBytes: 4},
+		buf:     []byte{0x10, 0x80, 0x80, 0x80, 0x80},
+	}
+	msg, err := r.nextMessage(nil)
+	if !errors.Is(err, errInvalidFrame) || len(msg) != 5 {
+		t.Fatalf("msg=%x err=%v, want buffered malformed varint and invalid-frame error", msg, err)
+	}
+}
+
 // TestFraming_BogusLength returns the buffered prefix with an explicit error
 // rather than silently accepting an absurd length.
 func TestFraming_BogusLength(t *testing.T) {

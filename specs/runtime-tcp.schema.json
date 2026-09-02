@@ -58,6 +58,10 @@
                     "$ref": "runtime-config.schema.json#/definitions/Framing",
                     "description": "Replace the service framing after a successful TLS upgrade."
                   },
+                  "nextFraming": {
+                    "$ref": "runtime-config.schema.json#/definitions/Framing",
+                    "description": "Replace framing after this exchange while retaining any pipelined bytes."
+                  },
                   "binaryOutput": {
                     "type": "boolean",
                     "description": "Interpret CommandPlugin output as latin1-mapped raw bytes instead of UTF-8 text."
@@ -88,11 +92,46 @@
                     }
                   }
                 }
+              },
+              {
+                "if": {
+                  "required": [
+                    "nextFraming"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "tlsUpgrade": {
+                      "not": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
               }
             ]
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "wireEncoding"
+            ],
+            "properties": {
+              "wireEncoding": {
+                "const": "latin1"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "framing"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

@@ -128,21 +128,21 @@ func (bsc BeelzebubServiceConfiguration) HashCode() (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
-// Framing describes a generic length-prefixed message boundary, protocol-agnostic.
-// The total message length is read from a big/little-endian integer field of
-// LengthSize bytes at LengthOffset; HeaderSize is the number of bytes before the
-// payload the length value refers to. If LengthIncludesHeader is true the length
-// field counts the header bytes as well (e.g. TPKT/TDS), otherwise the total
-// frame is HeaderSize + length. Tune these fields for the target protocol.
+// Framing describes a protocol-neutral application-message boundary. It supports
+// fixed-size messages, fixed-width and base-128 varint length prefixes, and BER
+// top-level TLVs. Binary services should use framing rather than TCP read
+// boundaries to decide when a command can be dispatched.
 type Framing struct {
-	// Mode selects "length-prefix" (the default) or "ber". BER framing reads a
-	// complete top-level TLV and is suitable for LDAPMessage streams.
+	// Mode selects "length-prefix" (the default), "fixed",
+	// "varint-length-prefix", or "ber".
 	Mode                 string `yaml:"mode,omitempty" json:"mode,omitempty"`
 	LengthOffset         int    `yaml:"lengthOffset" json:"lengthOffset,omitempty"`
 	LengthSize           int    `yaml:"lengthSize" json:"lengthSize,omitempty"`
 	HeaderSize           int    `yaml:"headerSize" json:"headerSize,omitempty"`
 	BigEndian            bool   `yaml:"bigEndian" json:"bigEndian,omitempty"`
 	LengthIncludesHeader bool   `yaml:"lengthIncludesHeader" json:"lengthIncludesHeader,omitempty"`
+	FixedSize            int    `yaml:"fixedSize" json:"fixedSize,omitempty"`
+	MaxLengthBytes       int    `yaml:"maxLengthBytes" json:"maxLengthBytes,omitempty"`
 }
 
 // Patch describes a binary patch to apply to a static handler response before
@@ -172,7 +172,10 @@ type Command struct {
 	CloseAfter bool           `yaml:"closeAfter" json:"closeAfter,omitempty"`
 	TLSUpgrade bool           `yaml:"tlsUpgrade" json:"tlsUpgrade,omitempty"`
 	TLSFraming *Framing       `yaml:"tlsFraming,omitempty" json:"tlsFraming,omitempty"`
-	Patches    []Patch        `yaml:"patches" json:"patches,omitempty"`
+	// NextFraming replaces the active framing after this command has matched and
+	// its response has been written, while preserving any pipelined bytes.
+	NextFraming *Framing `yaml:"nextFraming,omitempty" json:"nextFraming,omitempty"`
+	Patches     []Patch  `yaml:"patches" json:"patches,omitempty"`
 	// BinaryOutput marks a plugin's output as raw (Latin-1 encoded) bytes rather
 	// than UTF-8 text, so it is written byte-for-byte like a static handler.
 	BinaryOutput bool `yaml:"binaryOutput" json:"binaryOutput,omitempty"`

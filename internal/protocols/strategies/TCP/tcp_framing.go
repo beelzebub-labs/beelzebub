@@ -13,8 +13,8 @@ import (
 // to add noticeable latency, long enough to reassemble a split binary message.
 const accumulationGrace = 150 * time.Millisecond
 
-// maxFrameSize bounds a single length-prefixed frame to avoid huge allocations
-// driven by a malicious/garbage length field.
+// maxFrameSize bounds a single application frame to avoid huge allocations
+// driven by malicious or malformed framing metadata.
 const maxFrameSize = 1 << 20 // 1 MiB
 
 // maxOpportunisticBufferSize bounds the non-framed accumulation path. Framed
@@ -92,13 +92,23 @@ func validFraming(f *parser.Framing) bool {
 	if f == nil {
 		return false
 	}
-	if f.Mode == "ber" {
+	switch f.Mode {
+	case "ber":
 		return true
+	case "fixed":
+		return f.FixedSize > 0 && f.FixedSize <= maxFrameSize
+	case "varint-length-prefix":
+		return f.LengthOffset >= 0 && f.LengthOffset <= maxFrameSize &&
+			f.MaxLengthBytes >= 1 && f.MaxLengthBytes <= 8 &&
+			f.LengthOffset <= maxFrameSize-f.MaxLengthBytes
+	case "", "length-prefix":
+		return f.LengthOffset >= 0 && f.LengthOffset <= maxFrameSize &&
+			f.LengthSize >= 1 && f.LengthSize <= 8 &&
+			f.HeaderSize >= 0 && f.HeaderSize <= maxFrameSize &&
+			f.LengthOffset <= maxFrameSize-f.LengthSize
+	default:
+		return false
 	}
-	return (f.Mode == "" || f.Mode == "length-prefix") &&
-		f.LengthOffset >= 0 && f.LengthOffset <= maxFrameSize &&
-		f.LengthSize >= 1 && f.LengthSize <= 8 &&
-		f.HeaderSize >= 0 && f.HeaderSize <= maxFrameSize
 }
 
 func (r *connReader) nextFramed() ([]byte, error) {
@@ -106,9 +116,15 @@ func (r *connReader) nextFramed() ([]byte, error) {
 	if !validFraming(f) {
 		return nil, errInvalidFrame
 	}
-	if f.Mode == "ber" {
+	switch f.Mode {
+	case "ber":
 		return r.nextBERFrame()
+	case "fixed":
+		return r.nextFixedFrame()
+	case "varint-length-prefix":
+		return r.nextVarintLengthFrame()
 	}
+
 	if f.LengthOffset > maxFrameSize-f.LengthSize {
 		return nil, errInvalidFrame
 	}
@@ -148,6 +164,55 @@ func (r *connReader) nextFramed() ([]byte, error) {
 	// backing array (and so the array isn't kept alive by a small leftover).
 	r.buf = append([]byte(nil), r.buf[total:]...)
 	return msg, nil
+}
+
+func (r *connReader) nextFixedFrame() ([]byte, error) {
+	total := r.framing.FixedSize
+	if err := r.fillUntil(total); err != nil {
+		return r.takeBuffer(), err
+	}
+	msg := append([]byte(nil), r.buf[:total]...)
+	r.buf = append([]byte(nil), r.buf[total:]...)
+	return msg, nil
+}
+
+// nextVarintLengthFrame reads an unsigned base-128 little-endian length field.
+// The bytes before LengthOffset are part of the frame, the encoded varint ends
+// the header, and the decoded value is the number of payload bytes that follow.
+func (r *connReader) nextVarintLengthFrame() ([]byte, error) {
+	f := r.framing
+	value := 0
+	multiplier := 1
+	for i := 0; i < f.MaxLengthBytes; i++ {
+		lengthByteIndex := f.LengthOffset + i
+		if err := r.fillUntil(lengthByteIndex + 1); err != nil {
+			return r.takeBuffer(), err
+		}
+		encoded := r.buf[lengthByteIndex]
+		part := int(encoded & 0x7f)
+		if part > (maxFrameSize-value)/multiplier {
+			return r.takeBuffer(), errInvalidFrame
+		}
+		value += part * multiplier
+		if encoded&0x80 == 0 {
+			headerEnd := lengthByteIndex + 1
+			if value > maxFrameSize-headerEnd {
+				return r.takeBuffer(), errInvalidFrame
+			}
+			total := headerEnd + value
+			if err := r.fillUntil(total); err != nil {
+				return r.takeBuffer(), err
+			}
+			msg := append([]byte(nil), r.buf[:total]...)
+			r.buf = append([]byte(nil), r.buf[total:]...)
+			return msg, nil
+		}
+		if i == f.MaxLengthBytes-1 || multiplier > maxFrameSize/128 {
+			return r.takeBuffer(), errInvalidFrame
+		}
+		multiplier *= 128
+	}
+	return r.takeBuffer(), errInvalidFrame
 }
 
 func (r *connReader) nextBERFrame() ([]byte, error) {

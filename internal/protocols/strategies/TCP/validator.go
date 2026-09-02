@@ -31,6 +31,12 @@ func (v *TCPValidator) Validate(config parser.BeelzebubServiceConfiguration) []p
 	}
 
 	issues = append(issues, validateFraming("framing", config.Framing)...)
+	if config.WireEncoding == "latin1" && config.Framing == nil {
+		issues = append(issues, parser.ValidationIssue{
+			Level:   parser.LevelError,
+			Message: "wireEncoding latin1 requires explicit framing so TCP fragments are not dispatched as complete binary messages",
+		})
+	}
 
 	registered := pluginapi.WireNames()
 	known := make(map[string]struct{}, len(registered))
@@ -62,6 +68,7 @@ func (v *TCPValidator) Validate(config parser.BeelzebubServiceConfiguration) []p
 
 	for i, command := range config.Commands {
 		issues = append(issues, validateFraming(fmt.Sprintf("command[%d].tlsFraming", i), command.TLSFraming)...)
+		issues = append(issues, validateFraming(fmt.Sprintf("command[%d].nextFraming", i), command.NextFraming)...)
 		if command.TLSFraming != nil && !command.TLSUpgrade {
 			issues = append(issues, parser.ValidationIssue{
 				Level:   parser.LevelError,
@@ -72,6 +79,12 @@ func (v *TCPValidator) Validate(config parser.BeelzebubServiceConfiguration) []p
 			issues = append(issues, parser.ValidationIssue{
 				Level:   parser.LevelWarning,
 				Message: fmt.Sprintf("command[%d] enables tlsUpgrade and closeAfter; the TLS connection will close immediately after the handshake", i),
+			})
+		}
+		if command.NextFraming != nil && command.TLSUpgrade {
+			issues = append(issues, parser.ValidationIssue{
+				Level:   parser.LevelError,
+				Message: fmt.Sprintf("command[%d] cannot combine nextFraming with tlsUpgrade; use tlsFraming for the encrypted phase", i),
 			})
 		}
 		for j, patch := range command.Patches {
@@ -94,6 +107,18 @@ func validateFraming(field string, framing *parser.Framing) []parser.ValidationI
 	switch framing.Mode {
 	case "ber":
 		return nil
+	case "fixed":
+		if framing.FixedSize > 0 && framing.FixedSize <= maxFrameSize {
+			return nil
+		}
+		return []parser.ValidationIssue{{Level: parser.LevelError, Message: field + " fixedSize is invalid"}}
+	case "varint-length-prefix":
+		if framing.LengthOffset >= 0 && framing.LengthOffset <= maxFrameSize &&
+			framing.MaxLengthBytes >= 1 && framing.MaxLengthBytes <= 8 &&
+			framing.LengthOffset <= maxFrameSize-framing.MaxLengthBytes {
+			return nil
+		}
+		return []parser.ValidationIssue{{Level: parser.LevelError, Message: field + " varint-length-prefix fields are invalid"}}
 	case "", "length-prefix":
 		if framing.LengthOffset >= 0 && framing.LengthOffset <= maxFrameSize &&
 			framing.LengthSize >= 1 && framing.LengthSize <= 8 &&

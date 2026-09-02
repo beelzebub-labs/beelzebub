@@ -73,6 +73,32 @@ func TestTCPValidator_WirePluginRegistry(t *testing.T) {
 	assert.Contains(t, issues[0].Message, "surrounding whitespace")
 }
 
+func TestTCPValidator_BinaryEncodingRequiresFraming(t *testing.T) {
+	v := &TCPValidator{}
+	issues := v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "tcp", WireEncoding: "latin1"})
+	assert.Len(t, issues, 1)
+	assert.Equal(t, parser.LevelError, issues[0].Level)
+	assert.Contains(t, issues[0].Message, "requires explicit framing")
+}
+
+func TestTCPValidator_FixedAndVarintFraming(t *testing.T) {
+	v := &TCPValidator{}
+	for _, framing := range []*parser.Framing{
+		{Mode: "fixed", FixedSize: 12},
+		{Mode: "varint-length-prefix", LengthOffset: 1, MaxLengthBytes: 4},
+	} {
+		issues := v.Validate(parser.BeelzebubServiceConfiguration{Protocol: "tcp", WireEncoding: "latin1", Framing: framing})
+		assert.Empty(t, issues)
+	}
+
+	issues := v.Validate(parser.BeelzebubServiceConfiguration{
+		Protocol: "tcp",
+		Commands: []parser.Command{{TLSUpgrade: true, NextFraming: &parser.Framing{Mode: "fixed", FixedSize: 1}}},
+	})
+	assert.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Message, "cannot combine nextFraming with tlsUpgrade")
+}
+
 func TestTCPValidator_OnlyCert(t *testing.T) {
 	v := &TCPValidator{}
 	config := parser.BeelzebubServiceConfiguration{

@@ -565,8 +565,8 @@ func (s *tcpSession) serve(conn net.Conn) {
 
 	histories := s.loadHistory()
 
-	// Message reader: with a framing spec it reads one length-prefixed frame at
-	// a time (split-read/pipeline safe); otherwise it accumulates opportunistically
+	// Message reader: with a framing spec it reads one application frame at a
+	// time (split-read/pipeline safe); otherwise it accumulates opportunistically
 	// until a handler can match. A fresh reader is rebuilt after a TLS upgrade so
 	// it reads from the encrypted connection.
 	currentFraming := s.servConf.Framing
@@ -574,6 +574,13 @@ func (s *tcpSession) serve(conn net.Conn) {
 
 	for {
 		rawBuffer, err := reader.nextMessage(s.servConf.Commands)
+		// Framed readers only dispatch complete application messages. Any data
+		// returned with an error is a truncated or malformed frame retained for
+		// diagnostics, never a command candidate.
+		if err != nil && reader.framing != nil {
+			log.Debugf("tcp framed read failed with %d buffered bytes: %v", len(rawBuffer), err)
+			return
+		}
 		if len(rawBuffer) == 0 {
 			break
 		}
@@ -628,6 +635,11 @@ func (s *tcpSession) serve(conn net.Conn) {
 					currentFraming = command.TLSFraming
 				}
 				reader = &connReader{conn: conn, framing: currentFraming, wireEncoding: s.servConf.WireEncoding, cutoff: s.cutoff}
+			} else if command.NextFraming != nil {
+				// Keep the existing reader so bytes already read past the current
+				// frame remain available under the new framing mode.
+				currentFraming = command.NextFraming
+				reader.framing = currentFraming
 			}
 
 			if command.CloseAfter {

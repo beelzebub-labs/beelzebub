@@ -187,6 +187,17 @@ The shipped VNC service is the reference implementation: its
 wire plugin correlates each random challenge with the client's authentication
 response and records a John the Ripper-compatible value.
 
+### Binary TCP Framing
+
+Binary TCP services declare application-message boundaries independently from
+command regexes. `length-prefix` handles fixed-width length fields, `ber` reads
+one top-level TLV, `fixed` reads an exact byte count, and
+`varint-length-prefix` handles unsigned base-128 lengths such as MQTT Remaining
+Length. A matched command may set `nextFraming` to transition a stateful
+connection while retaining already-buffered bytes. Services using
+`wireEncoding: latin1` must configure framing, so TCP fragmentation cannot cause
+partial binary messages to reach command handlers.
+
 ### Writing a Plugin
 
 ```go

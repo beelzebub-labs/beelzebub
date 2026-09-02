@@ -142,9 +142,14 @@ func TestVNCCompat_AuthCredentialCapture(t *testing.T) {
 		t.Fatalf("banner = %q, want \"RFB 003.008\\n\"", banner)
 	}
 
-	// 2. Client echoes the ProtocolVersion → server replies security types.
-	if _, err := conn.Write([]byte("RFB 003.008\n")); err != nil {
-		t.Fatalf("write version: %v", err)
+	// 2. Client echoes the ProtocolVersion in two TCP writes. The server must
+	// wait for the terminating newline before dispatching the version command.
+	if _, err := conn.Write([]byte("RFB 003.008")); err != nil {
+		t.Fatalf("write partial version: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if _, err := conn.Write([]byte("\n")); err != nil {
+		t.Fatalf("write version terminator: %v", err)
 	}
 	secTypes := make([]byte, 2)
 	if _, err := io.ReadFull(conn, secTypes); err != nil {
