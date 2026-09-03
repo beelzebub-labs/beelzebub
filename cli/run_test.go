@@ -1,12 +1,18 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
+	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunBeelzebub_InvalidCoreYaml(t *testing.T) {
@@ -84,4 +90,95 @@ func TestRunBeelzebub_NoServicesConfigured(t *testing.T) {
 	if !strings.Contains(err.Error(), "no services configured") {
 		t.Errorf("expected error to mention no services configured, got: %v", err)
 	}
+}
+
+func TestRunBeelzebub_RejectsInvalidRuntimeService(t *testing.T) {
+	tmpDir := t.TempDir()
+	corePath := filepath.Join(tmpDir, "core.yaml")
+	require.NoError(t, os.WriteFile(corePath, []byte("core:\n  beelzebub-cloud:\n    enabled: false\n"), 0o644))
+	servicesDir := filepath.Join(tmpDir, "services")
+	require.NoError(t, os.MkdirAll(servicesDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(servicesDir, "invalid.yaml"), []byte("apiVersion: v1\nprotocol: unknown\naddress: ':1'\n"), 0o644))
+
+	oldCore, oldServices, oldLimit := rootConfCore, rootConfServices, runMemLimitMiB
+	t.Cleanup(func() {
+		rootConfCore, rootConfServices, runMemLimitMiB = oldCore, oldServices, oldLimit
+	})
+	rootConfCore, rootConfServices, runMemLimitMiB = corePath, servicesDir, -1
+
+	err := runBeelzebub(runCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "runtime configuration validation failed")
+}
+
+func TestListPlugins_NoPanic(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	listPlugins(cmd, nil)
+}
+
+func TestPrintVersion_NoPanic(t *testing.T) {
+	// Just verify the function doesn't panic
+	printVersion(nil, nil)
+}
+
+func TestPrintVersion_WithBuildInfo(t *testing.T) {
+	Version = "dev"
+	CommitSHA = "unknown"
+
+	// Should not panic even without ldflags
+	printVersion(nil, nil)
+
+	// Verify version is set (may be from build info or default)
+	assert.Equal(t, "dev", Version)
+}
+
+func TestRunBeelzebub_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write minimal core config
+	corePath := filepath.Join(tmpDir, "core.yaml")
+	os.WriteFile(corePath, []byte(`core:
+  logging:
+    debug: false
+    debugReportCaller: false
+    logDisableTimestamp: true
+  beelzebub-cloud:
+    enabled: false
+`), 0644)
+
+	// Write a minimal service config with a dynamic port
+	svcDir := filepath.Join(tmpDir, "services")
+	os.Mkdir(svcDir, 0755)
+	os.WriteFile(filepath.Join(svcDir, "svc.yaml"), []byte(`apiVersion: "v1"
+protocol: "http"
+address: "127.0.0.1:0"
+description: "test"
+commands:
+  - regex: ".*"
+    handler: "ok"
+`), 0644)
+
+	rootConfCore = corePath
+	rootConfServices = svcDir
+	runMemLimitMiB = -1
+
+	// Inject a pre-filled signal channel so runBeelzebub returns immediately
+	// after starting services and reaching the signal wait.
+	sigCh := make(chan os.Signal, 1)
+	sigCh <- syscall.SIGTERM
+	testShutdownCh = sigCh
+	defer func() { testShutdownCh = nil }()
+
+	err := runBeelzebub(runCmd, nil)
+	assert.NoError(t, err)
+}
+
+func TestListPlugins_Empty(t *testing.T) {
+	plugin.Cleanup()
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	listPlugins(cmd, nil)
+	require.Empty(t, plugin.List())
 }

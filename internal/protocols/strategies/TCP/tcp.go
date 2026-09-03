@@ -2,9 +2,11 @@ package TCP
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -19,41 +21,108 @@ import (
 )
 
 type TCPStrategy struct {
-	Sessions *historystore.HistoryStore
+	Sessions    *historystore.HistoryStore
+	listeners   map[string]net.Listener
+	listenerWgs map[string]*sync.WaitGroup
+	cleanerOnce sync.Once
 }
 
+var listenTCP = net.Listen
+
 func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
+	if oldListener, ok := tcpStrategy.listeners[servConf.Address]; ok {
+		oldListener.Close()
+		if oldWg, ok := tcpStrategy.listenerWgs[servConf.Address]; ok {
+			oldWg.Wait()
+			delete(tcpStrategy.listenerWgs, servConf.Address)
+		}
+	}
+
 	if tcpStrategy.Sessions == nil {
 		tcpStrategy.Sessions = historystore.NewHistoryStore()
 	}
-	go tcpStrategy.Sessions.HistoryCleaner()
+	tcpStrategy.cleanerOnce.Do(func() {
+		go tcpStrategy.Sessions.HistoryCleaner()
+	})
 
-	listen, err := net.Listen("tcp", servConf.Address)
+	listen, err := listenTCP("tcp", servConf.Address)
 	if err != nil {
 		log.Errorf("Error during init TCP Protocol: %s", err.Error())
 		return err
 	}
 
+	if tcpStrategy.listeners == nil {
+		tcpStrategy.listeners = make(map[string]net.Listener)
+	}
+	if tcpStrategy.listenerWgs == nil {
+		tcpStrategy.listenerWgs = make(map[string]*sync.WaitGroup)
+	}
+	tcpStrategy.listeners[servConf.Address] = listen
+
+	listenerWg := &sync.WaitGroup{}
+	listenerWg.Add(1)
+	tcpStrategy.listenerWgs[servConf.Address] = listenerWg
 	go func() {
+		defer listenerWg.Done()
 		for {
-			if conn, err := listen.Accept(); err == nil {
-				go func(c net.Conn) {
-					defer func() {
-						if r := recover(); r != nil {
-							log.Errorf("panic in TCP handler: %v", r)
-						}
-					}()
-					handleTCPConnection(c, servConf, tr, tcpStrategy)
-				}(conn)
+			conn, err := listen.Accept()
+			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+				log.Errorf("error accepting TCP connection: %s", err.Error())
+				continue
 			}
+			go func(c net.Conn) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Errorf("panic in TCP handler: %v", r)
+					}
+				}()
+				handleTCPConnection(c, servConf, tr, tcpStrategy)
+			}(conn)
 		}
 	}()
 
-	log.WithFields(log.Fields{
-		"port":     servConf.Address,
-		"banner":   servConf.Banner,
-		"commands": len(servConf.Commands),
-	}).Infof("Init service %s", servConf.Protocol)
+	return nil
+}
+
+func (tcpStrategy *TCPStrategy) StopAll() error {
+	if tcpStrategy.Sessions != nil {
+		tcpStrategy.Sessions.Close()
+	}
+	tcpStrategy.cleanerOnce = sync.Once{}
+
+	var errs []error
+	for _, listener := range tcpStrategy.listeners {
+		if err := listener.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, listenerWg := range tcpStrategy.listenerWgs {
+		listenerWg.Wait()
+	}
+	tcpStrategy.listeners = nil
+	tcpStrategy.listenerWgs = nil
+	if len(errs) > 0 {
+		return fmt.Errorf("tcp stop errors: %w", errors.Join(errs...))
+	}
+	return nil
+}
+
+func (tcpStrategy *TCPStrategy) Stop(servConf parser.BeelzebubServiceConfiguration) error {
+	listener, ok := tcpStrategy.listeners[servConf.Address]
+	if !ok {
+		return nil
+	}
+	if err := listener.Close(); err != nil {
+		return err
+	}
+	if listenerWg, ok := tcpStrategy.listenerWgs[servConf.Address]; ok {
+		listenerWg.Wait()
+		delete(tcpStrategy.listenerWgs, servConf.Address)
+	}
+	delete(tcpStrategy.listeners, servConf.Address)
 	return nil
 }
 
@@ -64,12 +133,10 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
-	// Send banner if configured
 	if servConf.Banner != "" {
 		conn.Write(fmt.Appendf([]byte{}, "%s\n", servConf.Banner))
 	}
 
-	// Backward compatibility: if no commands configured, use legacy behavior
 	if len(servConf.Commands) == 0 {
 		buffer := make([]byte, 1024)
 		command := ""
@@ -97,7 +164,6 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		return
 	}
 
-	// Interactive session mode
 	sessionID := uuid.New()
 	sessionKey := "TCP" + host
 
@@ -112,13 +178,11 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		Description: servConf.Description,
 	})
 
-	// Load history for LLM context
 	var histories []plugins.Message
 	if tcpStrategy.Sessions.HasKey(sessionKey) {
 		histories = tcpStrategy.Sessions.Query(sessionKey)
 	}
 
-	// Interactive command loop
 	for {
 		buffer := make([]byte, 4096)
 		n, err := conn.Read(buffer)
@@ -128,15 +192,11 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 
 		commandInput := strings.TrimRight(string(buffer[:n]), "\r\n")
 
-		// Preserve the exact bytes when they are not valid UTF-8 (binary
-		// protocols), so the forensic record survives string()'s U+FFFD
-		// substitution. Empty for UTF-8 traffic.
 		commandRaw := ""
 		if !utf8.Valid(buffer[:n]) {
 			commandRaw = hexEscapeNonPrintable(buffer[:n])
 		}
 
-		// Match command against regexes
 		matched := false
 		for _, command := range servConf.Commands {
 			if command.Regex.MatchString(commandInput) {
@@ -147,7 +207,6 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 					handlerName = "configured_regex"
 				}
 
-				// Plugin dispatch via registry
 				if command.Plugin != "" {
 					if cp, ok := plugin.GetCommand(command.Plugin); ok {
 						output, err := cp.Execute(context.Background(), plugin.CommandRequest{
@@ -167,14 +226,12 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 					}
 				}
 
-				// Store command and response in history
 				var newEntries []plugins.Message
 				newEntries = append(newEntries, plugins.Message{Role: plugins.USER.String(), Content: commandInput})
 				newEntries = append(newEntries, plugins.Message{Role: plugins.ASSISTANT.String(), Content: commandOutput})
 				tcpStrategy.Sessions.Append(sessionKey, newEntries...)
 				histories = append(histories, newEntries...)
 
-				// Send response to client
 				if commandOutput != "" {
 					_, err := conn.Write([]byte(commandOutput))
 					if err != nil {
@@ -182,7 +239,6 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 					}
 				}
 
-				// Trace interaction event
 				tr.TraceEvent(tracer.Event{
 					Msg:           "TCP Session Interaction",
 					RemoteAddr:    conn.RemoteAddr().String(),
@@ -202,7 +258,6 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 			}
 		}
 
-		// If no command matched
 		if !matched {
 			tr.TraceEvent(tracer.Event{
 				Msg:         "TCP Session Interaction",
@@ -220,7 +275,6 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 		}
 	}
 
-	// Trace session end
 	tr.TraceEvent(tracer.Event{
 		Msg:      "End TCP Session",
 		Status:   tracer.End.String(),
@@ -229,10 +283,6 @@ func handleTCPConnection(conn net.Conn, servConf parser.BeelzebubServiceConfigur
 	})
 }
 
-// hexEscapeNonPrintable renders b as printable ASCII, emitting every
-// non-printable byte (and the backslash itself) as \xNN. The result is safe to
-// store in trace events, JSON, and TEXT columns while remaining reversible to
-// the original bytes.
 func hexEscapeNonPrintable(b []byte) string {
 	var sb strings.Builder
 	sb.Grow(len(b))

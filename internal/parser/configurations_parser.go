@@ -1,4 +1,3 @@
-// Package parser is responsible for parsing the configurations of the core and honeypot service
 package parser
 
 import (
@@ -43,9 +42,10 @@ type Tracings struct {
 }
 
 type BeelzebubCloud struct {
-	Enabled   bool   `yaml:"enabled"`
-	URI       string `yaml:"uri"`
-	AuthToken string `yaml:"auth-token"`
+	Enabled                bool   `yaml:"enabled"`
+	URI                    string `yaml:"uri"`
+	AuthToken              string `yaml:"auth-token"`
+	PollingIntervalSeconds int    `yaml:"pollingIntervalSeconds"`
 }
 type RabbitMQ struct {
 	Enabled bool   `yaml:"enabled"`
@@ -187,6 +187,9 @@ func (bp configurationsParser) ReadConfigurationsCore() (*BeelzebubCoreConfigura
 
 	if err := applyEnvOverrides(beelzebubConfiguration); err != nil {
 		return nil, fmt.Errorf("environment configuration: %v", err)
+	}
+	if beelzebubConfiguration.Core.BeelzebubCloud.PollingIntervalSeconds <= 0 {
+		beelzebubConfiguration.Core.BeelzebubCloud.PollingIntervalSeconds = 15
 	}
 	return beelzebubConfiguration, nil
 }

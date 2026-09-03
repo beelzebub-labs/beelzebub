@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -15,6 +14,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 )
+
+type OnConfigChanged func(newConfigs []parser.BeelzebubServiceConfiguration, hash string) error
 
 type EventDTO struct {
 	DateTime        string
@@ -43,13 +44,14 @@ type EventDTO struct {
 	TLSServerName   string
 }
 
-type beelzebubCloud struct {
+type BeelzebubCloud struct {
 	URI             string
 	AuthToken       string
 	client          *resty.Client
 	PollingInterval time.Duration
 	ctx             context.Context
 	cancel          context.CancelFunc
+	onChange        OnConfigChanged
 }
 
 type HoneypotConfigResponseDTO struct {
@@ -59,27 +61,34 @@ type HoneypotConfigResponseDTO struct {
 	LastUpdatedOn string `json:"lastUpdatedOn"`
 }
 
-func InitBeelzebubCloud(uri, authToken string, enableVerifyConfigurationsChanged bool) *beelzebubCloud {
+func InitBeelzebubCloud(uri, authToken string, onChange OnConfigChanged, pollingInterval time.Duration, client *resty.Client) *BeelzebubCloud {
 	ctx, cancel := context.WithCancel(context.Background())
-	beelzebubCloud := &beelzebubCloud{
+	if pollingInterval <= 0 {
+		pollingInterval = 15 * time.Second
+	}
+	if client == nil {
+		client = resty.New()
+	}
+	beelzebubCloud := &BeelzebubCloud{
 		URI:             uri,
 		AuthToken:       authToken,
-		client:          resty.New(),
-		PollingInterval: 15 * time.Second,
+		client:          client,
+		PollingInterval: pollingInterval,
 		ctx:             ctx,
 		cancel:          cancel,
+		onChange:        onChange,
 	}
-	if enableVerifyConfigurationsChanged {
+	if onChange != nil {
 		go func() {
 			if err := beelzebubCloud.verifyConfigurationsChanged(); err != nil {
-				log.Fatalf("Error verify configurations changed: %s", err.Error())
+				log.Errorf("Error verify configurations changed: %s", err.Error())
 			}
 		}()
 	}
 	return beelzebubCloud
 }
 
-func (beelzebubCloud *beelzebubCloud) SendEvent(event tracer.Event) (bool, error) {
+func (beelzebubCloud *BeelzebubCloud) SendEvent(event tracer.Event) (bool, error) {
 	eventDTO, err := beelzebubCloud.mapToEventDTO(event)
 	if err != nil {
 		return false, err
@@ -110,7 +119,7 @@ func (beelzebubCloud *beelzebubCloud) SendEvent(event tracer.Event) (bool, error
 	return response.StatusCode() == 200, nil
 }
 
-func (beelzebubCloud *beelzebubCloud) GetHoneypotsConfigurations() ([]parser.BeelzebubServiceConfiguration, string, error) {
+func (beelzebubCloud *BeelzebubCloud) GetHoneypotsConfigurations() ([]parser.BeelzebubServiceConfiguration, string, error) {
 	if beelzebubCloud.AuthToken == "" {
 		return nil, "", errors.New("authToken is empty")
 	}
@@ -150,6 +159,17 @@ func (beelzebubCloud *beelzebubCloud) GetHoneypotsConfigurations() ([]parser.Bee
 		if err := honeypotsConfig.CompileTrustedProxies(); err != nil {
 			return nil, "", fmt.Errorf("unable to load service config from cloud: TrustedProxies %v", err)
 		}
+		if validation := parser.Validate([]parser.BeelzebubServiceConfiguration{honeypotsConfig}, nil); validation.TotalErrors > 0 {
+			var messages []string
+			for _, result := range validation.Results {
+				for _, issue := range result.Issues {
+					if issue.Level == parser.LevelError {
+						messages = append(messages, issue.Message)
+					}
+				}
+			}
+			return nil, "", fmt.Errorf("unable to load service config from cloud: validation failed: %s", strings.Join(messages, "; "))
+		}
 		servicesConfiguration = append(servicesConfiguration, honeypotsConfig)
 
 		if hashCode, err := honeypotsConfig.HashCode(); err != nil {
@@ -163,22 +183,25 @@ func (beelzebubCloud *beelzebubCloud) GetHoneypotsConfigurations() ([]parser.Bee
 	return servicesConfiguration, localHashBuilder.String(), nil
 }
 
-var exitFunction func(code int) = os.Exit
-
-func (beelzebubCloud *beelzebubCloud) Stop() {
+func (beelzebubCloud *BeelzebubCloud) Stop() {
 	beelzebubCloud.cancel()
 }
 
-func (beelzebubCloud *beelzebubCloud) checkConfigurationsChanged(lastHash string) (newHash string, changed bool, err error) {
-	_, configurationsHash, err := beelzebubCloud.GetHoneypotsConfigurations()
-	if err != nil {
-		return "", false, err
-	}
-	return configurationsHash, lastHash != "" && lastHash != configurationsHash, nil
+func (beelzebubCloud *BeelzebubCloud) checkConfigurationsChanged(lastHash string) (configs []parser.BeelzebubServiceConfiguration, newHash string, changed bool, err error) {
+	return beelzebubCloud.checkConfigurationsChangedWithState(lastHash, lastHash != "")
 }
 
-func (beelzebubCloud *beelzebubCloud) verifyConfigurationsChanged() error {
+func (beelzebubCloud *BeelzebubCloud) checkConfigurationsChangedWithState(lastHash string, initialized bool) (configs []parser.BeelzebubServiceConfiguration, newHash string, changed bool, err error) {
+	configs, configurationsHash, err := beelzebubCloud.GetHoneypotsConfigurations()
+	if err != nil {
+		return nil, "", false, err
+	}
+	return configs, configurationsHash, initialized && lastHash != configurationsHash, nil
+}
+
+func (beelzebubCloud *BeelzebubCloud) verifyConfigurationsChanged() error {
 	var lastHash = ""
+	initialized := false
 	for {
 		select {
 		case <-beelzebubCloud.ctx.Done():
@@ -186,24 +209,47 @@ func (beelzebubCloud *beelzebubCloud) verifyConfigurationsChanged() error {
 		default:
 		}
 
-		newHash, changed, err := beelzebubCloud.checkConfigurationsChanged(lastHash)
+		configs, newHash, changed, err := beelzebubCloud.checkConfigurationsChangedWithState(lastHash, initialized)
 		if err != nil {
-			return err
+			log.Errorf("Error verifying configurations changed: %s", err.Error())
+			if !beelzebubCloud.waitForPollingInterval() {
+				return nil
+			}
+			continue
 		}
 		if changed {
 			log.Debug("Configurations changed.")
-			exitFunction(0)
+			if beelzebubCloud.onChange != nil {
+				if err := beelzebubCloud.onChange(configs, newHash); err != nil {
+					log.Errorf("Error applying cloud configuration: %s", err.Error())
+					if !beelzebubCloud.waitForPollingInterval() {
+						return nil
+					}
+					continue
+				}
+			}
 		}
 		lastHash = newHash
-		select {
-		case <-time.After(beelzebubCloud.PollingInterval):
-		case <-beelzebubCloud.ctx.Done():
+		initialized = true
+		if !beelzebubCloud.waitForPollingInterval() {
 			return nil
 		}
 	}
 }
 
-func (beelzebubCloud *beelzebubCloud) mapToEventDTO(event tracer.Event) (EventDTO, error) {
+func (beelzebubCloud *BeelzebubCloud) waitForPollingInterval() bool {
+	timer := time.NewTimer(beelzebubCloud.PollingInterval)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return true
+	case <-beelzebubCloud.ctx.Done():
+		return false
+	}
+}
+
+func (beelzebubCloud *BeelzebubCloud) mapToEventDTO(event tracer.Event) (EventDTO, error) {
 	eventDTO := EventDTO{
 		DateTime:        event.DateTime,
 		RemoteAddr:      event.RemoteAddr,

@@ -2,7 +2,6 @@ package main
 
 import (
 	"embed"
-	"errors"
 	"os"
 	"path/filepath"
 )
@@ -13,10 +12,6 @@ var embeddedConfigurations embed.FS
 func persistEmbeddedPluginLockfile() {
 	raw, err := embeddedConfigurations.ReadFile("configurations/lockfile.yaml")
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return
-		}
-
 		return
 	}
 

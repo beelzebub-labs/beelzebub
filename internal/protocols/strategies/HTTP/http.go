@@ -2,12 +2,15 @@ package HTTP
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
@@ -18,7 +21,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type HTTPStrategy struct{}
+type HTTPStrategy struct {
+	servers   map[string]*http.Server
+	listeners map[string]net.Listener
+}
 
 type httpResponse struct {
 	StatusCode int
@@ -26,30 +32,110 @@ type httpResponse struct {
 	Body       string
 }
 
-func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
+func (httpStrategy *HTTPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
+	if oldServer, ok := httpStrategy.servers[servConf.Address]; ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		oldServer.Shutdown(ctx)
+		cancel()
+	}
+	if oldListener, ok := httpStrategy.listeners[servConf.Address]; ok {
+		if err := oldListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			log.Errorf("error closing old HTTP listener on %s: %v", servConf.Address, err)
+		}
+		delete(httpStrategy.listeners, servConf.Address)
+	}
+
 	serverMux := http.NewServeMux()
 
 	serverMux.HandleFunc("/", newHTTPHandler(servConf, tr))
-	go func() {
-		var err error
-		// Launch a TLS supporting server if we are supplied a TLS Key and Certificate.
-		// If relative paths are supplied, they are relative to the CWD of the binary.
-		// The can be self-signed, only the client will validate this (or not).
-		if servConf.TLSKeyPath != "" && servConf.TLSCertPath != "" {
-			err = http.ListenAndServeTLS(servConf.Address, servConf.TLSCertPath, servConf.TLSKeyPath, serverMux)
-		} else {
-			err = http.ListenAndServe(servConf.Address, serverMux)
-		}
+
+	srv := &http.Server{
+		Addr:    servConf.Address,
+		Handler: serverMux,
+	}
+
+	listener, err := net.Listen("tcp", servConf.Address)
+	if err != nil {
+		return fmt.Errorf("error binding HTTP server on %s: %w", servConf.Address, err)
+	}
+
+	var serve func() error
+	if servConf.TLSKeyPath != "" && servConf.TLSCertPath != "" {
+		certificate, err := tls.LoadX509KeyPair(servConf.TLSCertPath, servConf.TLSKeyPath)
 		if err != nil {
+			listener.Close()
+			return fmt.Errorf("error loading HTTP TLS certificate: %w", err)
+		}
+		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{certificate}}
+		serve = func() error { return srv.ServeTLS(listener, "", "") }
+	} else {
+		serve = func() error { return srv.Serve(listener) }
+	}
+
+	if httpStrategy.servers == nil {
+		httpStrategy.servers = make(map[string]*http.Server)
+	}
+	if httpStrategy.listeners == nil {
+		httpStrategy.listeners = make(map[string]net.Listener)
+	}
+	httpStrategy.servers[servConf.Address] = srv
+	httpStrategy.listeners[servConf.Address] = listener
+	go func() {
+		err := serve()
+		if err != nil && err != http.ErrServerClosed {
 			log.Errorf("error during init HTTP Protocol: %v", err)
 			return
 		}
 	}()
 
-	log.WithFields(log.Fields{
-		"port":     servConf.Address,
-		"commands": len(servConf.Commands),
-	}).Infof("Init service: %s", servConf.Description)
+	return nil
+}
+
+func (httpStrategy *HTTPStrategy) StopAll() error {
+	var errs []error
+	for address, srv := range httpStrategy.servers {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Errorf("error shutting down HTTP server: %s", err.Error())
+			errs = append(errs, err)
+		}
+		cancel()
+		if listener, ok := httpStrategy.listeners[address]; ok {
+			if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				errs = append(errs, err)
+			}
+		}
+	}
+	httpStrategy.servers = nil
+	httpStrategy.listeners = nil
+	if len(errs) > 0 {
+		return fmt.Errorf("http stop errors: %w", errors.Join(errs...))
+	}
+	return nil
+}
+
+func (httpStrategy *HTTPStrategy) Stop(servConf parser.BeelzebubServiceConfiguration) error {
+	srv, ok := httpStrategy.servers[servConf.Address]
+	if !ok {
+		return nil
+	}
+	var errs []error
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Errorf("error shutting down HTTP server on %s: %s", servConf.Address, err.Error())
+		errs = append(errs, err)
+	}
+	cancel()
+	if listener, ok := httpStrategy.listeners[servConf.Address]; ok {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	delete(httpStrategy.servers, servConf.Address)
+	delete(httpStrategy.listeners, servConf.Address)
 	return nil
 }
 
@@ -114,7 +200,6 @@ func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.
 		StatusCode: command.StatusCode,
 	}
 
-	// Limit body read to 1MB to prevent DoS attacks
 	bodyBytes, err := io.ReadAll(io.LimitReader(request.Body, 1024*1024))
 	body := ""
 	if err == nil {
@@ -139,9 +224,6 @@ func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.
 			}
 			resp.Body = output
 		} else if hp, ok := plugin.GetHTTP(command.Plugin); ok {
-			// For HTTP-specific plugins (e.g. MazeHoneypot) that need full
-			// request context and return their own status/headers.
-			// ServerVersion and ServerName are injected here from service config.
 			if command.Plugin == plugins.MazePluginName {
 				maze := &plugins.MazeHoneypot{
 					ServerVersion: servConf.ServerVersion,
@@ -197,7 +279,6 @@ func traceRequest(request *http.Request, tr tracer.Tracer, command parser.Comman
 		Description:     HoneypotDescription,
 		Handler:         command.Name,
 	}
-	// Capture the TLS details from the request, if provided.
 	if request.TLS != nil {
 		event.Msg = "HTTPS New Request"
 		event.TLSServerName = request.TLS.ServerName
@@ -304,7 +385,6 @@ func setResponseHeaders(responseWriter http.ResponseWriter, headers []string, st
 			responseWriter.Header().Add(keyValue[0], keyValue[1])
 		}
 	}
-	// http.StatusText(statusCode): empty string if the code is unknown.
 	if len(http.StatusText(statusCode)) > 0 {
 		responseWriter.WriteHeader(statusCode)
 	}

@@ -13,7 +13,7 @@ services:
       - "2222:2222"
       - "8080:8080"
       - "8081:8081"
-      - "80:80"
+      - "8082:80" # HTTP honeypot — 80 lasciata libera per Caddy reverse proxy
       - "3306:3306"
       - "2112:2112" #Prometheus Open Metrics
     env_file:

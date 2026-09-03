@@ -7,16 +7,15 @@ import (
 	"io"
 	"net/http"
 	"os"
-
-	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/MCP"
-	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/TELNET"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols"
-	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/HTTP"
-	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/SSH"
-	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/TCP"
+	"github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/MCP"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
 
@@ -27,6 +26,12 @@ import (
 
 const RabbitmqQueueName = "event"
 
+var (
+	amqpDial            = amqp.Dial
+	amqpCloseChannel    = func(ch *amqp.Channel) error { return ch.Close() }
+	amqpCloseConnection = func(conn *amqp.Connection) error { return conn.Close() }
+)
+
 type Builder struct {
 	beelzebubServicesConfiguration []parser.BeelzebubServiceConfiguration
 	beelzebubCoreConfigurations    *parser.BeelzebubCoreConfigurations
@@ -36,6 +41,13 @@ type Builder struct {
 	logsFile                       *os.File
 	startedServices                []plugin.ServicePlugin
 	servicesCancel                 context.CancelFunc
+
+	serviceGroup     *protocols.ServiceGroup
+	prometheusServer *http.Server
+	beelzebubCloud   *plugins.BeelzebubCloud
+
+	reloadMu sync.Mutex
+	closing  atomic.Bool
 }
 
 func (b *Builder) setTraceStrategy(traceStrategy tracer.Strategy) {
@@ -69,18 +81,19 @@ func (b *Builder) buildLogger(configurations parser.Logging) error {
 }
 
 func (b *Builder) buildRabbitMQ(rabbitMQURI string) error {
-	rabbitMQConnection, err := amqp.Dial(rabbitMQURI)
+	rabbitMQConnection, err := amqpDial(rabbitMQURI)
 	if err != nil {
 		return err
 	}
 
 	b.rabbitMQChannel, err = rabbitMQConnection.Channel()
 	if err != nil {
+		rabbitMQConnection.Close()
 		return err
 	}
 
-	//creates a queue if it doesn't already exist, or ensures that an existing queue matches the same parameters.
 	if _, err = b.rabbitMQChannel.QueueDeclare(RabbitmqQueueName, false, false, false, false, nil); err != nil {
+		rabbitMQConnection.Close()
 		return err
 	}
 
@@ -89,53 +102,88 @@ func (b *Builder) buildRabbitMQ(rabbitMQURI string) error {
 }
 
 func (b *Builder) Close() error {
-	// Stop background service plugins first so their goroutines drain before
-	// other teardown.
+	b.reloadMu.Lock()
+	defer b.reloadMu.Unlock()
+
+	if !b.closing.CompareAndSwap(false, true) {
+		return nil
+	}
+
 	if b.servicesCancel != nil {
 		b.servicesCancel()
 	}
 	for _, svc := range b.startedServices {
 		svc.Stop()
 	}
+	b.startedServices = nil
+	b.servicesCancel = nil
 
-	// Close log file if it was opened
-	if b.logsFile != nil {
-		if err := b.logsFile.Close(); err != nil {
-			return err
+	if b.serviceGroup != nil {
+		if err := b.serviceGroup.StopAll(); err != nil {
+			log.Errorf("error stopping protocol servers: %s", err.Error())
 		}
 	}
 
-	// Close RabbitMQ connections
+	if b.beelzebubCloud != nil {
+		b.beelzebubCloud.Stop()
+	}
+
+	if b.prometheusServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := b.prometheusServer.Shutdown(ctx); err != nil {
+			log.Errorf("error shutting down Prometheus server: %s", err.Error())
+		}
+		cancel()
+		b.prometheusServer = nil
+	}
+
+	if b.logsFile != nil {
+		if err := b.logsFile.Close(); err != nil {
+			log.Errorf("error closing log file: %s", err.Error())
+		}
+	}
+
+	var errs []error
+	if b.rabbitMQChannel != nil {
+		if err := amqpCloseChannel(b.rabbitMQChannel); err != nil {
+			errs = append(errs, fmt.Errorf("error closing RabbitMQ channel: %w", err))
+		} else {
+			b.rabbitMQChannel = nil
+		}
+	}
 	if b.rabbitMQConnection != nil {
-		if err := b.rabbitMQChannel.Close(); err != nil {
-			return err
+		if err := amqpCloseConnection(b.rabbitMQConnection); err != nil {
+			errs = append(errs, fmt.Errorf("error closing RabbitMQ connection: %w", err))
+		} else {
+			b.rabbitMQConnection = nil
 		}
-		if err := b.rabbitMQConnection.Close(); err != nil {
-			return err
-		}
+	}
+	if len(errs) > 0 {
+		b.closing.Store(false)
+		return errors.Join(errs...)
 	}
 	return nil
 }
 
 func (b *Builder) Run() error {
-	fmt.Println(
-		`
-██████  ███████ ███████ ██      ███████ ███████ ██████  ██    ██ ██████  
-██   ██ ██      ██      ██         ███  ██      ██   ██ ██    ██ ██   ██ 
-██████  █████   █████   ██        ███   █████   ██████  ██    ██ ██████  
-██   ██ ██      ██      ██       ███    ██      ██   ██ ██    ██ ██   ██ 
-██████  ███████ ███████ ███████ ███████ ███████ ██████   ██████  ██████  
-Deception runtime framework, happy hacking!`)
-	// Init Prometheus openmetrics
-	go func() {
-		if (b.beelzebubCoreConfigurations.Core.Prometheus != parser.Prometheus{}) {
-			http.Handle(b.beelzebubCoreConfigurations.Core.Prometheus.Path, promhttp.Handler())
 
-			if err := http.ListenAndServe(b.beelzebubCoreConfigurations.Core.Prometheus.Port, nil); err != nil {
-				log.Fatalf("Error init Prometheus: %s", err.Error())
+	// Init Prometheus openmetrics with explicit server and custom mux
+	if (b.beelzebubCoreConfigurations.Core.Prometheus != parser.Prometheus{}) {
+		if b.prometheusServer == nil {
+			promMux := http.NewServeMux()
+			promMux.Handle(b.beelzebubCoreConfigurations.Core.Prometheus.Path, promhttp.Handler())
+			promSrv := &http.Server{
+				Addr:    b.beelzebubCoreConfigurations.Core.Prometheus.Port,
+				Handler: promMux,
 			}
+			b.prometheusServer = promSrv
+			go func() {
+				if err := promSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					log.Errorf("Error init Prometheus: %s", err.Error())
+				}
+			}()
 		}
-	}()
+	}
 
 	// Start registered background service plugins.
 	svcCtx, cancel := context.WithCancel(context.Background())
@@ -149,60 +197,100 @@ Deception runtime framework, happy hacking!`)
 		b.startedServices = append(b.startedServices, svc)
 	}
 
-	// Init Protocol strategies
-	secureShellStrategy := &SSH.SSHStrategy{}
-	hypertextTransferProtocolStrategy := &HTTP.HTTPStrategy{}
-	transmissionControlProtocolStrategy := &TCP.TCPStrategy{}
-	modelContextProtocolStrategy := &MCP.MCPStrategy{}
-	telnetStrategy := &TELNET.TelnetStrategy{}
+	// Init Protocol strategies via ServiceGroup
+	b.serviceGroup = protocols.NewServiceGroup(b.traceStrategy)
 
-	// Init Tracer strategies, and set the trace strategy default HTTP
-	protocolManager := protocols.InitProtocolManager(b.traceStrategy, hypertextTransferProtocolStrategy)
+	// Wire the deploy callback into the MCP strategy so tools can
+	// deploy honeypot configurations at runtime.
+	if mcpStrategy, ok := b.serviceGroup.StrategyForProtocol("mcp").(*MCP.MCPStrategy); ok {
+		mcpStrategy.SetDeployFn(b.DeployService)
+	}
 
 	if b.beelzebubCoreConfigurations.Core.BeelzebubCloud.Enabled {
 		conf := b.beelzebubCoreConfigurations.Core.BeelzebubCloud
 
-		beelzebubCloud := plugins.InitBeelzebubCloud(conf.URI, conf.AuthToken, true)
+		cloud := plugins.InitBeelzebubCloud(conf.URI, conf.AuthToken, b.handleCloudConfigChange, time.Duration(conf.PollingIntervalSeconds)*time.Second, nil)
 
-		if honeypotsConfiguration, _, err := beelzebubCloud.GetHoneypotsConfigurations(); err != nil {
+		b.beelzebubCloud = cloud
+
+		if honeypotsConfiguration, _, err := cloud.GetHoneypotsConfigurations(); err != nil {
 			return err
 		} else {
-			if len(honeypotsConfiguration) == 0 {
-				return errors.New("no honeypots configuration found")
-			}
 			b.beelzebubServicesConfiguration = honeypotsConfiguration
 		}
 	}
 
-	for _, beelzebubServiceConfiguration := range b.beelzebubServicesConfiguration {
-		switch beelzebubServiceConfiguration.Protocol {
-		case "http":
-			protocolManager.SetProtocolStrategy(hypertextTransferProtocolStrategy)
-		case "ssh":
-			protocolManager.SetProtocolStrategy(secureShellStrategy)
-		case "tcp":
-			protocolManager.SetProtocolStrategy(transmissionControlProtocolStrategy)
-		case "mcp":
-			protocolManager.SetProtocolStrategy(modelContextProtocolStrategy)
-		case "telnet":
-			protocolManager.SetProtocolStrategy(telnetStrategy)
-		default:
-			log.Fatalf("protocol %s not managed", beelzebubServiceConfiguration.Protocol)
-		}
-
-		if err := protocolManager.InitService(beelzebubServiceConfiguration); err != nil {
-			return fmt.Errorf("error during init protocol: %s, %s", beelzebubServiceConfiguration.Protocol, err.Error())
-		}
+	if err := b.serviceGroup.InitServices(b.beelzebubServicesConfiguration); err != nil {
+		return err
 	}
 
+	log.Infof("Started %d service(s)", len(b.beelzebubServicesConfiguration))
 	return nil
 }
 
+func (b *Builder) handleCloudConfigChange(newConfigs []parser.BeelzebubServiceConfiguration, _ string) error {
+	return b.Reload(newConfigs)
+}
+
+func (b *Builder) Reload(newConfigs []parser.BeelzebubServiceConfiguration) error {
+	b.reloadMu.Lock()
+	defer b.reloadMu.Unlock()
+
+	if b.closing.Load() {
+		log.Warn("reload skipped: builder is closing")
+		return nil
+	}
+
+	if b.serviceGroup == nil {
+		return errors.New("reload called before Run()")
+	}
+
+	if err := b.serviceGroup.Reload(b.beelzebubServicesConfiguration, newConfigs); err != nil {
+		return err
+	}
+
+	b.beelzebubServicesConfiguration = newConfigs
+	return nil
+}
+
+func (b *Builder) DeployService(cfg parser.BeelzebubServiceConfiguration) error {
+	b.reloadMu.Lock()
+	defer b.reloadMu.Unlock()
+
+	if b.closing.Load() {
+		return errors.New("builder is closing")
+	}
+
+	key := cfg.Protocol + ":" + cfg.Address
+	for _, existing := range b.beelzebubServicesConfiguration {
+		if existing.Protocol+":"+existing.Address == key {
+			return fmt.Errorf("service %s already exists", key)
+		}
+	}
+
+	strategy := b.serviceGroup.StrategyForProtocol(cfg.Protocol)
+	if strategy == nil {
+		return fmt.Errorf("protocol %q not supported", cfg.Protocol)
+	}
+
+	if err := b.serviceGroup.InitService(cfg, strategy); err != nil {
+		return fmt.Errorf("failed to deploy %s: %w", key, err)
+	}
+
+	b.beelzebubServicesConfiguration = append(b.beelzebubServicesConfiguration, cfg)
+	log.Infof("Deployed %s %s", strings.ToUpper(cfg.Protocol), cfg.Address)
+	return nil
+}
+
+// build returns a degraded Builder for the initial startup phase.
+// Only the configuration and tracing fields survive; the caller should
+// use the original Builder (not the build copy) for Reload / Close.
 func (b *Builder) build() *Builder {
 	return &Builder{
 		beelzebubServicesConfiguration: b.beelzebubServicesConfiguration,
 		traceStrategy:                  b.traceStrategy,
 		beelzebubCoreConfigurations:    b.beelzebubCoreConfigurations,
+		prometheusServer:               b.prometheusServer,
 	}
 }
 

@@ -3,6 +3,7 @@ package plugin_test
 import (
 	"context"
 	"net/http"
+	"sort"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
@@ -25,6 +26,14 @@ func (s *stubHTTP) Metadata() plugin.Metadata { return plugin.Metadata{Name: s.n
 func (s *stubHTTP) HandleHTTP(_ *http.Request) plugin.HTTPResponse {
 	return plugin.HTTPResponse{StatusCode: 200, Body: "maze"}
 }
+
+type stubService struct{ name string }
+
+func (s *stubService) Metadata() plugin.Metadata {
+	return plugin.Metadata{Name: s.name, Version: "1.0.0"}
+}
+func (s *stubService) Start(_ context.Context) error { return nil }
+func (s *stubService) Stop()                         {}
 
 func TestRegister_Get(t *testing.T) {
 	cmd := &stubCommand{name: "TestCmd_" + t.Name()}
@@ -109,4 +118,51 @@ func TestRegister_Duplicate_Panics(t *testing.T) {
 	assert.Panics(t, func() {
 		plugin.Register(&stubCommand{name: name})
 	})
+}
+
+func TestServices_FiltersAndSortsByName(t *testing.T) {
+	nameA := "TestServices_A_" + t.Name()
+	nameB := "TestServices_B_" + t.Name()
+	baseline := serviceNames(plugin.Services())
+	plugin.Register(&stubService{name: nameB})
+	plugin.Register(&stubCommand{name: "TestServices_Command_" + t.Name()})
+	plugin.Register(&stubService{name: nameA})
+
+	expected := append(baseline, nameA, nameB)
+	sort.Strings(expected)
+
+	require.Equal(t, expected, serviceNames(plugin.Services()))
+}
+
+func TestCleanup_RemovesRegisteredPlugins(t *testing.T) {
+	plugins := make([]plugin.Plugin, 0, len(plugin.List()))
+	cleaned := false
+	t.Cleanup(func() {
+		if !cleaned {
+			return
+		}
+		for _, registered := range plugins {
+			plugin.Register(registered)
+		}
+	})
+
+	for _, metadata := range plugin.List() {
+		registered, ok := plugin.Get(metadata.Name)
+		require.True(t, ok)
+		plugins = append(plugins, registered)
+	}
+
+	plugin.Cleanup()
+	cleaned = true
+
+	assert.Empty(t, plugin.List())
+}
+
+func serviceNames(services []plugin.ServicePlugin) []string {
+	names := make([]string, 0, len(services))
+	for _, service := range services {
+		names = append(names, service.Metadata().Name)
+	}
+	sort.Strings(names)
+	return names
 }

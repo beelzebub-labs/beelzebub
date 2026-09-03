@@ -20,8 +20,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var exitProcess = os.Exit
+var resolveAbsolutePath = filepath.Abs
+var readConfigFile = os.ReadFile
+
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	exitProcess(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -45,7 +49,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	absConfigs, err := filepath.Abs(*configsDir)
+	absConfigs, err := resolveAbsolutePath(*configsDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: resolving configs path: %v\n", err)
 		return 1
@@ -72,7 +76,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		total++
 
 		filePath := filepath.Join(absConfigs, entry.Name())
-		data, err := os.ReadFile(filePath)
+		data, err := readConfigFile(filePath)
 		if err != nil {
 			results = append(results, result{File: entry.Name(), Errors: []string{fmt.Sprintf("reading file: %v", err)}})
 			continue
