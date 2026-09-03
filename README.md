@@ -6,7 +6,7 @@
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/beelzebub-labs/beelzebub)](https://archestra.ai/mcp-catalog/beelzebub-labs__beelzebub)
 [![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go)
 
-**Open-source deception runtime for SSH, HTTP, TCP, TELNET, and MCP.** Beelzebub deploys realistic decoys, collects high-fidelity threat intelligence, detects prompt-injection attempts against AI agents, and can be extended with trusted Go plugins.
+**Open-source deception runtime framework.** Beelzebub deploys realistic decoys, collects high-fidelity threat intelligence, detects prompt-injection attempts against AI agents, and can be extended with trusted Go plugins.
 
 ![GitHub Beelzebub - Inception Program](https://github.com/user-attachments/assets/e180d602-6de9-4c48-92ad-eb0ef3c5322d)
 
