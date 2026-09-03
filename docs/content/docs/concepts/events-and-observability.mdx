@@ -1,0 +1,10 @@
+---
+title: Events And Observability
+description: Collect interaction evidence through logs, Prometheus, RabbitMQ, and optional Cloud reporting.
+---
+
+Every interaction becomes a tracer event with protocol, source address, command/request data, response, status, identity fields, and protocol-specific metadata. Binary TCP input that is not valid UTF-8 is preserved in `CommandRaw`.
+
+Prometheus exposes `beelzebub_events_total` plus protocol counters such as `beelzebub_ssh_events_total`, `beelzebub_http_events_total`, `beelzebub_tcp_events_total`, `beelzebub_telnet_events_total`, and `beelzebub_mcp_events_total` at the configured endpoint (default `:2112/metrics`).
+
+RabbitMQ publishes structured JSON to the `event` queue when enabled. Cloud reporting is optional; read [Cloud integration](../../operations/integrations) before sending captured data outside the host.

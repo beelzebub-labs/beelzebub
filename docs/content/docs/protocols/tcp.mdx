@@ -1,0 +1,8 @@
+---
+title: TCP Deception
+description: Emulate text and binary TCP services with banners, handlers, and optional LLM responses.
+---
+
+Use `banner` for an initial service fingerprint and `commands` for subsequent payload matching. Redis, Memcached, MySQL, LDAP, SMB, RDP, VNC, MQTT, and PostgreSQL examples are checked into `configurations/services/`. Invalid UTF-8 input is retained in the event’s `CommandRaw` field.
+
+TCP has no HTTP method or MCP tool model. Keep regexes and handlers protocol-aware, and test with the real client or a byte-preserving tool.

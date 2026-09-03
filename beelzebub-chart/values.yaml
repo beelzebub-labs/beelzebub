@@ -4,7 +4,7 @@ replicaCount: 1
 image:
   repository: m4r10/beelzebub
   pullPolicy: IfNotPresent
-  tag: v3.0.0
+  tag: v3.9.1
 
 
 beelzebubCoreConfigs: |

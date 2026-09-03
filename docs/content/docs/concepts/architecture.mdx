@@ -1,0 +1,10 @@
+---
+title: Runtime Architecture
+description: How configuration, protocol strategies, plugins, and tracing fit together.
+---
+
+At startup the CLI reads core YAML and either service YAML files or the `BEELZEBUB_SERVICES_CONFIG` JSON array. It validates the result, builds one protocol strategy per service, and starts listeners. Each strategy emits a common tracer event; the configured tracing strategy writes logs and can forward events to RabbitMQ or Beelzebub Cloud.
+
+<RuntimeArchitecture />
+
+Commands can return static handlers or dispatch to a registered `CommandPlugin`. HTTP plugins can control status, headers, and body; service plugins can run background work. External plugins are compiled into the same process as the runtime and therefore must be trusted like runtime code.

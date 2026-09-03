@@ -1,0 +1,16 @@
+---
+title: Configuration Validation
+description: Understand schema errors, procedural checks, warnings, and CI validation commands.
+---
+
+Validation combines embedded draft-07 JSON Schemas with Go checks. Schemas enforce types, required fields, enums, protocol-specific shape, TLS pairs, rate-limit dependencies, and plugin conditions. Go checks compile regexes, parse trusted proxy networks, check file paths, detect address collisions, validate cross-field rules, and emit quality warnings.
+
+```bash
+make validate-specs
+make validate-all
+beelzebub validate --conf-core ./configurations/beelzebub.yaml --conf-services ./configurations/services/
+```
+
+Errors make the runtime unsafe to start. Warnings do not necessarily stop startup, but should be reviewed for timeouts, inline secrets, missing fallbacks, malformed headers, and handler-less routes.
+
+The maintained schema files are downloadable from `/schemas/` and live in the repository’s `specs/` directory.

@@ -1,0 +1,38 @@
+---
+title: Quick Start
+description: Start the repository's example deception services with Docker in an authorized lab.
+---
+
+This path uses the repository's installer and checked-in example bundle. It does not require Go on the host, but the default bundle includes privileged and non-privileged listeners. Run it only on an isolated lab host where every configured port is authorized.
+
+## Prerequisites
+
+- Docker Engine with Compose v2.
+- Git and a shell with `curl` if you are cloning the repository yourself.
+- A lab host or network where you have authorization to run a decoy.
+
+## Run It
+
+```bash
+git clone https://github.com/beelzebub-labs/beelzebub.git
+cd beelzebub
+./install.sh --docker
+```
+
+The installer builds the image, starts the Compose service, and mounts `configurations/` into the container. On Linux it may use host networking so the sensor can observe host interfaces. On Docker Desktop it publishes the Compose ports and reports ports that are already in use.
+
+The repository's default bundle includes many examples. To run only one non-privileged listener, replace the service-directory contents in a disposable checkout with the maintained `http-lab.yaml` from [your first service](../first-service) before invoking the installer.
+
+## Verify and Inspect
+
+```bash
+curl -i http://localhost:8080/
+docker compose logs -f beelzebub
+curl http://localhost:2112/metrics | grep beelzebub_
+```
+
+Stop the lab with `docker compose down`. Remove the generated container state only after deciding how captured events and logs should be retained.
+
+<Callout type="warn" title="Do not use real credentials">
+  Passwords, request bodies, headers, environment values, and commands can be captured as events. Use synthetic data and isolate outbound network access before testing.
+</Callout>

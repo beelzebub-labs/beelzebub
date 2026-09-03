@@ -1,0 +1,4 @@
+{
+  "title": "Recipes",
+  "pages": ["http-decoy", "llm-ssh", "mcp-tripwire", "tcp-service", "observability", "external-plugin"]
+}

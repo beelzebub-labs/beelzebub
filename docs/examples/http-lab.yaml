@@ -1,0 +1,14 @@
+apiVersion: "v1"
+protocol: "http"
+address: ":8080"
+description: "Lab HTTP decoy"
+commands:
+  - regex: "^/$"
+    methods: [GET, HEAD]
+    handler: "<html><body><h1>Internal portal</h1></body></html>"
+    headers:
+      - "Content-Type: text/html"
+    statusCode: 200
+  - regex: "^.*$"
+    handler: "Not found"
+    statusCode: 404

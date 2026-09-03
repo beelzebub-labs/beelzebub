@@ -1,0 +1,15 @@
+---
+title: Docker And Compose
+description: Operate Beelzebub in a reproducible containerized deployment.
+---
+
+The image is built in two stages and runs from a minimal scratch image. The builder installs declared plugins and compiles one binary; Compose mounts `configurations/` and `state/` and publishes the configured ports.
+
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose logs -f beelzebub
+docker compose down
+```
+
+Use build arguments or the environment for private plugin access. Review port publishing, restart policy, volumes, and host networking before production use. The container entrypoint is `main run`.

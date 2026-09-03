@@ -1,0 +1,18 @@
+---
+title: Protocols
+description: Choose the deception strategy that matches the attack surface you want to observe.
+---
+
+| Protocol | Best for | Required shape |
+| --- | --- | --- |
+| HTTP | Web applications, APIs, crawlers | `commands` and method-aware routes |
+| SSH | Interactive shells and credential attacks | server identity, password regex, commands |
+| TCP | Databases, brokers, binary services | banner and/or command handlers |
+| TELNET | Routers, switches, legacy terminals | server identity, password regex, commands |
+| MCP | AI-agent tool surfaces | one or more decoy `tools` |
+
+All services share `apiVersion`, `protocol`, `address`, descriptions, timeouts, TLS/proxy options, and plugin settings. Protocol pages explain the differences and link to tested examples.
+
+## Beyond Beelzebub Runtime
+
+<BeyondRuntime />

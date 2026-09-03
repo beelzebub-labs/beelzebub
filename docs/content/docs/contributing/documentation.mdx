@@ -1,0 +1,18 @@
+---
+title: Documentation Workflow
+description: Author reliable Fumadocs pages and repository-backed examples.
+---
+
+Run the docs project with Node.js 22.12+ and pnpm 11.15. The `packageManager` field pins the pnpm release; Corepack can activate it locally.
+
+```bash
+cd docs
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev
+pnpm test
+```
+
+Use Title Case for page titles, require a useful description, prefer short task-oriented pages, link to the authoritative source, and mark configuration snippets that should be validator-tested. Keep diagrams limited to architecture, lifecycle, and data-flow relationships that are clearer visually than in prose.
+
+The site is static and deploys from `docs/dist/`. Set `SITE_URL` when building a preview or alternate origin.

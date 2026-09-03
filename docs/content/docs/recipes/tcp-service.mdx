@@ -1,0 +1,6 @@
+---
+title: TCP Service Emulation
+description: Emulate a text or binary service with a banner, ordered payload handlers, and byte-safe evidence.
+---
+
+Start with `examples/tcp-redis.yaml` or adapt one of the checked-in database and broker examples. Exercise it with the real client where possible. For binary protocols, confirm that the event’s `CommandRaw` preserves non-UTF-8 input.

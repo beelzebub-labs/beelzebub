@@ -1,0 +1,42 @@
+{
+  "name": "beelzebub-docs",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.15.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "verify": "node scripts/verify-content.mjs",
+    "verify:dist": "node scripts/verify-dist.mjs",
+    "verify:external": "node scripts/check-external-links.mjs",
+    "test": "pnpm check && pnpm verify && pnpm build && pnpm verify:dist"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "^7.3.0",
+    "@astrojs/mdx": "^8.0.0",
+    "@astrojs/react": "^6.0.5",
+    "@astrojs/sitemap": "^3.7.0",
+    "astro": "^7.2.10",
+    "fumadocs-core": "^16.15.4",
+    "fumadocs-ui": "^16.15.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "sharp": "^0.35.4",
+    "takumi-js": "2.13.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.6",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3"
+  }
+}

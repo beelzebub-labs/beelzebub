@@ -1,0 +1,38 @@
+---
+title: Home
+description: Deploy adaptive deception services for infrastructure and AI agent attack surfaces.
+keywords: [honeypot, deception, cybersecurity, MCP, LLM]
+---
+
+Beelzebub is an open-source deception runtime for SSH, HTTP, TCP, TELNET, and MCP. Define realistic decoys in YAML, collect high-fidelity events, and extend the runtime with Go plugins.
+
+<div class="not-prose grid gap-4 sm:grid-cols-3 my-8">
+  <a class="rounded-xl border p-4 hover:bg-fd-accent" href="/getting-started/quick-start"><strong>Deploy your first decoy</strong><br /><span class="text-fd-muted-foreground">Start safely with Docker.</span></a>
+  <a class="rounded-xl border p-4 hover:bg-fd-accent" href="/concepts/architecture"><strong>Understand the runtime</strong><br /><span class="text-fd-muted-foreground">Follow configuration and events.</span></a>
+  <a class="rounded-xl border p-4 hover:bg-fd-accent" href="/plugins/authoring"><strong>Build an extension</strong><br /><span class="text-fd-muted-foreground">Add a trusted Go plugin.</span></a>
+</div>
+
+## Choose Your Path
+
+- **Security operators:** install, configure, expose, monitor, and safely retire decoys.
+- **AI security teams:** deploy MCP tripwires and LLM-powered interactions to measure agent guardrail bypasses.
+- **Developers:** use the public plugin SDK, add protocols, and keep schemas, validators, tests, and docs aligned.
+
+<Callout type="warn" title="Use only on systems you are authorized to monitor">
+  Honeypots intentionally collect attacker input and may expose sensitive data through logs, queues, cloud integrations, or LLM providers. Begin in an isolated lab and read the production safety guide before internet exposure.
+</Callout>
+
+## Current Release
+
+These pages describe the repository’s latest stable release, **v3.9.1**. The documentation is latest-only; use the release tag and the checked-in schemas as the compatibility boundary for deployments.
+
+<Cards>
+  <Card title="Install" href="/getting-started/installation" />
+  <Card title="Configuration" href="/reference/configuration" />
+  <Card title="Protocols" href="/protocols" />
+  <Card title="Operations" href="/operations/production-safety" />
+</Cards>
+
+## Beyond Beelzebub Runtime
+
+<BeyondRuntime />

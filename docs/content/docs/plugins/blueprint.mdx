@@ -1,0 +1,113 @@
+---
+title: Start From The Plugin Blueprint
+description: Turn the maintained Beelzebub blueprint into a tested, installable external plugin.
+---
+
+The [Beelzebub Plugin Blueprint](https://github.com/beelzebub-labs/beelzebub-plugin-blueprint) is the shortest supported starting point for an external plugin. It is deliberately small enough to audit: one Go package, one manifest, and one behavior test.
+
+<Cards>
+  <Card title="Open The Blueprint" href="https://github.com/beelzebub-labs/beelzebub-plugin-blueprint" external />
+  <Card title="Review The Plugin SDK" href="/plugins/authoring" />
+  <Card title="Understand The Manifest" href="/plugins/manifest-and-config" />
+</Cards>
+
+## What The Blueprint Provides
+
+| File | Purpose | First Change To Make |
+| --- | --- | --- |
+| `hello_demon.go` | Implements `plugin.CommandPlugin` and registers it from `init()` | Rename the package and type, then replace the example response |
+| `hello_demon_test.go` | Exercises the plugin directly without starting the runtime | Add success, failure, empty-input, and protocol-specific cases |
+| `plugins.yaml` | Describes the installable plugin to Beelzebub | Change its identity, module, version, compatibility, and description |
+| `go.mod` | Defines the standalone module and Beelzebub SDK dependency | Replace the module path and select the compatible runtime release |
+| `go.sum` | Locks Go dependency checksums | Regenerate it with `go mod tidy` |
+
+The example registers as `hello-demon`, requires Beelzebub `v3.8.0` or newer, and demonstrates a command response that works across HTTP, SSH, TCP, and TELNET routes.
+
+## Create Your Repository
+
+Clone the blueprint outside the Beelzebub runtime checkout, remove its upstream history, and point it at a repository you control:
+
+```bash
+git clone https://github.com/beelzebub-labs/beelzebub-plugin-blueprint.git my-beelzebub-plugin
+cd my-beelzebub-plugin
+git remote remove origin
+git remote add origin https://github.com/your-org/my-beelzebub-plugin.git
+```
+
+Do not publish the first commit yet. Finish the identity changes below so consumers never install a plugin that still claims the blueprint's module or metadata name.
+
+## Give The Plugin A Unique Identity
+
+Keep these values aligned:
+
+1. Change the `module` directive in `go.mod` to the final repository module path.
+2. Set the same path in `plugins.yaml` under `module`.
+3. Choose a stable, unique `name` in `plugins.yaml`.
+4. Return that same name from `Metadata()` in Go.
+5. Update the version, author, description, and `min-core-version` in the manifest.
+6. Rename the package, source files, exported type, and tests to match the plugin's purpose.
+
+The installer rejects a manifest whose module does not match `go.mod`. At runtime, duplicate metadata names panic during registration, so treat the name as a public identifier.
+
+## Choose An Extension Point
+
+The blueprint implements `CommandPlugin`. Keep it for text responses, or replace it with another public SDK interface:
+
+| Interface | Use It For | Contract |
+| --- | --- | --- |
+| `CommandPlugin` | SSH, TCP, TELNET, or HTTP-body response generation | `Execute(context.Context, plugin.CommandRequest) (string, error)` |
+| `HTTPPlugin` | Full control of HTTP status, headers, content type, and body | `HandleHTTP(*http.Request) plugin.HTTPResponse` |
+| `ServicePlugin` | A long-running service managed with the runtime lifecycle | `Start(context.Context) error` and `Stop()` |
+
+Every implementation must provide `Metadata()` and keep automatic registration:
+
+```go
+func init() {
+    plugin.Register(&YourPlugin{})
+}
+```
+
+Keep import-time work limited to registration. Open sockets, create clients, and start goroutines only inside the appropriate request or service lifecycle method.
+
+## Test And Prepare A Release
+
+Run the plugin's own checks before testing it in a runtime checkout:
+
+```bash
+go mod tidy
+go test ./...
+go vet ./...
+```
+
+Test attacker-controlled empty, oversized, and malformed input. Use timeouts and context cancellation for network calls, avoid logging secrets, and make `Stop()` safe to call during shutdown. For configuration, prefer the fields exposed by `plugin.Config` and environment variables over hard-coded credentials.
+
+Commit `go.mod`, `go.sum`, `plugins.yaml`, implementation, tests, license, and a README. Tag releases so operators can pin an immutable ref instead of following a moving branch.
+
+## Install Your Plugin Into Beelzebub
+
+From a Beelzebub runtime checkout, install a published tag without rebuilding immediately:
+
+```bash
+beelzebub plugin install https://github.com/your-org/my-beelzebub-plugin@v0.1.0 --no-build
+beelzebub plugin list
+make build
+```
+
+For a local development loop, the installer also accepts an absolute path, `./relative-path`, or `file://` source. Installed plugins execute in-process with the runtime's permissions, so review dependencies and pin trusted refs before deployment.
+
+Finally, reference the value returned by `Metadata().Name` from a service route and place specific plugin routes before catch-all handlers. Follow the [external plugin recipe](/recipes/external-plugin) for a complete install-and-invoke example.
+
+## Release Checklist
+
+- The manifest module exactly matches `go.mod`.
+- The manifest and `Metadata()` use the same unique plugin name and version.
+- `min-core-version` reflects the oldest runtime release you tested.
+- `init()` registers the intended implementation once.
+- Unit tests cover normal and hostile input without requiring production secrets.
+- Network activity honors context cancellation, timeouts, and bounded responses.
+- The README documents configuration, supported protocols, data handling, and an uninstall path.
+- A version tag is available for reproducible installation.
+
+## Beyond Beelzebub Runtime
+
+<BeyondRuntime />

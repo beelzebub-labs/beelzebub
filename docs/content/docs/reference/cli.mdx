@@ -1,0 +1,26 @@
+---
+title: CLI Reference
+description: Commands and flags for running, validating, inspecting, and extending Beelzebub.
+---
+
+Global flags are inherited by every subcommand and may appear before or after the command:
+
+```text
+-c, --conf-core       core YAML path (default ./configurations/beelzebub.yaml)
+-s, --conf-services   service directory (default ./configurations/services/)
+-l, --log-level       debug, info, warn, error, fatal, or panic (default info)
+```
+
+| Command | Arguments and flags | Behavior |
+| --- | --- | --- |
+| `beelzebub run` | `-m, --mem-limit-mib` (default `100`; `-1` disables) | Validate, build, and start every configured service; stop gracefully on SIGINT/SIGTERM |
+| `beelzebub validate` | no local flags | Parse schemas and procedural rules without opening listeners; warnings do not change the exit status |
+| `beelzebub version` | no local flags | Print version, commit, build date, Go version, and OS/architecture |
+| `beelzebub plugin list` | no local flags | Compare locked plugins with plugins compiled into the binary |
+| `beelzebub plugin install [github-link]` | `--ref`, `--token`, `--force`, `--no-build` | Install one repository and declare it, or install every declaration when no link is supplied |
+| `beelzebub plugin update [name]` | `--token` | Re-fetch one or every declared plugin, update pins, and rebuild |
+| `beelzebub plugin remove <name>` | aliases `uninstall`, `rm` | Remove the declaration and installed source, then rebuild |
+
+`--token` overrides `BEELZEBUB_GITHUB_TOKEN`. Plugin installation and update rebuild the local binary unless installation uses `--no-build`.
+
+Run `beelzebub --help` and each subcommand's `--help` for the binary's exact generated text.

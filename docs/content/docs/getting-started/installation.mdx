@@ -1,0 +1,50 @@
+---
+title: Installation Options
+description: Choose the deployment mode that matches your lab or production environment.
+---
+
+## Installer (Recommended for a First Run)
+
+```bash
+./install.sh --docker
+./install.sh --local
+./install.sh --local --no-run
+```
+
+The installer can also be run interactively with `./install.sh`. `-y` enables unattended prerequisite prompts. `--plugin`, `--token`, `--uri`, `--github-token`, and `--ref` configure plugins, optional Cloud reporting, private repositories, and the checkout ref.
+
+## Local Go Build
+
+```bash
+go run . plugin install --no-build
+make build
+./beelzebub run
+```
+
+Local mode requires Go 1.25.9, Git, and Make. The default examples include privileged ports; run as an appropriately isolated user or select a non-privileged service set.
+
+## Compose Directly
+
+```bash
+docker compose up -d --build
+docker compose logs -f beelzebub
+```
+
+Compose builds declared plugins inside the image and mounts `configurations/` and `state/`. Pass `BEELZEBUB_GITHUB_TOKEN` through the build environment for private plugin sources.
+
+## Helm
+
+```bash
+helm install beelzebub ./beelzebub-chart
+helm upgrade beelzebub ./beelzebub-chart
+```
+
+Review and override the chart values before exposing a service. The chart mounts one core configuration and one service configuration into the pod; its service port must match the configured service address.
+
+## Upgrades
+
+Pin Git checkouts, Docker image tags, Helm image tags, and plugin refs in controlled environments. Run `beelzebub validate` and a smoke test before switching traffic to a new runtime.
+
+## Beyond Beelzebub Runtime
+
+<BeyondRuntime />
