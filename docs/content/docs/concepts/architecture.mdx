@@ -7,4 +7,4 @@ At startup the CLI reads core YAML and either service YAML files or the `BEELZEB
 
 <RuntimeArchitecture />
 
-Commands can return static handlers or dispatch to a registered `CommandPlugin`. HTTP plugins can control status, headers, and body; service plugins can run background work. External plugins are compiled into the same process as the runtime and therefore must be trusted like runtime code.
+Commands can return static handlers or dispatch to a registered `CommandPlugin`. HTTP plugins can control status, headers, and body; service plugins can run background work. The TCP strategy can frame binary application messages and invoke service-scoped `WirePlugin` hooks after building a response but before writing it and emitting the final event. External plugins are compiled into the same process as the runtime and therefore must be trusted like runtime code.

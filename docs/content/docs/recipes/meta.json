@@ -1,4 +1,4 @@
 {
   "title": "Recipes",
-  "pages": ["http-decoy", "llm-ssh", "mcp-tripwire", "tcp-service", "observability", "external-plugin"]
+  "pages": ["http-decoy", "llm-ssh", "mcp-tripwire", "tcp-service", "vnc-credential-capture", "observability", "external-plugin"]
 }

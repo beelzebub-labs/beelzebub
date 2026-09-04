@@ -1,4 +1,4 @@
 {
   "title": "Protocols",
-  "pages": ["index", "http", "ssh", "tcp", "telnet", "mcp"]
+  "pages": ["index", "http", "ssh", "tcp", "binary-tcp", "telnet", "mcp"]
 }

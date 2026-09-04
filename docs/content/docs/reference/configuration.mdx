@@ -38,6 +38,10 @@ All core settings are nested below `core`.
 | `serverVersion` | string | no | Protocol banner/version string |
 | `banner` | string | no | Initial TCP data or HTTP greeting content |
 | `deadlineTimeoutSeconds` | integer | no | Connection deadline for SSH, TCP, and Telnet; zero semantics differ by protocol |
+| `maxHistory` | integer | no | TCP history entries retained per service and source; `0` uses 20; maximum 1,000 |
+| `wireEncoding` | string | TCP only | `utf8` or `latin1`; Latin-1 maps one code point to one byte and requires framing |
+| `framing` | framing object | binary TCP | Initial application-message boundary for the TCP stream |
+| `wirePlugins` | string array | TCP only | Up to 32 registered wire-plugin names, run in declaration order |
 | `passwordRegex` | string | SSH/Telnet | Go regular expression used to accept credentials |
 | `trustedProxies` | string array | no | HTTP proxy IPs or CIDRs allowed to supply forwarded addresses |
 | `tlsCertPath` | string | paired | Certificate path; requires `tlsKeyPath` |
@@ -57,8 +61,35 @@ Commands use `regex` to match input and may return a static `handler` or invoke 
 | `methods` | string array | HTTP methods; duplicates and empty values are rejected |
 | `headers` | string array | HTTP `Name: value` response headers |
 | `statusCode` | integer | HTTP status from 100 through 599 |
+| `closeAfter` | boolean | TCP: close the connection after writing this response |
+| `tlsUpgrade` | boolean | TCP: perform a server-side TLS upgrade after writing this response |
+| `tlsFraming` | framing object | TCP: framing to use after a successful TLS upgrade; requires `tlsUpgrade` |
+| `nextFraming` | framing object | TCP: replace framing after this exchange while retaining pipelined bytes |
+| `binaryOutput` | boolean | TCP command-plugin output is mapped to raw bytes through Latin-1 |
+| `patches` | patch array | TCP response transformations applied before wire plugins |
 
 `fallbackCommand` has the same shape, but its regex is optional because it is selected when no earlier command matches. A command with neither a handler nor a plugin is accepted with a quality warning.
+
+## Binary TCP Fields
+
+Framing operates on the TCP byte stream before regex matching. A single frame is limited to 1 MiB.
+
+| Framing Field | Type | Used By | Meaning |
+| --- | --- | --- | --- |
+| `mode` | string | all | `length-prefix` (also the empty default), `varint-length-prefix`, `ber`, or `fixed` |
+| `lengthOffset` | integer | length modes | Zero-based byte offset of the length field |
+| `lengthSize` | integer | `length-prefix` | Fixed length-field width from 1 through 8 bytes |
+| `headerSize` | integer | `length-prefix` | Bytes added when the encoded length excludes the header |
+| `bigEndian` | boolean | `length-prefix` | Read the fixed-width length in big-endian rather than little-endian order |
+| `lengthIncludesHeader` | boolean | `length-prefix` | Treat the encoded value as total frame size |
+| `fixedSize` | integer | `fixed` | Exact frame size from 1 byte through 1 MiB |
+| `maxLengthBytes` | integer | `varint-length-prefix` | Maximum base-128 length-field width from 1 through 8 bytes |
+
+`ber` reads one definite-length, top-level TLV and rejects indefinite lengths. `varint-length-prefix` treats bytes before `lengthOffset` and the complete varint as the header; the decoded value is the payload length that follows.
+
+Generic patches support `random`, which requires `offset` and a positive `length`, and `filetime`, which writes an 8-byte little-endian Windows FILETIME at `offset`. Unknown patch types may be interpreted by a configured `WirePlugin`.
+
+See the [binary TCP framework](/protocols/binary-tcp) for execution order, transitions, TLS behavior, and complete examples.
 
 ## MCP Tools
 

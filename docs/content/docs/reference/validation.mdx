@@ -5,6 +5,8 @@ description: Understand schema errors, procedural checks, warnings, and CI valid
 
 Validation combines embedded draft-07 JSON Schemas with Go checks. Schemas enforce types, required fields, enums, protocol-specific shape, TLS pairs, rate-limit dependencies, and plugin conditions. Go checks compile regexes, parse trusted proxy networks, check file paths, detect address collisions, validate cross-field rules, and emit quality warnings.
 
+Binary TCP validation also verifies framing bounds, requires explicit framing with `wireEncoding: latin1`, rejects unknown or duplicated `wirePlugins`, and checks command transitions. `tlsFraming` requires `tlsUpgrade`; `nextFraming` cannot be combined with `tlsUpgrade`; and combining `closeAfter` with a TLS upgrade produces a warning because the encrypted connection closes immediately after its handshake.
+
 ```bash
 make validate-specs
 make validate-all

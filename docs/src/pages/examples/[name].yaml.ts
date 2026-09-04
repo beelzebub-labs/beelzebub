@@ -2,7 +2,7 @@ import type { APIRoute, GetStaticPaths } from 'astro';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-const names = ['http-lab', 'ssh-llm', 'mcp-tripwire', 'tcp-redis', 'core-observability'];
+const names = ['http-lab', 'ssh-llm', 'mcp-tripwire', 'tcp-redis', 'tcp-vnc', 'core-observability'];
 
 export const getStaticPaths: GetStaticPaths = () => names.map((name) => ({ params: { name } }));
 

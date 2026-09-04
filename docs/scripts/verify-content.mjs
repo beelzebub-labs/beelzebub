@@ -10,6 +10,7 @@ const required = [
   'getting-started/quick-start.mdx',
   'reference/configuration.mdx',
   'protocols/mcp.mdx',
+  'protocols/binary-tcp.mdx',
   'plugins/authoring.mdx',
   'plugins/blueprint.mdx',
   'operations/production-safety.mdx',
@@ -60,7 +61,7 @@ for (const file of [
 }
 
 const exampleDir = join(docsRoot, 'examples');
-const serviceExamples = ['http-lab.yaml', 'ssh-llm.yaml', 'mcp-tripwire.yaml', 'tcp-redis.yaml'];
+const serviceExamples = ['http-lab.yaml', 'ssh-llm.yaml', 'mcp-tripwire.yaml', 'tcp-redis.yaml', 'tcp-vnc.yaml'];
 const tempDir = await mkdtemp(join('/tmp', 'beelzebub-docs-'));
 try {
   const servicesDir = join(tempDir, 'services');

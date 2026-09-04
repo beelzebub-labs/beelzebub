@@ -7,6 +7,7 @@ import { getPageImageUrl, source } from '@/lib/source';
 import Layout from '@/components/layout.astro';
 import type { TOCItemType } from 'fumadocs-core/toc';
 import RuntimeArchitecture from '@/components/runtime-architecture.astro';
+import BinaryTcpFlow from '@/components/binary-tcp-flow.astro';
 import BeyondRuntime from '@/components/beyond-runtime.astro';
 import { ExampleCode } from '@/components/example-code';
 
@@ -47,6 +48,6 @@ const title = `${page.data.title} | Beelzebub`;
   >
     <h1 class="font-semibold text-3xl">{page.data.title}</h1>
     <p class="text-lg text-fd-muted-foreground mb-8">{page.data.description}</p>
-    <div class="prose flex-1"><Content components={{ ...defaultMdxComponents, RuntimeArchitecture, BeyondRuntime, ExampleCode }} /></div>
+    <div class="prose flex-1"><Content components={{ ...defaultMdxComponents, RuntimeArchitecture, BinaryTcpFlow, BeyondRuntime, ExampleCode }} /></div>
   </Docs>
 </Layout>

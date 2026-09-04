@@ -2,6 +2,7 @@ import httpLab from '../../examples/http-lab.yaml?raw';
 import sshLlm from '../../examples/ssh-llm.yaml?raw';
 import mcpTripwire from '../../examples/mcp-tripwire.yaml?raw';
 import tcpRedis from '../../examples/tcp-redis.yaml?raw';
+import tcpVnc from '../../examples/tcp-vnc.yaml?raw';
 import coreObservability from '../../examples/core-observability.yaml?raw';
 
 const examples = {
@@ -9,6 +10,7 @@ const examples = {
   'ssh-llm.yaml': sshLlm,
   'mcp-tripwire.yaml': mcpTripwire,
   'tcp-redis.yaml': tcpRedis,
+  'tcp-vnc.yaml': tcpVnc,
   'core-observability.yaml': coreObservability,
 } as const;
 

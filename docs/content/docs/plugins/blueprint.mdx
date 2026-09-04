@@ -57,6 +57,7 @@ The blueprint implements `CommandPlugin`. Keep it for text responses, or replace
 | --- | --- | --- |
 | `CommandPlugin` | SSH, TCP, TELNET, or HTTP-body response generation | `Execute(context.Context, plugin.CommandRequest) (string, error)` |
 | `HTTPPlugin` | Full control of HTTP status, headers, content type, and body | `HandleHTTP(*http.Request) plugin.HTTPResponse` |
+| `WirePlugin` | Observe or rewrite a matched binary TCP exchange and enrich its event | `OnExchange(context.Context, *plugin.WireContext) error` |
 | `ServicePlugin` | A long-running service managed with the runtime lifecycle | `Start(context.Context) error` and `Stop()` |
 
 Every implementation must provide `Metadata()` and keep automatic registration:
@@ -68,6 +69,8 @@ func init() {
 ```
 
 Keep import-time work limited to registration. Open sockets, create clients, and start goroutines only inside the appropriate request or service lifecycle method.
+
+For a wire plugin, replace the blueprint’s `CommandPlugin` implementation, enable its metadata name through the target service’s `wirePlugins` list, and add tests for raw-byte preservation and concurrent connections. Implement `WireSessionCloser` when the plugin retains handshake state. The [wire-plugin authoring guide](/plugins/authoring#implement-a-wire-plugin) describes the mutation and cleanup contract.
 
 ## Test And Prepare A Release
 
