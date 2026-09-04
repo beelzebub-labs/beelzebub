@@ -3,12 +3,32 @@
   "$id": "https://beelzebub-labs.github.io/specs/runtime-mcp.schema.json",
   "title": "Beelzebub MCP Honeypot Configuration",
   "allOf": [
-    { "$ref": "runtime-config.schema.json" },
     {
-      "required": ["tools"],
+      "$ref": "runtime-config.schema.json"
+    },
+    {
+      "required": [
+        "tools"
+      ],
       "properties": {
-        "tools": { "minItems": 1 },
-        "commands": false
+        "maxHistory": false,
+        "wireEncoding": false,
+        "framing": false,
+        "wirePlugins": false,
+        "tools": {
+          "minItems": 1
+        },
+        "commands": false,
+        "fallbackCommand": {
+          "properties": {
+            "closeAfter": false,
+            "tlsUpgrade": false,
+            "tlsFraming": false,
+            "nextFraming": false,
+            "binaryOutput": false,
+            "patches": false
+          }
+        }
       }
     }
   ]

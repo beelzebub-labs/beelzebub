@@ -26,6 +26,14 @@ func (s *stubHTTP) HandleHTTP(_ *http.Request) plugin.HTTPResponse {
 	return plugin.HTTPResponse{StatusCode: 200, Body: "maze"}
 }
 
+type stubWire struct{ name string }
+
+func (s *stubWire) Metadata() plugin.Metadata { return plugin.Metadata{Name: s.name, Version: "1.0.0"} }
+func (s *stubWire) OnExchange(_ context.Context, exchange *plugin.WireContext) error {
+	exchange.Response = []byte("wire")
+	return nil
+}
+
 func TestRegister_Get(t *testing.T) {
 	cmd := &stubCommand{name: "TestCmd_" + t.Name()}
 	plugin.Register(cmd)
@@ -90,6 +98,28 @@ func TestGetHTTP_WrongType(t *testing.T) {
 
 	_, ok := plugin.GetHTTP(cmd.name)
 	assert.False(t, ok, "CommandPlugin should not be returned as HTTPPlugin")
+}
+
+func TestGetWire(t *testing.T) {
+	w := &stubWire{name: "TestGetWire_" + t.Name()}
+	plugin.Register(w)
+
+	got, ok := plugin.GetWire(w.name)
+	require.True(t, ok)
+	exchange := &plugin.WireContext{Response: []byte("original")}
+	require.NoError(t, got.OnExchange(context.Background(), exchange))
+	assert.Equal(t, []byte("wire"), exchange.Response)
+	assert.Contains(t, plugin.WireNames(), w.name)
+}
+
+func TestGetWire_WrongTypeAndNotFound(t *testing.T) {
+	cmd := &stubCommand{name: "TestGetWire_WrongType_" + t.Name()}
+	plugin.Register(cmd)
+
+	_, ok := plugin.GetWire(cmd.name)
+	assert.False(t, ok)
+	_, ok = plugin.GetWire("definitely-does-not-exist-wire")
+	assert.False(t, ok)
 }
 
 func TestGetCommand_NotFound(t *testing.T) {

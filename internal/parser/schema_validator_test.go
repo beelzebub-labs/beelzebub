@@ -73,6 +73,72 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 			},
 		},
 		{
+			name: "TCP binary framework fields",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion:   "v1",
+				Protocol:     "tcp",
+				Address:      ":5900",
+				WireEncoding: "latin1",
+				MaxHistory:   20,
+				Framing: &Framing{
+					LengthOffset: 0,
+					LengthSize:   2,
+					BigEndian:    true,
+				},
+				WirePlugins: []string{"vnc"},
+				Commands: []Command{{
+					RegexStr:     "(?s)^.{16}$",
+					Handler:      "failed",
+					CloseAfter:   true,
+					TLSUpgrade:   true,
+					TLSFraming:   &Framing{Mode: "ber"},
+					BinaryOutput: true,
+					Patches: []Patch{
+						{Type: "random", Offset: 0, Length: 8},
+						{Type: "vendor-message-id", Offset: 8, Length: 4},
+					},
+				}},
+			},
+		},
+		{
+			name: "external command plugin name",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1",
+				Protocol:   "tcp",
+				Address:    ":19090",
+				Commands:   []Command{{RegexStr: "^hello$", Plugin: "hello-demon"}},
+			},
+		},
+		{
+			name: "BER framed TCP service",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1",
+				Protocol:   "tcp",
+				Address:    ":389",
+				Framing:    &Framing{Mode: "ber"},
+				Commands:   []Command{{RegexStr: "(?s).*", Handler: "ok"}},
+			},
+		},
+		{
+			name: "stateful fixed framed TCP service",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "tcp", Address: ":5901", WireEncoding: "latin1",
+				Framing: &Framing{Mode: "fixed", FixedSize: 12},
+				Commands: []Command{{
+					RegexStr: "^version$", Handler: "ok",
+					NextFraming: &Framing{Mode: "fixed", FixedSize: 1},
+				}},
+			},
+		},
+		{
+			name: "varint framed TCP service",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "tcp", Address: ":1883", WireEncoding: "latin1",
+				Framing:  &Framing{Mode: "varint-length-prefix", LengthOffset: 1, MaxLengthBytes: 4},
+				Commands: []Command{{RegexStr: ".*", Handler: "ok"}},
+			},
+		},
+		{
 			name: "valid MCP",
 			config: BeelzebubServiceConfiguration{
 				ApiVersion: "v1",
@@ -133,6 +199,21 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 			} else {
 				assert.Empty(t, issues)
 			}
+		})
+	}
+}
+
+func TestValidateConfigSchema_PublicServiceConfigurations(t *testing.T) {
+	t.Setenv("BEELZEBUB_SERVICES_CONFIG", "")
+	servicesDir := filepath.Join("..", "..", "configurations", "services")
+	services, err := Init("", servicesDir).ReadConfigurationsServices()
+	assert.NoError(t, err)
+	assert.NotEmpty(t, services)
+
+	for _, service := range services {
+		service := service
+		t.Run(service.Filename, func(t *testing.T) {
+			assert.Empty(t, ValidateConfigSchema(service))
 		})
 	}
 }
@@ -213,6 +294,58 @@ func TestValidateConfigSchema_Invalid(t *testing.T) {
 			config: BeelzebubServiceConfiguration{
 				Protocol: "mcp", Address: ":8000",
 				Commands: []Command{{RegexStr: ".*", Handler: "ok"}},
+			},
+			msg: "false",
+		},
+		{
+			name: "TCP tlsFraming without tlsUpgrade",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "tcp", Address: ":19000",
+				Commands: []Command{{RegexStr: ".*", Handler: "ok", TLSFraming: &Framing{Mode: "ber"}}},
+			},
+			msg: "tlsUpgrade",
+		},
+		{
+			name: "TCP random patch without positive length",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "tcp", Address: ":19001",
+				Commands: []Command{{
+					RegexStr: ".*", Handler: "ok",
+					Patches: []Patch{{Type: "random", Offset: 0, Length: 0}},
+				}},
+			},
+			msg: "length",
+		},
+		{
+			name: "TCP latin1 without framing",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "tcp", Address: ":19002", WireEncoding: "latin1",
+				Commands: []Command{{RegexStr: ".*", Handler: "ok"}},
+			},
+			msg: "framing",
+		},
+		{
+			name: "HTTP command with TCP nextFraming",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "http", Address: ":8081",
+				Commands: []Command{{RegexStr: ".*", Handler: "ok", NextFraming: &Framing{Mode: "fixed", FixedSize: 1}}},
+			},
+			msg: "false",
+		},
+		{
+			name: "SSH with TCP wire encoding",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "ssh", Address: ":22",
+				ServerVersion: "OpenSSH", PasswordRegex: ".+", WireEncoding: "latin1",
+				Commands: []Command{{RegexStr: ".*", Handler: "ok"}},
+			},
+			msg: "false",
+		},
+		{
+			name: "HTTP command with TCP closeAfter",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1", Protocol: "http", Address: ":8080",
+				Commands: []Command{{RegexStr: ".*", Handler: "ok", CloseAfter: true}},
 			},
 			msg: "false",
 		},

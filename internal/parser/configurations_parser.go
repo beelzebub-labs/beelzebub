@@ -89,6 +89,24 @@ type BeelzebubServiceConfiguration struct {
 	Plugin                 Plugin    `yaml:"plugin" json:"plugin,omitempty"`
 	TLSCertPath            string    `yaml:"tlsCertPath" json:"tlsCertPath,omitempty"`
 	TLSKeyPath             string    `yaml:"tlsKeyPath" json:"tlsKeyPath,omitempty"`
+	// MaxHistory caps how many session history entries are kept for LLM context
+	// on interactive TCP sessions. Zero means use the built-in
+	// default of 20 entries.
+	MaxHistory int `yaml:"maxHistory,omitempty" json:"maxHistory,omitempty"`
+	// Framing, when set, tells the TCP read loop how to delimit one message,
+	// so binary protocols are read one frame at a time (handling split reads and
+	// pipelined messages). When nil, the loop accumulates bytes opportunistically
+	// until a handler matches.
+	Framing *Framing `yaml:"framing,omitempty" json:"framing,omitempty"`
+	// WireEncoding controls how TCP regexes and static handlers map strings to
+	// bytes. The zero value and "utf8" preserve the historical text behavior;
+	// "latin1" provides a one-rune-per-byte mapping for binary protocols.
+	WireEncoding string `yaml:"wireEncoding,omitempty" json:"wireEncoding,omitempty"`
+	// WirePlugins names the protocol wire-plugins this service should run (e.g.
+	// "vnc" or an externally installed plugin). Empty means run no wire plugins.
+	// Scoping plugins per service avoids, e.g., the NTLM
+	// signature scanner running on unrelated text services.
+	WirePlugins []string `yaml:"wirePlugins,omitempty" json:"wirePlugins,omitempty"`
 	// TrustedProxies is a list of CIDRs (or bare IPs) of upstream proxies whose
 	// X-Forwarded-For / X-Real-IP headers can be trusted. When empty, those
 	// headers are ignored and the immediate TCP peer is used as source IP.
@@ -110,6 +128,37 @@ func (bsc BeelzebubServiceConfiguration) HashCode() (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
+// Framing describes a protocol-neutral application-message boundary. It supports
+// fixed-size messages, fixed-width and base-128 varint length prefixes, and BER
+// top-level TLVs. Binary services should use framing rather than TCP read
+// boundaries to decide when a command can be dispatched.
+type Framing struct {
+	// Mode selects "length-prefix" (the default), "fixed",
+	// "varint-length-prefix", or "ber".
+	Mode                 string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	LengthOffset         int    `yaml:"lengthOffset" json:"lengthOffset,omitempty"`
+	LengthSize           int    `yaml:"lengthSize" json:"lengthSize,omitempty"`
+	HeaderSize           int    `yaml:"headerSize" json:"headerSize,omitempty"`
+	BigEndian            bool   `yaml:"bigEndian" json:"bigEndian,omitempty"`
+	LengthIncludesHeader bool   `yaml:"lengthIncludesHeader" json:"lengthIncludesHeader,omitempty"`
+	FixedSize            int    `yaml:"fixedSize" json:"fixedSize,omitempty"`
+	MaxLengthBytes       int    `yaml:"maxLengthBytes" json:"maxLengthBytes,omitempty"`
+}
+
+// Patch describes a binary patch to apply to a static handler response before
+// it is written to the TCP connection. The generic patch engine supports:
+//
+//   - "random"   — write Length cryptographically random bytes at Offset
+//   - "filetime" — write 8-byte Windows FILETIME (current UTC time) at Offset
+//
+// Additional patch types may be defined by wire-plugins and are interpreted
+// by those plugins rather than the generic engine.
+type Patch struct {
+	Type   string `yaml:"type" json:"type"`
+	Offset int    `yaml:"offset" json:"offset,omitempty"`
+	Length int    `yaml:"length" json:"length,omitempty"`
+}
+
 // Command is the struct that contains the configurations of the commands
 type Command struct {
 	RegexStr   string         `yaml:"regex" json:"regex,omitempty"`
@@ -120,6 +169,16 @@ type Command struct {
 	StatusCode int            `yaml:"statusCode" json:"statusCode,omitempty"`
 	Plugin     string         `yaml:"plugin" json:"plugin,omitempty"`
 	Name       string         `yaml:"name" json:"name,omitempty"`
+	CloseAfter bool           `yaml:"closeAfter" json:"closeAfter,omitempty"`
+	TLSUpgrade bool           `yaml:"tlsUpgrade" json:"tlsUpgrade,omitempty"`
+	TLSFraming *Framing       `yaml:"tlsFraming,omitempty" json:"tlsFraming,omitempty"`
+	// NextFraming replaces the active framing after this command has matched and
+	// its response has been written, while preserving any pipelined bytes.
+	NextFraming *Framing `yaml:"nextFraming,omitempty" json:"nextFraming,omitempty"`
+	Patches     []Patch  `yaml:"patches" json:"patches,omitempty"`
+	// BinaryOutput marks a plugin's output as raw (Latin-1 encoded) bytes rather
+	// than UTF-8 text, so it is written byte-for-byte like a static handler.
+	BinaryOutput bool `yaml:"binaryOutput" json:"binaryOutput,omitempty"`
 }
 
 // Tool is the struct that contains the configurations of the MCP Honeypot

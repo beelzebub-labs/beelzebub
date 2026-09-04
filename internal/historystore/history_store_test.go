@@ -16,6 +16,19 @@ func TestNewHistoryStore(t *testing.T) {
 	assert.NotNil(t, hs.sessions)
 }
 
+func TestAppendBoundedRetainsNewestMessages(t *testing.T) {
+	store := NewHistoryStore()
+	store.AppendBounded("session", 2,
+		plugins.Message{Role: "user", Content: "one"},
+		plugins.Message{Role: "assistant", Content: "two"},
+		plugins.Message{Role: "user", Content: "three"},
+	)
+	messages := store.Query("session")
+	if len(messages) != 2 || messages[0].Content != "two" || messages[1].Content != "three" {
+		t.Fatalf("bounded history = %#v", messages)
+	}
+}
+
 func TestHasKey(t *testing.T) {
 	hs := NewHistoryStore()
 	hs.sessions["testKey"] = HistoryEvent{Messages: []plugins.Message{}}
