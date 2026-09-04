@@ -1,0 +1,6 @@
+---
+title: Observability Pipeline
+description: Verify Prometheus counters and RabbitMQ event delivery in a lab deployment.
+---
+
+Enable the core settings in `examples/core-observability.yaml`, start a service, request it once, and query `/metrics`. If RabbitMQ is enabled, consume the `event` queue with a least-privilege account and verify that downstream retention and redaction policies apply.

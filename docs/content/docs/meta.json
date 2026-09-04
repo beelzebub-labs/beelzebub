@@ -1,0 +1,4 @@
+{
+  "title": "Documentation",
+  "pages": ["index", "getting-started", "concepts", "protocols", "reference", "plugins", "operations", "recipes", "contributing"]
+}

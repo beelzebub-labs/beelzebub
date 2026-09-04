@@ -1,0 +1,23 @@
+---
+title: Plugin Management
+description: Install, pin, rebuild, inspect, update, and remove trusted Go plugins.
+---
+
+Declare sources in `configurations/plugins.yaml`:
+
+```yaml
+plugins:
+  - source: github.com/your-org/myplugin@v1.2.0
+```
+
+Then install and compile them:
+
+```bash
+beelzebub plugin install github.com/your-org/myplugin
+beelzebub plugin list
+beelzebub plugin update myplugin
+beelzebub plugin remove myplugin
+make build
+```
+
+The lockfile pins commit, module, version, and import metadata. Plugins run in-process, so inspect source and pin trusted refs. Docker installs declared plugins during image build; local mode installs them before `make build`.

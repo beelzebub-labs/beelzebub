@@ -1,0 +1,116 @@
+name: Docs
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "cli/**"
+      - "pkg/plugin/**"
+      - "internal/parser/**"
+      - "internal/builder/**"
+      - "internal/plugins/**"
+      - "internal/protocols/**"
+      - "internal/tracer/**"
+      - "specs/**"
+      - "configurations/**"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "install.sh"
+      - "beelzebub-chart/**"
+      - "go.mod"
+      - "Makefile"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "cli/**"
+      - "pkg/plugin/**"
+      - "internal/parser/**"
+      - "internal/builder/**"
+      - "internal/plugins/**"
+      - "internal/protocols/**"
+      - "internal/tracer/**"
+      - "specs/**"
+      - "configurations/**"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "install.sh"
+      - "beelzebub-chart/**"
+      - "go.mod"
+      - "Makefile"
+      - ".github/workflows/docs.yml"
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.15.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: docs/.node-version
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install docs dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: docs
+
+      - name: Test docs
+        run: pnpm test
+        working-directory: docs
+        env:
+          ASTRO_TELEMETRY_DISABLED: "1"
+
+      - name: Check external links
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        run: pnpm verify:external
+        working-directory: docs
+
+  change-policy:
+    name: Policy
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check documentation change policy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DOCS_NOT_NEEDED: ${{ contains(github.event.pull_request.labels.*.name, 'docs-not-needed') }}
+        run: |
+          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          public='^(cli/|pkg/plugin/|internal/parser/|internal/builder/|internal/plugins/|internal/protocols/|internal/tracer/|specs/|configurations/|Dockerfile$|docker-compose.yml$|install.sh$|go.mod$|Makefile$|beelzebub-chart/)'
+          if printf '%s\n' "$changed" | grep -Eq '^docs/|^README.md$'; then exit 0; fi
+          if [ "$DOCS_NOT_NEEDED" = "true" ]; then exit 0; fi
+          if printf '%s\n' "$changed" | grep -Eq "$public"; then
+            echo "Public runtime behavior changed without a docs update. Add docs/ or README.md, or ask a maintainer to apply the docs-not-needed label with rationale."
+            exit 1
+          fi

@@ -1,0 +1,10 @@
+---
+title: HTTP Deception
+description: Emulate web applications with static responses, TLS, method-aware routing, and dynamic plugins.
+---
+
+HTTP command regexes match the request URI. `methods` is optional; when present, a matching URI with no allowed method returns `405 Method Not Allowed` and an `Allow` header. `GET` does not imply `HEAD`. Commands are first-match, so place specific routes before catch-alls.
+
+Use `statusCode`, `headers`, and `handler` for static responses. `LLMHoneypot` can be used as a fallback for unmatched requests, while `MazeHoneypot` generates an expanding Apache-style directory maze. Configure TLS certificate/key pairs together. Configure `trustedProxies` only for networks you control.
+
+Try the [first service](../../getting-started/first-service) and the [HTTP recipe](../../recipes/http-decoy).

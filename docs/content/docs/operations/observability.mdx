@@ -1,0 +1,8 @@
+---
+title: Observability
+description: Monitor interactions, runtime health, and event delivery without losing sensitive-data control.
+---
+
+Prometheus listens on the configured `path` and `port` (default `/metrics` and `:2112`). The counters are `beelzebub_events_total`, `beelzebub_ssh_events_total`, `beelzebub_http_events_total`, `beelzebub_tcp_events_total`, `beelzebub_telnet_events_total`, and `beelzebub_mcp_events_total`.
+
+RabbitMQ tracing publishes JSON events to the `event` queue when enabled. Use TLS, authentication, queue permissions, retention controls, and a dedicated vhost. Logs and events can include credentials, headers, request bodies, commands, and environment data; restrict access and redact downstream.

@@ -1,0 +1,32 @@
+---
+title: Environment Variables
+description: Override core settings and provide deployment secrets without editing YAML.
+---
+
+Non-empty runtime environment values override core YAML. Boolean values use Go's accepted boolean syntax, including `true`/`false`, `1`/`0`, and `t`/`f` with accepted case variants. An invalid boolean stops configuration loading.
+
+| Variable | Type | Meaning |
+| --- | --- | --- |
+| `BEELZEBUB_LOGGING_DEBUG` | boolean | Enable debug logging |
+| `BEELZEBUB_LOGGING_DEBUG_REPORT_CALLER` | boolean | Include caller information |
+| `BEELZEBUB_LOGGING_LOG_DISABLE_TIMESTAMP` | boolean | Disable log timestamps |
+| `BEELZEBUB_LOGGING_LOGS_PATH` | string | Log directory |
+| `BEELZEBUB_RABBITMQ_ENABLED` | boolean | Enable RabbitMQ tracing |
+| `BEELZEBUB_RABBITMQ_URI` | string | AMQP connection URI |
+| `BEELZEBUB_PROMETHEUS_PATH` | string | Metrics HTTP path |
+| `BEELZEBUB_PROMETHEUS_PORT` | string | Metrics listen address, such as `:2112` |
+| `BEELZEBUB_CLOUD_ENABLED` | boolean | Enable optional Cloud reporting |
+| `BEELZEBUB_CLOUD_URI` | string | Cloud endpoint |
+| `BEELZEBUB_CLOUD_AUTH_TOKEN` | secret string | Cloud credential |
+| `BEELZEBUB_SERVICES_CONFIG` | JSON array | Replace service-directory loading with inline service objects |
+| `OPEN_AI_SECRET_KEY` | secret string | OpenAI credential used by the LLM integration |
+| `BEELZEBUB_GITHUB_TOKEN` | secret string | Private GitHub repository credential for plugin commands and the installer |
+| `NO_COLOR` | presence flag | Disable colored CLI output |
+
+`BEELZEBUB_SERVICES_CONFIG` takes precedence over `--conf-services`. It must be a JSON array, uses the same field names as service YAML, and is validated by the same schema and procedural checks.
+
+## Installer-Only Variables
+
+The installation script also accepts `BEELZEBUB_INSTALL_REF` to select a Git tag, branch, or commit and `BEELZEBUB_INSTALL_DIR` to choose the clone directory. Cloud URI/token and the GitHub token can also seed installer prompts. These variables control installation and are not core YAML overrides.
+
+Never commit values containing credentials. Use your orchestrator's secret store and restrict log, queue, and Cloud retention.
