@@ -175,7 +175,7 @@ commands:
 }
 
 func TestListPlugins_Empty(t *testing.T) {
-	plugin.Cleanup()
+	t.Cleanup(plugin.Cleanup())
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)

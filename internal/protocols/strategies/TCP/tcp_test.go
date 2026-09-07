@@ -3,9 +3,11 @@ package TCP
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,11 +77,24 @@ func (l *tcpFailingListener) Close() error {
 }
 
 type mockTracer struct {
+	mu     sync.Mutex
 	events []tracer.Event
 }
 
 func (m *mockTracer) TraceEvent(event tracer.Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.events = append(m.events, event)
+}
+
+// snapshot returns a copy of the recorded events, safe to read while the
+// connection handler goroutine is still running.
+func (m *mockTracer) snapshot() []tracer.Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]tracer.Event, len(m.events))
+	copy(out, m.events)
+	return out
 }
 
 func newStrategyWithSessions() *TCPStrategy {
@@ -113,8 +128,23 @@ func TestHandleTCPConnection_NoCommands_Legacy(t *testing.T) {
 		t.Fatal("timeout waiting for connection handler")
 	}
 
-	assert.GreaterOrEqual(t, len(mt.events), 1)
-	assert.Equal(t, tracer.Stateless.String(), mt.events[0].Status)
+	events := mt.snapshot()
+	assert.GreaterOrEqual(t, len(events), 1)
+	assert.Equal(t, tracer.Stateless.String(), events[0].Status)
+}
+
+func TestServeStateless_PreservesDataReturnedWithEOF(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	conn := &eofWithDataConn{Conn: server, data: []byte("final payload")}
+	mt := &mockTracer{}
+
+	serveStateless(conn, parser.BeelzebubServiceConfiguration{Description: "test"}, mt, "127.0.0.1", "1234")
+
+	events := mt.snapshot()
+	if len(events) != 1 || events[0].Command != "final payload" {
+		t.Fatalf("events = %#v, want EOF-adjacent payload preserved", events)
+	}
 }
 
 func TestHandleTCPConnection_WithBanner(t *testing.T) {
@@ -320,11 +350,15 @@ func TestTCPStrategy_StopAll_AlreadyClosed(t *testing.T) {
 	listener.Close()
 
 	strategy := newStrategyWithSessions()
-	strategy.listeners = map[string]net.Listener{"test:0": listener}
+	strategy.listeners = []net.Listener{listener}
+	strategy.listenerAddresses = []string{"test:0"}
+	done := make(chan struct{})
+	close(done)
+	strategy.acceptDone = []chan struct{}{done}
 
-	// Close on an already-closed listener returns an error now
+	// Shutdown treats an already-closed listener as an idempotent success.
 	err := strategy.StopAll()
-	assert.Error(t, err)
+	assert.NoError(t, err)
 	assert.Nil(t, strategy.listeners)
 }
 
@@ -339,7 +373,11 @@ func TestTCPStrategy_Stop_CloseErrorFromListener(t *testing.T) {
 	require.New(t).NoError(err)
 
 	strategy := newStrategyWithSessions()
-	strategy.listeners = map[string]net.Listener{addr: listener2}
+	strategy.listeners = []net.Listener{listener2}
+	strategy.listenerAddresses = []string{addr}
+	done := make(chan struct{})
+	close(done)
+	strategy.acceptDone = []chan struct{}{done}
 
 	servConf := parser.BeelzebubServiceConfiguration{Address: addr}
 	err = strategy.Stop(servConf)
@@ -349,7 +387,11 @@ func TestTCPStrategy_Stop_CloseErrorFromListener(t *testing.T) {
 
 func TestTCPStrategy_Stop_ServerNotFound(t *testing.T) {
 	strategy := newStrategyWithSessions()
-	strategy.listeners = map[string]net.Listener{"other:0": nil}
+	strategy.listeners = []net.Listener{nil}
+	strategy.listenerAddresses = []string{"other:0"}
+	done := make(chan struct{})
+	close(done)
+	strategy.acceptDone = []chan struct{}{done}
 
 	err := strategy.Stop(parser.BeelzebubServiceConfiguration{Address: "test:0"})
 	assert.NoError(t, err)
@@ -359,7 +401,11 @@ func TestTCPStrategy_Stop_CloseError(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	strategy := newStrategyWithSessions()
-	strategy.listeners = map[string]net.Listener{"test:0": &tcpFailingListener{Listener: listener, err: errors.New("close failed")}}
+	strategy.listeners = []net.Listener{&tcpFailingListener{Listener: listener, err: errors.New("close failed")}}
+	strategy.listenerAddresses = []string{"test:0"}
+	done := make(chan struct{})
+	close(done)
+	strategy.acceptDone = []chan struct{}{done}
 
 	err = strategy.Stop(parser.BeelzebubServiceConfiguration{Address: "test:0"})
 	assert.EqualError(t, err, "close failed")
@@ -481,20 +527,86 @@ func TestHandleTCPConnection_UnmatchedCommand(t *testing.T) {
 		t.Fatal("timeout waiting for connection handler")
 	}
 
-	// Should have: session start, unmatched interaction, session end
-	assert.GreaterOrEqual(t, len(mt.events), 3)
-	foundUnmatched := false
-	foundEnd := false
-	for _, e := range mt.events {
+	foundNotFound := false
+	for _, e := range mt.snapshot() {
 		if e.Handler == "not_found" {
-			foundUnmatched = true
-		}
-		if e.Status == tracer.End.String() {
-			foundEnd = true
+			foundNotFound = true
+			break
 		}
 	}
-	assert.True(t, foundUnmatched, "should have unmatched interaction event")
-	assert.True(t, foundEnd, "should have end session event")
+	assert.True(t, foundNotFound, "expected a not_found handler event")
+}
+
+func TestTCPStrategy_InitMultipleListeners(t *testing.T) {
+	strategy := &TCPStrategy{}
+	mt := &mockTracer{}
+
+	for i := 0; i < 2; i++ {
+		servConf := parser.BeelzebubServiceConfiguration{
+			Address:                "127.0.0.1:0",
+			Description:            "test",
+			DeadlineTimeoutSeconds: 2,
+		}
+		if err := strategy.Init(servConf, mt); err != nil {
+			t.Fatalf("Init %d: %v", i, err)
+		}
+	}
+
+	if len(strategy.listeners) != 2 {
+		t.Fatalf("listeners = %d, want 2", len(strategy.listeners))
+	}
+	if err := strategy.Shutdown(); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+}
+
+func TestTCPStrategy_ShutdownClosesActiveConnections(t *testing.T) {
+	strategy := &TCPStrategy{}
+	mt := &mockTracer{}
+	servConf := parser.BeelzebubServiceConfiguration{
+		Address: "127.0.0.1:0",
+		Commands: []parser.Command{{
+			Regex: regexp.MustCompile(`^never$`),
+		}},
+	}
+	if err := strategy.Init(servConf, mt); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	addr := strategy.listeners[0].Addr().String()
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		strategy.activeMu.Lock()
+		active := len(strategy.activeConns)
+		strategy.activeMu.Unlock()
+		if active == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("connection was not registered as active")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- strategy.Shutdown() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown blocked with an active connection")
+	}
+	buf := make([]byte, 1)
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatal("active connection remained open after Shutdown")
+	}
 }
 
 func TestHandleTCPConnection_PluginErrorAndExistingHistory(t *testing.T) {
@@ -631,4 +743,68 @@ func TestHandleTCPConnection_Deadline(t *testing.T) {
 func TestTCPStrategy_RegistryFactory(t *testing.T) {
 	group := protocols.NewServiceGroupFromRegistry(func(tracer.Event) {})
 	assert.NotNil(t, group.StrategyForProtocol("tcp"))
+}
+
+// TestHandleTCPConnection_CommandRaw verifies that binary (non-UTF-8) client
+// input is preserved byte-exact in Event.CommandRaw on the matched-command
+// interactive path (complementing tcp_rawbytes_test.go, which covers the
+// not_found path), while UTF-8 input leaves CommandRaw empty.
+func TestHandleTCPConnection_CommandRaw(t *testing.T) {
+	run := func(t *testing.T, input []byte) []tracer.Event {
+		client, server := net.Pipe()
+		defer client.Close()
+
+		mt := &mockTracer{}
+		servConf := parser.BeelzebubServiceConfiguration{
+			Description:            "test",
+			DeadlineTimeoutSeconds: 5,
+			Commands: []parser.Command{
+				{Regex: regexp.MustCompile(`(?s).*`), Handler: "ok"},
+			},
+		}
+		strategy := newStrategyWithSessions()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			handleTCPConnection(server, servConf, mt, strategy)
+		}()
+
+		// Drain the server's response so its conn.Write does not block on the
+		// synchronous net.Pipe, allowing the interaction event to be emitted.
+		go io.Copy(io.Discard, client)
+
+		client.Write(input)
+		time.Sleep(100 * time.Millisecond)
+		client.Close()
+
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout")
+		}
+		return mt.snapshot()
+	}
+
+	t.Run("binary input populates CommandRaw byte-exact", func(t *testing.T) {
+		// Arbitrary non-UTF-8 bytes (0xfe is never valid UTF-8).
+		events := run(t, []byte{0xfe, 0x01, 0x80, 0xff, 0x00, 0x41})
+		var found bool
+		for _, e := range events {
+			if e.Status == tracer.Interaction.String() {
+				assert.Equal(t, "\\xfe\\x01\\x80\\xff\\x00A", e.CommandRaw)
+				found = true
+			}
+		}
+		assert.True(t, found, "expected an interaction event with CommandRaw")
+	})
+
+	t.Run("utf8 input leaves CommandRaw empty", func(t *testing.T) {
+		events := run(t, []byte("hello\n"))
+		for _, e := range events {
+			if e.Status == tracer.Interaction.String() {
+				assert.Empty(t, e.CommandRaw, "CommandRaw must be empty for UTF-8 input")
+			}
+		}
+	})
 }

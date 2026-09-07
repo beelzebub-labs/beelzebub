@@ -106,6 +106,31 @@ func TestBuildPromptTelnet(t *testing.T) {
 	assert.Equal(t, SystemPromptLen, len(prompt))
 }
 
+func TestBuildPromptTCPWithCustomPrompt(t *testing.T) {
+	honeypot := LLMHoneypot{
+		Histories:    []Message{{Role: USER.String(), Content: "previous request"}},
+		Protocol:     tracer.TCP,
+		CustomPrompt: "act as a binary protocol server",
+	}
+
+	prompt, err := honeypot.buildPrompt("request")
+
+	assert.NoError(t, err)
+	assert.Equal(t, "act as a binary protocol server", prompt[0].Content)
+	assert.Equal(t, SYSTEM.String(), prompt[0].Role)
+	assert.Equal(t, "previous request", prompt[1].Content)
+	assert.Equal(t, "request", prompt[2].Content)
+	assert.Equal(t, USER.String(), prompt[2].Role)
+}
+
+func TestBuildPromptTCPRequiresCustomPrompt(t *testing.T) {
+	honeypot := LLMHoneypot{Protocol: tracer.TCP}
+
+	_, err := honeypot.buildPrompt("request")
+
+	assert.EqualError(t, err, "TCP protocol requires a custom prompt in plugin configuration")
+}
+
 func TestBuildInputValidationPromptDefault(t *testing.T) {
 	llmHoneypot := LLMHoneypot{
 		Protocol: tracer.SSH,
@@ -263,7 +288,7 @@ func TestBuildExecuteModelFailValidationStrategyType(t *testing.T) {
 
 	_, err := openAIGPTVirtualTerminal.ExecuteModel("test", "127.0.0.1")
 
-	assert.Equal(t, "no prompt for protocol selected", err.Error())
+	assert.Equal(t, "TCP protocol requires a custom prompt in plugin configuration", err.Error())
 }
 
 func TestBuildExecuteModelFailValidationModelType(t *testing.T) {

@@ -66,6 +66,29 @@ func (hs *HistoryStore) Append(key string, message ...plugins.Message) {
 	hs.sessions[key] = e
 }
 
+// AppendBounded appends messages and retains at most max entries for key.
+// A non-positive max preserves the unbounded behavior of Append.
+func (hs *HistoryStore) AppendBounded(key string, max int, message ...plugins.Message) {
+	hs.Lock()
+	defer hs.Unlock()
+	// In the unexpected case that the map has not yet been initalised, create it.
+	if hs.sessions == nil {
+		hs.sessions = make(map[string]HistoryEvent)
+	}
+	e, ok := hs.sessions[key]
+	if !ok {
+		e = HistoryEvent{}
+	}
+	e.LastSeen = time.Now()
+	e.Messages = append(e.Messages, message...)
+	if max > 0 && len(e.Messages) > max {
+		trimmed := make([]plugins.Message, max)
+		copy(trimmed, e.Messages[len(e.Messages)-max:])
+		e.Messages = trimmed
+	}
+	hs.sessions[key] = e
+}
+
 // HistoryCleaner starts a background goroutine that periodically removes records
 // from the HistoryStore that are older than MaxHistoryAge. Call Close to stop it.
 func (hs *HistoryStore) HistoryCleaner() {

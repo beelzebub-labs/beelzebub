@@ -22,6 +22,7 @@ type EventDTO struct {
 	RemoteAddr      string
 	Protocol        string
 	Command         string
+	CommandRaw      string `json:",omitempty"`
 	CommandOutput   string
 	Status          string
 	Msg             string
@@ -42,6 +43,7 @@ type EventDTO struct {
 	SourceIp        string
 	SourcePort      string
 	TLSServerName   string
+	Metadata        map[string]string `json:",omitempty"`
 }
 
 type BeelzebubCloud struct {
@@ -255,6 +257,7 @@ func (beelzebubCloud *BeelzebubCloud) mapToEventDTO(event tracer.Event) (EventDT
 		RemoteAddr:      event.RemoteAddr,
 		Protocol:        event.Protocol,
 		Command:         event.Command,
+		CommandRaw:      event.CommandRaw,
 		CommandOutput:   event.CommandOutput,
 		Status:          event.Status,
 		Msg:             event.Msg,
@@ -273,6 +276,7 @@ func (beelzebubCloud *BeelzebubCloud) mapToEventDTO(event tracer.Event) (EventDT
 		SourceIp:        event.SourceIp,
 		SourcePort:      event.SourcePort,
 		TLSServerName:   event.TLSServerName,
+		Metadata:        event.Metadata,
 	}
 
 	if len(event.Headers) > 0 {
