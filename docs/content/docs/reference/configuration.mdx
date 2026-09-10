@@ -1,0 +1,115 @@
+---
+title: Service Configuration
+description: Reference for core and per-service YAML fields in API version v1.
+---
+
+Beelzebub reads one core YAML file and either a directory of service YAML files or the `BEELZEBUB_SERVICES_CONFIG` JSON array. Unknown service keys are rejected. Environment variables override non-empty core values after YAML parsing.
+
+## Core Configuration
+
+All core settings are nested below `core`.
+
+| YAML path | Type | Repository default | Purpose |
+| --- | --- | --- | --- |
+| `logging.debug` | boolean | `false` | Enable debug-level runtime logging |
+| `logging.debugReportCaller` | boolean | `false` | Add the source caller to log records |
+| `logging.logDisableTimestamp` | boolean | `true` | Remove timestamps from log output |
+| `logging.logsPath` | string | `./logs` | Directory for log files |
+| `tracings.rabbit-mq.enabled` | boolean | `false` | Publish tracing events to RabbitMQ |
+| `tracings.rabbit-mq.uri` | string | empty | AMQP connection URI |
+| `prometheus.path` | string | `/metrics` | HTTP path for metrics |
+| `prometheus.port` | string | `:2112` | Metrics listen address |
+| `beelzebub-cloud.enabled` | boolean | `false` | Enable Beelzebub Cloud reporting |
+| `beelzebub-cloud.uri` | string | empty | Cloud endpoint |
+| `beelzebub-cloud.auth-token` | string | empty | Cloud credential; prefer an environment secret |
+
+## Service Fields
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `apiVersion` | string | yes | Must be `v1` |
+| `protocol` | string | yes | `http`, `ssh`, `tcp`, `telnet`, or `mcp` |
+| `address` | string | yes | `host:port`, `:port`, bracketed IPv6, or a Unix socket path |
+| `description` | string | no | Human-readable service label |
+| `commands` | command array | by protocol | Ordered match rules; maximum 100 |
+| `fallbackCommand` | command | no | Response for unmatched input |
+| `tools` | tool array | MCP only | MCP tool definitions; maximum 100 |
+| `serverName` | string | no | Hostname or product name exposed to clients |
+| `serverVersion` | string | no | Protocol banner/version string |
+| `banner` | string | no | Initial TCP data or HTTP greeting content |
+| `deadlineTimeoutSeconds` | integer | no | Connection deadline for SSH, TCP, and Telnet; zero semantics differ by protocol |
+| `maxHistory` | integer | no | TCP history entries retained per service and source; `0` uses 20; maximum 1,000 |
+| `wireEncoding` | string | TCP only | `utf8` or `latin1`; Latin-1 maps one code point to one byte and requires framing |
+| `framing` | framing object | binary TCP | Initial application-message boundary for the TCP stream |
+| `wirePlugins` | string array | TCP only | Up to 32 registered wire-plugin names, run in declaration order |
+| `passwordRegex` | string | SSH/Telnet | Go regular expression used to accept credentials |
+| `trustedProxies` | string array | no | HTTP proxy IPs or CIDRs allowed to supply forwarded addresses |
+| `tlsCertPath` | string | paired | Certificate path; requires `tlsKeyPath` |
+| `tlsKeyPath` | string | paired | Private-key path; requires `tlsCertPath` |
+| `plugin` | object | plugin-dependent | Shared LLM, validation, and rate-limit settings |
+
+## Commands and Fallbacks
+
+Commands use `regex` to match input and may return a static `handler` or invoke a named `plugin`. The first matching command wins.
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `regex` | string | Go regular expression; required for entries in `commands` |
+| `handler` | string | Static response body |
+| `plugin` | string | Built-in or compiled plugin name |
+| `name` | string | Optional display name |
+| `methods` | string array | HTTP methods; duplicates and empty values are rejected |
+| `headers` | string array | HTTP `Name: value` response headers |
+| `statusCode` | integer | HTTP status from 100 through 599 |
+| `closeAfter` | boolean | TCP: close the connection after writing this response |
+| `tlsUpgrade` | boolean | TCP: perform a server-side TLS upgrade after writing this response |
+| `tlsFraming` | framing object | TCP: framing to use after a successful TLS upgrade; requires `tlsUpgrade` |
+| `nextFraming` | framing object | TCP: replace framing after this exchange while retaining pipelined bytes |
+| `binaryOutput` | boolean | TCP command-plugin output is mapped to raw bytes through Latin-1 |
+| `patches` | patch array | TCP response transformations applied before wire plugins |
+
+`fallbackCommand` has the same shape, but its regex is optional because it is selected when no earlier command matches. A command with neither a handler nor a plugin is accepted with a quality warning.
+
+## Binary TCP Fields
+
+Framing operates on the TCP byte stream before regex matching. A single frame is limited to 1 MiB.
+
+| Framing Field | Type | Used By | Meaning |
+| --- | --- | --- | --- |
+| `mode` | string | all | `length-prefix` (also the empty default), `varint-length-prefix`, `ber`, or `fixed` |
+| `lengthOffset` | integer | length modes | Zero-based byte offset of the length field |
+| `lengthSize` | integer | `length-prefix` | Fixed length-field width from 1 through 8 bytes |
+| `headerSize` | integer | `length-prefix` | Bytes added when the encoded length excludes the header |
+| `bigEndian` | boolean | `length-prefix` | Read the fixed-width length in big-endian rather than little-endian order |
+| `lengthIncludesHeader` | boolean | `length-prefix` | Treat the encoded value as total frame size |
+| `fixedSize` | integer | `fixed` | Exact frame size from 1 byte through 1 MiB |
+| `maxLengthBytes` | integer | `varint-length-prefix` | Maximum base-128 length-field width from 1 through 8 bytes |
+
+`ber` reads one definite-length, top-level TLV and rejects indefinite lengths. `varint-length-prefix` treats bytes before `lengthOffset` and the complete varint as the header; the decoded value is the payload length that follows.
+
+Generic patches support `random`, which requires `offset` and a positive `length`, and `filetime`, which writes an 8-byte little-endian Windows FILETIME at `offset`. Unknown patch types may be interpreted by a configured `WirePlugin`.
+
+See the [binary TCP framework](/protocols/binary-tcp) for execution order, transitions, TLS behavior, and complete examples.
+
+## MCP Tools
+
+MCP tools require a non-empty `name`. They may include `description`, a static `handler`, and `params`, where every parameter requires a non-empty `name` and may include a description. Optional `annotations` support `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`. MCP requires tools and disallows commands; other protocols disallow tools.
+
+## Plugin Settings
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `llmProvider` | string | `openai` or `ollama`; required with an LLM command |
+| `llmModel` | string | Non-empty model name required with an LLM command |
+| `host` | string | Provider endpoint, commonly used for Ollama |
+| `prompt` | string | System behavior for generated responses |
+| `openAISecretKey` | string | Compatibility field; use `OPEN_AI_SECRET_KEY` instead |
+| `inputValidationEnabled` / `outputValidationEnabled` | boolean | Enable the corresponding LLM safety check |
+| `inputValidationPrompt` / `outputValidationPrompt` | string | Prompt used by the corresponding safety check |
+| `rateLimitEnabled` | boolean | Enable per-client request limiting |
+| `rateLimitRequests` | integer | Must be greater than zero when limiting is enabled |
+| `rateLimitWindowSeconds` | integer | Must be greater than zero when limiting is enabled |
+
+`LLMHoneypot` requires the LLM provider and model. `MazeHoneypot` is restricted to HTTP.
+
+The authoritative structural contracts are available as [runtime schemas](../schemas), and the cross-field rules are described in [configuration validation](../validation).

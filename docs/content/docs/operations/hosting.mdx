@@ -1,0 +1,17 @@
+---
+title: Static Hosting
+description: Publish the generated site to any static host without an Astro server adapter.
+---
+
+Build the deployable artifact:
+
+```bash
+cd docs
+corepack enable
+pnpm install --frozen-lockfile
+SITE_URL=https://docs.beelzebub.ai pnpm build
+```
+
+Upload the contents of `docs/dist/` to your static host. Configure clean URL requests such as `/getting-started/quick-start` to serve that directory’s `index.html`, preserve the generated `404.html`, and serve `sitemap-index.xml`, `llms.txt`, schemas, and examples as ordinary static files.
+
+The artifact is provider-neutral: it does not require Node.js at runtime, an API server, or a database. Set `SITE_URL` at build time for preview domains, then rebuild for the canonical domain so sitemap and metadata URLs are correct.

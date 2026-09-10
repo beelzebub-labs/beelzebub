@@ -1,0 +1,20 @@
+---
+title: Protocols
+description: Choose the deception strategy that matches the attack surface you want to observe.
+---
+
+| Protocol | Best for | Required shape |
+| --- | --- | --- |
+| HTTP | Web applications, APIs, crawlers | `commands` and method-aware routes |
+| SSH | Interactive shells and credential attacks | server identity, password regex, commands |
+| TCP | Databases, brokers, text and binary services | banner, framing, and/or command handlers |
+| TELNET | Routers, switches, legacy terminals | server identity, password regex, commands |
+| MCP | AI-agent tool surfaces | one or more decoy `tools` |
+
+All services share `apiVersion`, `protocol`, `address`, descriptions, timeouts, TLS/proxy options, and plugin settings. Protocol pages explain the differences and link to tested examples.
+
+Binary TCP services add explicit application-message framing, byte-preserving matching, state transitions, response patches, TLS upgrades, and opt-in wire plugins. Start with [TCP deception](./tcp), then use the [binary TCP framework](./binary-tcp) when TCP read boundaries are not sufficient.
+
+## Beyond Beelzebub Runtime
+
+<BeyondRuntime />

@@ -1,0 +1,13 @@
+---
+title: Troubleshooting
+description: Diagnose the common installation, configuration, port, and plugin failures.
+---
+
+1. Run `beelzebub validate` before debugging a listener. It reports parse errors, schema errors, procedural errors, and quality warnings.
+2. Confirm the effective paths passed to `--conf-core` and `--conf-services`.
+3. Check for port conflicts with `ss -lnt`, `lsof -iTCP`, or Docker port mappings.
+4. If no service starts, confirm the service directory is not empty and that `BEELZEBUB_SERVICES_CONFIG` is not overriding it.
+5. For LLM services, verify the provider, model, endpoint, and `OPEN_AI_SECRET_KEY`; never commit a key in YAML.
+6. For plugins, run `beelzebub plugin list`, inspect `configurations/lockfile.yaml`, and rebuild after install/update/remove.
+
+See [validation](../../reference/validation), [plugins](../../plugins/management), and [production safety](../../operations/production-safety) for deeper checks.
