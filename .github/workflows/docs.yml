@@ -22,6 +22,7 @@ on:
       - "go.mod"
       - "Makefile"
       - ".github/workflows/docs.yml"
+
   pull_request:
     paths:
       - "docs/**"
@@ -42,6 +43,7 @@ on:
       - "go.mod"
       - "Makefile"
       - ".github/workflows/docs.yml"
+
   schedule:
     - cron: "23 4 * * 1"
 
@@ -54,57 +56,58 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Set up pnpm
+      - name: Set Up pnpm
         uses: pnpm/action-setup@v6
         with:
           version: 11.15.0
 
-      - name: Set up Node
+      - name: Set Up Node
         uses: actions/setup-node@v7
         with:
           node-version-file: docs/.node-version
           cache: pnpm
           cache-dependency-path: docs/pnpm-lock.yaml
 
-      - name: Set up Go
+      - name: Set Up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Install docs dependencies
+      - name: Install Docs Dependencies
         run: pnpm install --frozen-lockfile
         working-directory: docs
 
-      - name: Test docs
+      - name: Test Docs
         run: pnpm test
         working-directory: docs
         env:
           ASTRO_TELEMETRY_DISABLED: "1"
 
-      - name: Check external links
+      - name: Check External Links
         if: github.event_name == 'schedule'
         continue-on-error: true
         run: pnpm verify:external
         working-directory: docs
 
-  change-policy:
+  policy:
     name: Policy
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository history
+      - name: Checkout Repository History
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Check documentation change policy
+      - name: Check Documentation Change Policy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           DOCS_NOT_NEEDED: ${{ contains(github.event.pull_request.labels.*.name, 'docs-not-needed') }}
+
         run: |
           changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
           public='^(cli/|pkg/plugin/|internal/parser/|internal/builder/|internal/plugins/|internal/protocols/|internal/tracer/|specs/|configurations/|Dockerfile$|docker-compose.yml$|install.sh$|go.mod$|Makefile$|beelzebub-chart/)'
