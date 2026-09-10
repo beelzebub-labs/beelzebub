@@ -1,0 +1,14 @@
+apiVersion: "v1"
+protocol: "ssh"
+address: ":2222"
+description: "Lab LLM SSH decoy"
+commands:
+  - regex: "^(.+)$"
+    plugin: "LLMHoneypot"
+serverVersion: "OpenSSH"
+serverName: "ubuntu"
+passwordRegex: "^(lab-user|lab-password)$"
+deadlineTimeoutSeconds: 60
+plugin:
+  llmProvider: "openai"
+  llmModel: "gpt-4o"

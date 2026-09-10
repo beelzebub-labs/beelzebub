@@ -1,0 +1,8 @@
+---
+title: MCP Prompt-Injection Tripwire
+description: Expose a decoy tool and alert when an agent invokes it unexpectedly.
+---
+
+Use `examples/mcp-tripwire.yaml`, expose the service only to an isolated test agent, and call the Streamable HTTP endpoint at `/mcp`. The tool handler returns a synthetic JSON result; its invocation is the signal, not a real operation.
+
+Never place production tools, credentials, or network access behind the decoy. Record and alert on the exact tool name, parameters, client, and timestamp.

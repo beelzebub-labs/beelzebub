@@ -1,0 +1,130 @@
+<figure class="runtime-architecture not-prose" aria-labelledby="runtime-architecture-caption">
+  <ol>
+    <li>
+      <span class="runtime-architecture__step">1</span>
+      <div>
+        <strong>Configuration</strong>
+        <span>YAML files and environment variables</span>
+      </div>
+    </li>
+    <li>
+      <span class="runtime-architecture__step">2</span>
+      <div>
+        <strong>Parsing and Validation</strong>
+        <span>Schemas and procedural validators</span>
+      </div>
+    </li>
+    <li>
+      <span class="runtime-architecture__step">3</span>
+      <div>
+        <strong>Runtime Builder</strong>
+        <span>Protocol strategies, TCP framing, and registered plugins</span>
+      </div>
+    </li>
+    <li>
+      <span class="runtime-architecture__step">4</span>
+      <div>
+        <strong>Protocol Listeners</strong>
+        <span>SSH, HTTP, TCP, TELNET, and MCP</span>
+      </div>
+    </li>
+    <li>
+      <span class="runtime-architecture__step">5</span>
+      <div>
+        <strong>Shared Events</strong>
+        <span>Normalized interaction and session evidence</span>
+      </div>
+    </li>
+    <li>
+      <span class="runtime-architecture__step">6</span>
+      <div>
+        <strong>Destinations</strong>
+        <span>Logs, Prometheus, RabbitMQ, and Cloud</span>
+      </div>
+    </li>
+  </ol>
+  <figcaption id="runtime-architecture-caption">
+    Runtime data flow from operator configuration to observable deception events.
+  </figcaption>
+</figure>
+
+<style>
+  .runtime-architecture {
+    margin-block: 1.5rem;
+    border: 1px solid color-mix(in srgb, var(--color-fd-primary) 24%, var(--color-fd-border));
+    border-radius: 0.9rem;
+    background:
+      linear-gradient(145deg, color-mix(in srgb, var(--color-fd-primary) 8%, transparent), transparent 58%),
+      var(--color-fd-card);
+    padding: clamp(1rem, 3vw, 1.5rem);
+  }
+
+  .runtime-architecture ol {
+    display: grid;
+    gap: 1.15rem;
+    margin: 0 auto;
+    max-width: 44rem;
+    padding: 0;
+    list-style: none;
+  }
+
+  .runtime-architecture li {
+    position: relative;
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr);
+    gap: 0.85rem;
+    align-items: center;
+    border: 1px solid var(--color-fd-border);
+    border-radius: 0.7rem;
+    background: color-mix(in srgb, var(--color-fd-background) 82%, transparent);
+    padding: 0.8rem 0.9rem;
+  }
+
+  .runtime-architecture li:not(:last-child)::after {
+    position: absolute;
+    top: calc(100% + 1px);
+    left: 1.85rem;
+    height: 1.15rem;
+    border-left: 2px solid color-mix(in srgb, var(--color-fd-primary) 65%, var(--color-fd-border));
+    content: '';
+  }
+
+  .runtime-architecture__step {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--color-fd-primary);
+    color: var(--color-fd-primary-foreground);
+    font-size: 0.8rem;
+    font-weight: 750;
+  }
+
+  .runtime-architecture li div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.55rem;
+    align-items: baseline;
+    min-width: 0;
+  }
+
+  .runtime-architecture strong {
+    color: var(--color-fd-foreground);
+    font-size: 0.95rem;
+  }
+
+  .runtime-architecture li div > span {
+    color: var(--color-fd-muted-foreground);
+    font-size: 0.88rem;
+    line-height: 1.5;
+  }
+
+  .runtime-architecture figcaption {
+    margin: 1rem auto 0;
+    max-width: 44rem;
+    color: var(--color-fd-muted-foreground);
+    font-size: 0.78rem;
+    text-align: center;
+  }
+</style>

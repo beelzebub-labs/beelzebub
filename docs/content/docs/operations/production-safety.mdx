@@ -1,0 +1,17 @@
+---
+title: Production Safety
+description: A checklist for authorized, isolated, and privacy-conscious deception deployments.
+---
+
+Before exposure:
+
+- Obtain written authorization and define the monitored scope, retention period, and incident owner.
+- Isolate the runtime from production credentials, metadata services, control planes, and trusted internal networks.
+- Use non-privileged listeners where possible; if privileged ports are required, apply least privilege and host controls.
+- Restrict outbound traffic, especially for LLM providers, plugins, queues, and Cloud endpoints.
+- Use synthetic identities and secrets. Never place an OpenAI key or operational credential in service YAML.
+- Treat external plugins as arbitrary in-process code; review, pin, test, and rebuild deliberately.
+- Configure `trustedProxies` only for known proxy CIDRs, and protect TLS keys and captured logs.
+- Monitor metrics and event delivery, test shutdown, and rehearse data deletion.
+
+The runtime is a research and detection component, not a security boundary. Validate every configuration with `beelzebub validate` and perform an authenticated, authorized smoke test before enabling ingress.

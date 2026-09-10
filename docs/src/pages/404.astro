@@ -1,0 +1,22 @@
+---
+import Layout from '@/components/layout.astro';
+import '@/styles/global.css';
+
+const canonical = new URL('/404', Astro.site ?? Astro.url).href;
+---
+<Layout
+  title="Page Not Found | Beelzebub"
+  description="The requested Beelzebub documentation page could not be found."
+  canonical={canonical}
+>
+  <main class="mx-auto flex min-h-screen max-w-2xl flex-col items-start justify-center px-6 py-20">
+    <p class="mb-3 font-mono text-sm text-fd-primary">404</p>
+    <h1 class="text-4xl font-semibold tracking-tight">Page Not Found</h1>
+    <p class="mt-4 text-lg text-fd-muted-foreground">
+      The page may have moved while the documentation was updated.
+    </p>
+    <a class="mt-8 rounded-lg bg-fd-primary px-4 py-2 font-medium text-fd-primary-foreground" href="/">
+      Return to Documentation
+    </a>
+  </main>
+</Layout>
