@@ -98,7 +98,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository history
+      - name: Checkout Repository History
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
