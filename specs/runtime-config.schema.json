@@ -114,14 +114,14 @@
           }
         ]
       },
-      "maxItems": 100
+      "maxItems": 1000
     },
     "tools": {
       "type": "array",
       "items": {
         "$ref": "#/definitions/Tool"
       },
-      "maxItems": 100
+      "maxItems": 1000
     },
     "fallbackCommand": {
       "$ref": "#/definitions/Command"
