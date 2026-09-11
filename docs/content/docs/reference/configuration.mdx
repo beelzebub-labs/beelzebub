@@ -32,9 +32,9 @@ All core settings are nested below `core`.
 | `protocol` | string | yes | `http`, `ssh`, `tcp`, `telnet`, or `mcp` |
 | `address` | string | yes | `host:port`, `:port`, bracketed IPv6, or a Unix socket path |
 | `description` | string | no | Human-readable service label |
-| `commands` | command array | by protocol | Ordered match rules; maximum 100 |
+| `commands` | command array | by protocol | Ordered match rules; maximum 1,000 |
 | `fallbackCommand` | command | no | Response for unmatched input |
-| `tools` | tool array | MCP only | MCP tool definitions; maximum 100 |
+| `tools` | tool array | MCP only | MCP tool definitions; maximum 1,000 |
 | `serverName` | string | no | Hostname or product name exposed to clients |
 | `serverVersion` | string | no | Protocol banner/version string |
 | `banner` | string | no | Initial TCP data or HTTP greeting content |
