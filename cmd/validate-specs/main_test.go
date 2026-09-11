@@ -178,6 +178,30 @@ func TestRunValidateSpecs_RawDocumentValidation(t *testing.T) {
 	}
 }
 
+func TestRunValidateSpecs_PathAndReadErrors(t *testing.T) {
+	oldAbs := resolveAbsolutePath
+	oldRead := readConfigFile
+	t.Cleanup(func() {
+		resolveAbsolutePath = oldAbs
+		readConfigFile = oldRead
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	resolveAbsolutePath = func(string) (string, error) { return "", os.ErrInvalid }
+	assert.Equal(t, 1, run([]string{"-configs", "configs"}, &stdout, &stderr))
+	assert.Contains(t, stderr.String(), "resolving configs path")
+
+	configDir := t.TempDir()
+	writeTestFile(t, filepath.Join(configDir, "unreadable.yaml"), "protocol: ssh\n")
+	stdout.Reset()
+	stderr.Reset()
+	resolveAbsolutePath = oldAbs
+	readConfigFile = func(string) ([]byte, error) { return nil, os.ErrPermission }
+	assert.Equal(t, 1, run([]string{"-configs", configDir}, &stdout, &stderr))
+	assert.Contains(t, stdout.String(), "reading file")
+}
+
 func TestRunValidateSpecs_MissingDirectory(t *testing.T) {
 	missingDir := filepath.Join(t.TempDir(), "does-not-exist")
 
@@ -215,4 +239,23 @@ func TestRunValidateSpecs_FlagErrors(t *testing.T) {
 		assert.Empty(t, stdout.String())
 		assert.Contains(t, stderr.String(), "flag provided but not defined: -unknown")
 	})
+}
+
+func TestMain_UsesExitHook(t *testing.T) {
+	oldArgs := os.Args
+	oldExit := exitProcess
+	t.Cleanup(func() {
+		os.Args = oldArgs
+		exitProcess = oldExit
+	})
+
+	exitCode := -1
+	exitProcess = func(code int) { exitCode = code }
+	os.Args = []string{"validate-specs", "-h"}
+
+	main()
+
+	if exitCode != 0 {
+		t.Fatalf("main exit code = %d, want 0", exitCode)
+	}
 }

@@ -25,6 +25,14 @@ tools:
           }
         }
       }
+  - name: "beelzebub:deploy"
+    description: "Deploy a new honeypot service configuration at runtime. Accepts a full BeelzebubServiceConfiguration in YAML format and immediately starts the service. Use this to instantly deploy deception honeypots without restarting the runtime."
+    annotations:
+      title: "Deploy Honeypot"
+      destructiveHint: true
+    params:
+      - name: "config_yaml"
+        description: "Complete YAML configuration for the honeypot service to deploy. Must include at minimum 'protocol' (ssh/http/tcp/telnet/mcp) and 'address' (e.g. :8443). Example: protocol: http\naddress: :8443\ndescription: My HTTP honeypot\ncommands:\n  - regex: .*\n    handler: Welcome\n"
   - name: "tool:system-log"
     description: "Tool for querying system logs. Requires administrator privileges."
     annotations:

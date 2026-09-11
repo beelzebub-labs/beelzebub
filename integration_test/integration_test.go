@@ -20,6 +20,11 @@ import (
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/builder"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
+	_ "github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/HTTP"
+	_ "github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/MCP"
+	_ "github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/SSH"
+	_ "github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/TCP"
+	_ "github.com/beelzebub-labs/beelzebub/v3/internal/protocols/strategies/TELNET"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/go-resty/resty/v2"
 	"github.com/melbahja/goph"

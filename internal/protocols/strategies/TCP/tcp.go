@@ -163,12 +163,13 @@ func applyPatches(buf []byte, patches []parser.Patch) []byte {
 type TCPStrategy struct {
 	Sessions *historystore.HistoryStore
 
-	lifecycleMu sync.Mutex
-	listeners   []net.Listener
-	acceptDone  []chan struct{}
-	ctx         context.Context
-	cancel      context.CancelFunc
-	cleanerOnce sync.Once
+	lifecycleMu       sync.Mutex
+	listeners         []net.Listener
+	listenerAddresses []string
+	acceptDone        []chan struct{}
+	ctx               context.Context
+	cancel            context.CancelFunc
+	cleanerOnce       sync.Once
 
 	activeMu    sync.Mutex
 	activeConns map[net.Conn]struct{}
@@ -288,6 +289,8 @@ func generateSelfSignedCert(commonName string) (*tls.Certificate, error) {
 	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, nil
 }
 
+var listenTCP = net.Listen
+
 func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
 	if tcpStrategy.Sessions == nil {
 		tcpStrategy.Sessions = historystore.NewHistoryStore()
@@ -305,7 +308,7 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 		}
 	}
 
-	listen, err := net.Listen("tcp", servConf.Address)
+	listen, err := listenTCP("tcp", servConf.Address)
 	if err != nil {
 		log.Errorf("Error during init TCP Protocol: %v", err)
 		return err
@@ -318,6 +321,7 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 	}
 	strategyCtx := tcpStrategy.ctx
 	tcpStrategy.listeners = append(tcpStrategy.listeners, listen)
+	tcpStrategy.listenerAddresses = append(tcpStrategy.listenerAddresses, servConf.Address)
 	tcpStrategy.acceptDone = append(tcpStrategy.acceptDone, acceptDone)
 	tcpStrategy.lifecycleMu.Unlock()
 	tcpStrategy.activeMu.Lock()
@@ -370,6 +374,42 @@ func (tcpStrategy *TCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 	return nil
 }
 
+// Stop closes only the listener associated with the requested service.
+// It deliberately waits for that accept loop only, so hot-reload of one
+// service does not block on unrelated TCP listeners.
+func (tcpStrategy *TCPStrategy) Stop(servConf parser.BeelzebubServiceConfiguration) error {
+	tcpStrategy.lifecycleMu.Lock()
+	index := -1
+	for i := len(tcpStrategy.listenerAddresses) - 1; i >= 0; i-- {
+		if tcpStrategy.listenerAddresses[i] == servConf.Address {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		tcpStrategy.lifecycleMu.Unlock()
+		return nil
+	}
+	listen := tcpStrategy.listeners[index]
+	done := tcpStrategy.acceptDone[index]
+	tcpStrategy.listeners = append(tcpStrategy.listeners[:index], tcpStrategy.listeners[index+1:]...)
+	tcpStrategy.listenerAddresses = append(tcpStrategy.listenerAddresses[:index], tcpStrategy.listenerAddresses[index+1:]...)
+	tcpStrategy.acceptDone = append(tcpStrategy.acceptDone[:index], tcpStrategy.acceptDone[index+1:]...)
+	tcpStrategy.lifecycleMu.Unlock()
+
+	closeErr := listen.Close()
+	<-done
+	if errors.Is(closeErr, net.ErrClosed) {
+		return nil
+	}
+	return closeErr
+}
+
+// StopAll is the ServiceStrategy-compatible name for the complete shutdown.
+func (tcpStrategy *TCPStrategy) StopAll() error {
+	return tcpStrategy.Shutdown()
+}
+
 // Shutdown stops listeners, active connections, command plugins, handler
 // goroutines, and the session history cleaner owned by this strategy.
 func (tcpStrategy *TCPStrategy) Shutdown() error {
@@ -378,6 +418,7 @@ func (tcpStrategy *TCPStrategy) Shutdown() error {
 	acceptDone := append([]chan struct{}(nil), tcpStrategy.acceptDone...)
 	cancel := tcpStrategy.cancel
 	tcpStrategy.listeners = nil
+	tcpStrategy.listenerAddresses = nil
 	tcpStrategy.acceptDone = nil
 	tcpStrategy.lifecycleMu.Unlock()
 
@@ -408,6 +449,11 @@ func (tcpStrategy *TCPStrategy) Shutdown() error {
 	if tcpStrategy.Sessions != nil {
 		tcpStrategy.Sessions.Close()
 	}
+	tcpStrategy.cleanerOnce = sync.Once{}
+	tcpStrategy.lifecycleMu.Lock()
+	tcpStrategy.ctx = nil
+	tcpStrategy.cancel = nil
+	tcpStrategy.lifecycleMu.Unlock()
 	return err
 }
 
