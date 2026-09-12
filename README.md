@@ -1,38 +1,63 @@
+![Beelzebub — open-source deception framework](docs/public/readme/cover.svg)
+
 # Beelzebub
 
+**Open-source deception framework.**
+
+Deploy realistic decoys. Observe attacker behavior. Turn interactions into security evidence.
+
+**[Explore Beelzebub Platform](https://beelzebub.ai/products/beelzebub-cloud/)** · [Documentation](https://docs.beelzebub.ai) · [Quick start](#get-started)
+
 [![CI](https://github.com/beelzebub-labs/beelzebub/actions/workflows/main.yml/badge.svg)](https://github.com/beelzebub-labs/beelzebub/actions/workflows/main.yml)
-[![codecov](https://codecov.io/gh/beelzebub-labs/beelzebub/graph/badge.svg?token=8XTK7D4WHE)](https://codecov.io/gh/beelzebub-labs/beelzebub)
+[![Coverage](https://codecov.io/gh/beelzebub-labs/beelzebub/graph/badge.svg?token=8XTK7D4WHE)](https://codecov.io/gh/beelzebub-labs/beelzebub)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-6930c3.svg)](LICENSE)
 [![Go Reference](https://pkg.go.dev/badge/github.com/beelzebub-labs/beelzebub/v3.svg)](https://pkg.go.dev/github.com/beelzebub-labs/beelzebub/v3)
-[![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/beelzebub-labs/beelzebub)](https://archestra.ai/mcp-catalog/beelzebub-labs__beelzebub)
 [![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go)
 
-**Open-source deception runtime framework.** Beelzebub deploys realistic decoys, collects high-fidelity threat intelligence, detects prompt-injection attempts against AI agents, and can be extended with trusted Go plugins.
+Beelzebub gives security teams a configurable way to study activity directed at decoy services. Define the environment an attacker encounters, choose how it responds, and capture the interaction for investigation. Run the framework independently or connect it to Beelzebub Platform.
 
-![GitHub Beelzebub - Inception Program](https://github.com/user-attachments/assets/e180d602-6de9-4c48-92ad-eb0ef3c5322d)
+## Why Beelzebub
 
-## Table Of Contents
+- **Deploy decoys that fit your environment.** Define services, routes, and response rules in YAML. Use static handlers for predictable behavior or LLM-powered responses for adaptive interactions. Extend the runtime with trusted Go plugins when you need custom behavior.
+- **Observe what happens after contact.** Capture evidence from decoy interactions, including commands, HTTP request details, and session context, depending on the protocol. Give analysts a record of activity directed at the service to support investigation.
+- **Bring evidence into your workflow.** Inspect logs locally, publish structured events to RabbitMQ, or enable Beelzebub Platform reporting. Monitor runtime activity through Prometheus metrics and choose where captured data is sent.
 
-- [Key Features](#key-features)
-- [Quick Start](#quick-start)
-- [Documentation](#documentation)
-- [Demo](#demo)
-- [Development](#development)
-- [Contributing](#contributing)
-- [Supported By](#supported-by)
-- [License](#license)
+## See it in action
 
-## Key Features
+Watch an LLM-powered decoy respond to attacker input. The demo illustrates how generated responses can sustain an interaction beyond a fixed set of command handlers.
 
-- **Adaptive deception:** engage attackers with static or LLM-powered responses while collecting actionable behavior.
-- **Low-code configuration:** define realistic services, routes, and response rules in YAML.
-- **Multi-protocol coverage:** protect infrastructure and AI-agent surfaces with SSH, HTTP, TCP, TELNET, and MCP decoys.
-- **Extensible runtime:** add trusted response generators and services through the public Go plugin SDK.
-- **Operational visibility:** expose Prometheus metrics and forward structured events to RabbitMQ or Beelzebub Cloud.
-- **Flexible deployment:** run locally, with Docker Compose, or on Kubernetes with Helm.
+![Demo of an LLM-powered Beelzebub decoy responding to attacker input](https://github.com/user-attachments/assets/4dbb9a67-6c12-49c5-82ac-9b3e340406ca)
 
-## Quick Start
+## How it works
 
-Use the Docker installer for an isolated lab deployment:
+[![Interactions reach decoy services, receive responses from the Beelzebub runtime, and produce security events. YAML configuration feeds the runtime through validation; Go plugins are compiled into the runtime to extend services and responses. Events go to logs with optional RabbitMQ or Platform reporting, while Prometheus exposes metrics separately.](docs/public/readme/how-it-works.svg)](docs/public/readme/how-it-works.svg)
+
+Define services and rules in YAML, validate the configuration, and start the runtime. Trusted Go plugins are compiled into the runtime to extend services and responses. Each service handles incoming interactions and emits evidence through the configured event output. LLM responses require a configured provider; static handlers can run without one.
+
+The framework supports **SSH, HTTP, TCP, TELNET, and MCP**. MCP decoys expose bait tools that make suspicious invocations observable during controlled agent testing. They can provide evidence of prompt-injection attempts; they do not guarantee detection of every attempt.
+
+Deployment options include a local Go binary, Docker Compose, and Kubernetes with Helm. See the [architecture guide](https://docs.beelzebub.ai/concepts/architecture) for runtime behavior and extension boundaries.
+
+## Explore the decoys
+
+Start with one of the **18 example configurations** in [configurations/services](configurations/services). Open a YAML file to inspect its rules and adapt it to your environment.
+
+| Category | Example decoys |
+| --- | --- |
+| Remote access | [SSH](configurations/services/ssh-22.yaml) · [SSH (LLM)](configurations/services/ssh-2222.yaml) · [TELNET](configurations/services/telnet-23.yaml) · [RDP](configurations/services/tcp-3389-rdp.yaml) · [VNC](configurations/services/tcp-5900-vnc.yaml) |
+| Web | [WordPress (LLM fallback)](configurations/services/http-80.yaml) · [HTTP 401](configurations/services/http-8080.yaml) · [HTTP methods](configurations/services/http-methods-8081.yaml) · [Apache directory maze](configurations/services/http-maze-8888.yaml) |
+| Databases & caches | [MySQL](configurations/services/tcp-3306.yaml) · [PostgreSQL (LLM)](configurations/services/tcp-5432-postgresql-llm.yaml) · [SQL Server](configurations/services/tcp-1433-mssql.yaml) · [Redis](configurations/services/tcp-6379-redis.yaml) · [Memcached](configurations/services/tcp-11211-memcached.yaml) |
+| Network services | [SMB](configurations/services/tcp-445-smb.yaml) · [LDAP](configurations/services/tcp-389-ldap.yaml) |
+| IoT | [MQTT](configurations/services/tcp-1883-mqtt.yaml) |
+| AI agents | [MCP bait tools](configurations/services/mcp-8000.yaml) |
+
+Examples range from banners and selected responses to interactive exchanges. **LLM** examples require a configured provider; WordPress uses it for its catch-all route. Check your deployment's port mappings when enabling additional examples.
+
+## Get started
+
+You need **Git, a shell, and Docker Engine with Compose v2**. Use an **isolated lab host** with authorization for all configured listeners: the installer starts a bundle of example services, including privileged ports. On Linux it can enable **host networking**; Docker does not provide network isolation in that mode.
+
+Use synthetic credentials and review the [production safety guide](https://docs.beelzebub.ai/operations/production-safety) before exposing services to the internet.
 
 ```bash
 git clone https://github.com/beelzebub-labs/beelzebub.git
@@ -40,56 +65,41 @@ cd beelzebub
 ./install.sh --docker
 ```
 
-Run `beelzebub validate` before exposing any service. Use synthetic credentials and read the [production safety guide](https://docs.beelzebub.ai/operations/production-safety) before internet exposure.
+Platform reporting is optional. Leave the Platform token blank when prompted to run independently. The runtime validates its configuration before starting listeners.
 
-## Documentation
-
-Read the complete, current documentation at **[docs.beelzebub.ai](https://docs.beelzebub.ai)**. It includes installation, configuration, protocol behavior, Docker and Helm operations, observability, security guidance, recipes, plugin authoring, and contribution workflows.
-
-## Demo
-
-See an LLM-powered deception service respond dynamically to attacker input and sustain a realistic interaction beyond fixed command handlers.
-
-![Beelzebub LLM Deception Demo](https://github.com/user-attachments/assets/4dbb9a67-6c12-49c5-82ac-9b3e340406ca)
-
-## Development
-
-Runtime development requires Go 1.25.9, Git, and Make. Build the binary from a local checkout:
+Test the default HTTP decoy and inspect its logs:
 
 ```bash
-git clone https://github.com/beelzebub-labs/beelzebub.git
-cd beelzebub
-make build
+curl -i http://localhost:8080/
+docker compose logs -f beelzebub
 ```
 
-Run unit tests, static analysis, schema validation, and full configuration validation before opening a pull request:
+Expect **`401 Unauthorized`** from the bundled HTTP example on port 8080. This is the decoy's configured response, confirming that the listener is reachable. If the installer skipped an occupied port, resolve the conflict before testing. Press `Ctrl+C` to stop following logs.
+
+Stop the lab when finished:
 
 ```bash
-make test.unit
-go vet ./...
-make validate-all
+docker compose down
 ```
 
-Integration tests additionally require Docker. Start their dependencies, run the suite, and tear the environment down afterward:
+For a single-service setup or another deployment method, follow the [installation guide](https://docs.beelzebub.ai/getting-started/installation).
 
-```bash
-make test.dependencies.start
-make test.integration
-make test.dependencies.down
-```
+## Beelzebub Platform
 
-See the [development workflow](https://docs.beelzebub.ai/contributing/development) for runtime changes and the [documentation workflow](https://docs.beelzebub.ai/contributing/documentation) for the pnpm-based Fumadocs site.
+The open-source framework is the foundation: deploy, operate, and extend it independently. **Beelzebub Platform** is the managed product for teams that need to coordinate deception across environments and connect runtime evidence to a broader security workflow.
 
-## Contributing
+Explore the platform's deployment, investigation, and reporting capabilities, and see how they fit your team's requirements.
 
-Contributions are welcome. Follow [CONTRIBUTING.md](CONTRIBUTING.md), participate according to the [Code Of Conduct](CODE_OF_CONDUCT.md), and report vulnerabilities privately through [SECURITY.md](SECURITY.md).
+**[Explore Beelzebub Platform →](https://beelzebub.ai/products/beelzebub-cloud/)**
 
-## Supported By
+## Resources and community
 
-Beelzebub is developed with support from organizations that invest in open-source software. We thank JetBrains for providing the tools that help us build and maintain the project.
+- **[Documentation](https://docs.beelzebub.ai):** configuration, protocols, operations, integrations, and recipes.
+- **[Plugin authoring](https://docs.beelzebub.ai/plugins/authoring):** build extensions with the public Go SDK. Plugins execute in-process; review their source and pin trusted versions.
+- **[Contributing](CONTRIBUTING.md):** contribute code, examples, or documentation under the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately through [SECURITY.md](SECURITY.md).
 
-[![JetBrains Logo](https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg)](https://jb.gg/OpenSourceSupport)
+For development, use the Go version declared in [go.mod](go.mod), Git, and Make. Build with `make build`; run `make test.unit`, `go vet ./...`, and `make validate-all` before submitting runtime changes. The [development workflow](https://docs.beelzebub.ai/contributing/development) covers integration tests and their Docker dependencies.
 
-## License
+Thank you to [JetBrains](https://jb.gg/OpenSourceSupport) for supporting development with tools through its open-source support program.
 
-Beelzebub is licensed under the [GNU General Public License v3.0](LICENSE).
+Licensed under the [GNU General Public License v3.0](LICENSE).
