@@ -11,6 +11,8 @@ Deploy realistic decoys. Observe attacker behavior. Turn interactions into secur
 [![CI](https://github.com/beelzebub-labs/beelzebub/actions/workflows/main.yml/badge.svg)](https://github.com/beelzebub-labs/beelzebub/actions/workflows/main.yml)
 [![Coverage](https://codecov.io/gh/beelzebub-labs/beelzebub/graph/badge.svg?token=8XTK7D4WHE)](https://codecov.io/gh/beelzebub-labs/beelzebub)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-6930c3.svg)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/beelzebub-labs/beelzebub/v3.svg)](https://pkg.go.dev/github.com/beelzebub-labs/beelzebub/v3)
+[![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go)
 
 Beelzebub gives security teams a configurable way to study activity directed at decoy services. Define the environment an attacker encounters, choose how it responds, and capture the interaction for investigation. Run the framework independently or connect it to Beelzebub Platform.
 
@@ -18,23 +20,38 @@ Beelzebub gives security teams a configurable way to study activity directed at 
 
 - **Deploy decoys that fit your environment.** Define services, routes, and response rules in YAML. Use static handlers for predictable behavior or LLM-powered responses for adaptive interactions. Extend the runtime with trusted Go plugins when you need custom behavior.
 - **Observe what happens after contact.** Capture evidence from decoy interactions, including commands, HTTP request details, and session context, depending on the protocol. Give analysts a record of activity directed at the service to support investigation.
-- **Bring evidence into your workflow.** Inspect logs locally, publish structured events to RabbitMQ, or enable Beelzebub Cloud reporting. Monitor runtime activity through Prometheus metrics and choose where captured data is sent.
+- **Bring evidence into your workflow.** Inspect logs locally, publish structured events to RabbitMQ, or enable Beelzebub Platform reporting. Monitor runtime activity through Prometheus metrics and choose where captured data is sent.
 
 ## See it in action
 
-Watch an LLM-powered decoy respond to attacker input. The demo illustrates how generated responses can sustain an interaction beyond a fixed set of command handlers; the local quick start below uses a static HTTP example.
+Watch an LLM-powered decoy respond to attacker input. The demo illustrates how generated responses can sustain an interaction beyond a fixed set of command handlers.
 
 ![Demo of an LLM-powered Beelzebub decoy responding to attacker input](https://github.com/user-attachments/assets/4dbb9a67-6c12-49c5-82ac-9b3e340406ca)
 
 ## How it works
 
-[![Interactions reach decoy services, receive responses from the Beelzebub runtime, and produce security events. YAML configuration feeds the runtime through validation; Go plugins are compiled into the runtime to extend services and responses. Events go to logs with optional RabbitMQ or Cloud reporting, while Prometheus exposes metrics separately.](docs/public/readme/how-it-works.svg)](docs/public/readme/how-it-works.svg)
+[![Interactions reach decoy services, receive responses from the Beelzebub runtime, and produce security events. YAML configuration feeds the runtime through validation; Go plugins are compiled into the runtime to extend services and responses. Events go to logs with optional RabbitMQ or Platform reporting, while Prometheus exposes metrics separately.](docs/public/readme/how-it-works.svg)](docs/public/readme/how-it-works.svg)
 
 Define services and rules in YAML, validate the configuration, and start the runtime. Trusted Go plugins are compiled into the runtime to extend services and responses. Each service handles incoming interactions and emits evidence through the configured event output. LLM responses require a configured provider; static handlers can run without one.
 
 The framework supports **SSH, HTTP, TCP, TELNET, and MCP**. MCP decoys expose bait tools that make suspicious invocations observable during controlled agent testing. They can provide evidence of prompt-injection attempts; they do not guarantee detection of every attempt.
 
 Deployment options include a local Go binary, Docker Compose, and Kubernetes with Helm. See the [architecture guide](https://docs.beelzebub.ai/concepts/architecture) for runtime behavior and extension boundaries.
+
+## Explore the decoys
+
+Start with one of the **18 example configurations** in [configurations/services](configurations/services). Open a YAML file to inspect its rules and adapt it to your environment.
+
+| Category | Example decoys |
+| --- | --- |
+| Remote access | [SSH](configurations/services/ssh-22.yaml) · [SSH (LLM)](configurations/services/ssh-2222.yaml) · [TELNET](configurations/services/telnet-23.yaml) · [RDP](configurations/services/tcp-3389-rdp.yaml) · [VNC](configurations/services/tcp-5900-vnc.yaml) |
+| Web | [WordPress (LLM fallback)](configurations/services/http-80.yaml) · [HTTP 401](configurations/services/http-8080.yaml) · [HTTP methods](configurations/services/http-methods-8081.yaml) · [Apache directory maze](configurations/services/http-maze-8888.yaml) |
+| Databases & caches | [MySQL](configurations/services/tcp-3306.yaml) · [PostgreSQL (LLM)](configurations/services/tcp-5432-postgresql-llm.yaml) · [SQL Server](configurations/services/tcp-1433-mssql.yaml) · [Redis](configurations/services/tcp-6379-redis.yaml) · [Memcached](configurations/services/tcp-11211-memcached.yaml) |
+| Network services | [SMB](configurations/services/tcp-445-smb.yaml) · [LDAP](configurations/services/tcp-389-ldap.yaml) |
+| IoT | [MQTT](configurations/services/tcp-1883-mqtt.yaml) |
+| AI agents | [MCP bait tools](configurations/services/mcp-8000.yaml) |
+
+Examples range from banners and selected responses to interactive exchanges. **LLM** examples require a configured provider; WordPress uses it for its catch-all route. Check your deployment's port mappings when enabling additional examples.
 
 ## Get started
 
@@ -48,7 +65,7 @@ cd beelzebub
 ./install.sh --docker
 ```
 
-Cloud reporting is optional. Leave the Cloud token blank when prompted to run independently. The runtime validates its configuration before starting listeners.
+Platform reporting is optional. Leave the Platform token blank when prompted to run independently. The runtime validates its configuration before starting listeners.
 
 Test the default HTTP decoy and inspect its logs:
 

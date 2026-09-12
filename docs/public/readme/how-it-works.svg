@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1120" height="1130" viewBox="0 0 1120 1130" role="img" aria-labelledby="title description">
   <title id="title">Beelzebub — configurable, extensible deception</title>
-  <desc id="description">An isometric architecture diagram. Interactions reach decoy services, the Beelzebub runtime returns static or LLM-powered responses, and security events are collected in logs with optional RabbitMQ or Cloud reporting. YAML configuration feeds the runtime through validation. Go plugins are compiled into the runtime to extend services and responses. Prometheus metrics follow a separate output branch.</desc>
+  <desc id="description">An isometric architecture diagram. Interactions reach decoy services, with SSH, Redis, WordPress, and MCP as representative examples. The Beelzebub runtime returns static or LLM-powered responses, and security events are collected in logs with optional RabbitMQ or Cloud reporting. YAML configuration feeds the runtime through validation. Go plugins are compiled into the runtime to extend services and responses. Prometheus metrics follow a separate output branch.</desc>
   <defs>
     <radialGradient id="ambient">
       <stop stop-color="#743bd0" stop-opacity=".2" />
@@ -207,7 +207,7 @@
     <text x="600" y="74" fill="#f4efff" font-size="30" font-weight="600" text-anchor="middle">01 / Interactions</text>
     <text x="600" y="105" fill="#b7a7c9" font-size="22" font-weight="400" text-anchor="middle">Requests and commands</text>
     <text x="600" y="332" fill="#f4efff" font-size="30" font-weight="600" text-anchor="middle">02 / Decoy services</text>
-    <text x="600" y="363" fill="#b7a7c9" font-size="22" font-weight="400" text-anchor="middle">SSH · HTTP · TCP · TELNET · MCP</text>
+    <text x="600" y="363" fill="#b7a7c9" font-size="22" font-weight="400" text-anchor="middle">SSH · Redis · WordPress · MCP</text>
     <text x="600" y="579" fill="#f4efff" font-size="30" font-weight="600" text-anchor="middle">03 / Beelzebub runtime</text>
     <text x="600" y="610" fill="#b7a7c9" font-size="22" font-weight="400" text-anchor="middle">Static responses · LLM · Extensions</text>
     <text x="600" y="814" fill="#f4efff" font-size="30" font-weight="600" text-anchor="middle">04 / Evidence</text>
