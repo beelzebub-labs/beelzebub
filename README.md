@@ -28,9 +28,9 @@ Watch an LLM-powered decoy respond to attacker input. The demo illustrates how g
 
 ## How it works
 
-![An interaction reaches a decoy, receives a static or LLM-powered response, and produces events for logs, optional RabbitMQ, or optional Cloud reporting. Prometheus exposes metrics separately.](docs/public/readme/how-it-works.svg)
+[![Interactions reach decoy services, receive responses from the Beelzebub runtime, and produce security events. YAML configuration feeds the runtime through validation; Go plugins are compiled into the runtime to extend services and responses. Events go to logs with optional RabbitMQ or Cloud reporting, while Prometheus exposes metrics separately.](docs/public/readme/how-it-works.svg)](docs/public/readme/how-it-works.svg)
 
-Configure a decoy, validate its configuration, and start the runtime. Each service handles incoming interactions and emits evidence through the configured event output. LLM responses require a configured provider; static handlers can run without one.
+Define services and rules in YAML, validate the configuration, and start the runtime. Trusted Go plugins are compiled into the runtime to extend services and responses. Each service handles incoming interactions and emits evidence through the configured event output. LLM responses require a configured provider; static handlers can run without one.
 
 The framework supports **SSH, HTTP, TCP, TELNET, and MCP**. MCP decoys expose bait tools that make suspicious invocations observable during controlled agent testing. They can provide evidence of prompt-injection attempts; they do not guarantee detection of every attempt.
 
