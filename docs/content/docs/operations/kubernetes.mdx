@@ -1,0 +1,12 @@
+---
+title: Kubernetes And Helm
+description: Deploy a configured Beelzebub service with the repository Helm chart.
+---
+
+```bash
+helm install beelzebub ./beelzebub-chart --namespace deception --create-namespace
+helm upgrade beelzebub ./beelzebub-chart --namespace deception
+helm uninstall beelzebub --namespace deception
+```
+
+Before installation, override the image tag, service port, core YAML, service YAML, resources, security context, and ingress values. The chart mounts a core ConfigMap and a service ConfigMap into the pod. Add probes, network policies, secret references, and durable event destinations according to your cluster standards.

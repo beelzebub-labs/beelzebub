@@ -1,0 +1,32 @@
+---
+title: TCP Deception
+description: Emulate text and binary TCP services with byte-safe matching, stateful responses, and optional plugins.
+---
+
+TCP services can model a line-oriented protocol such as Redis or a framed binary protocol such as MQTT, LDAP, SMB, RDP, MSSQL, or VNC. Use `banner` for bytes sent immediately after connection and ordered `commands` for request matching. The first matching regular expression wins.
+
+## Choose a TCP Mode
+
+| Mode | Configuration | Use It When |
+| --- | --- | --- |
+| Text | Omit `wireEncoding` and usually omit `framing` | Requests are UTF-8 or ASCII and command boundaries are easy to recognize |
+| Binary | Set `wireEncoding: latin1` and configure `framing` | Every byte must survive matching and responses must be written byte-for-byte |
+
+Without framing, the reader accumulates bytes until a command matches. This is convenient for text services, but a TCP `Read` is not an application-message boundary. Binary services should always declare framing so fragmented requests are not dispatched early and pipelined messages are not merged.
+
+## Request and Response Behavior
+
+- `commands` are evaluated from top to bottom; place specific signatures before catch-all expressions.
+- Static handlers use the service wire encoding. With `latin1`, YAML `\xHH` values map back to their original bytes.
+- `fallbackCommand` handles unmatched text-oriented input. For framed binary state machines, explicit handlers make state and evidence clearer.
+- `closeAfter` writes the response and then ends the connection.
+- Invalid UTF-8 request data is preserved in the tracer event’s `CommandRaw` field as reversible `\xNN` escapes.
+- `maxHistory` bounds stored conversational context per service and source; `0` uses the runtime default of 20 entries.
+
+TCP has no HTTP method or MCP tool model. Test every service with a real client and fragmented as well as pipelined input.
+
+<Cards>
+  <Card title="Build a Text TCP Service" href="/recipes/tcp-service" />
+  <Card title="Configure Binary TCP" href="/protocols/binary-tcp" />
+  <Card title="Capture VNC Authentication Evidence" href="/recipes/vnc-credential-capture" />
+</Cards>

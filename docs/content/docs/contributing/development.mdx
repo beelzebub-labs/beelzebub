@@ -1,0 +1,13 @@
+---
+title: Development Workflow
+description: Build, test, validate, and review Beelzebub changes locally.
+---
+
+```bash
+go test ./...
+go vet ./...
+make validate-specs
+make validate-all
+```
+
+Integration tests require Docker and use `integration_test/docker-compose.yml`. Keep protocol behavior covered by focused tests, update examples and schemas with configuration changes, and include security impact and captured-data considerations in pull requests.
