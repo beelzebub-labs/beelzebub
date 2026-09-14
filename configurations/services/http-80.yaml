@@ -23,5 +23,6 @@ commands:
     statusCode: 200
 plugin:
   llmProvider: "openai"
+  host: "https://openrouter.ai/api/v1/chat/completions"
   llmModel: "gpt-4o"
-  openAISecretKey: "sk-proj-123456"
+  openAISecretKey: "${OPEN_AI_SECRET_KEY}"

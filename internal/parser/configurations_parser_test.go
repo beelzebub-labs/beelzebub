@@ -195,6 +195,7 @@ func TestReadConfigurationsCoreValid(t *testing.T) {
 	assert.Equal(t, coreConfigurations.Core.BeelzebubCloud.Enabled, true)
 	assert.Equal(t, coreConfigurations.Core.BeelzebubCloud.URI, "amqp://user:password@localhost/")
 	assert.Equal(t, coreConfigurations.Core.BeelzebubCloud.AuthToken, "iejfdjsl-aosdajosoidaj-dunfkjnfkjsdnkn")
+	assert.Equal(t, 15, coreConfigurations.Core.BeelzebubCloud.PollingIntervalSeconds)
 }
 
 func TestReadConfigurationsServicesFail(t *testing.T) {

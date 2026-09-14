@@ -48,3 +48,20 @@ func TestLLMPlugin_Execute_UnknownProtocol(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown protocol")
 }
+
+func TestLLMPlugin_Execute_OllamaConnectionError(t *testing.T) {
+	lp := &llmPlugin{}
+
+	_, err := lp.Execute(context.Background(), plugin.CommandRequest{
+		Command:  "ls",
+		ClientIP: "127.0.0.1",
+		Protocol: "ssh",
+		Config: plugin.Config{
+			LLMProvider: "ollama",
+			LLMModel:    "test",
+			Host:        "http://127.0.0.1:1",
+		},
+	})
+
+	assert.Error(t, err)
+}

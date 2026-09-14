@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,6 +71,8 @@ func GetServiceValidators() []ServiceValidator {
 	return append([]ServiceValidator(nil), serviceValidators...)
 }
 
+var validProtocols = []string{"http", "ssh", "tcp", "mcp", "telnet"}
+
 // Validate checks service configurations and returns all errors and warnings
 func Validate(services []BeelzebubServiceConfiguration, parseIssues []ValidationIssue) ValidateResult {
 	resultMap := make(map[string]*ValidationResult)
@@ -95,6 +98,17 @@ func Validate(services []BeelzebubServiceConfiguration, parseIssues []Validation
 
 		for _, v := range GetServiceValidators() {
 			r.Issues = append(r.Issues, v.Validate(services[i])...)
+		}
+
+		protocolSchemaError := false
+		for _, issue := range r.Issues {
+			if issue.Level == LevelError && strings.Contains(issue.Message, "/protocol") && strings.Contains(issue.Message, "must be one of") {
+				protocolSchemaError = true
+				break
+			}
+		}
+		if !protocolSchemaError {
+			r.Issues = append(r.Issues, validateProtocol(services[i])...)
 		}
 	}
 
@@ -125,6 +139,16 @@ func getResult(resultMap map[string]*ValidationResult, filename string) *Validat
 	return r
 }
 
+func validateProtocol(svc BeelzebubServiceConfiguration) []ValidationIssue {
+	if slices.Contains(validProtocols, strings.ToLower(svc.Protocol)) {
+		return nil
+	}
+
+	return []ValidationIssue{{
+		Level:   LevelError,
+		Message: fmt.Sprintf("invalid protocol %q, valid: %s", svc.Protocol, strings.Join(validProtocols, ", ")),
+	}}
+}
 func validateAddress(svc BeelzebubServiceConfiguration) []ValidationIssue {
 	address := svc.Address
 	if address == "" {

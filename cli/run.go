@@ -15,6 +15,8 @@ import (
 
 var (
 	runMemLimitMiB int
+	// testShutdownCh overrides the signal channel for testing. Never set in production.
+	testShutdownCh <-chan os.Signal
 )
 
 var runCmd = &cobra.Command{
@@ -53,6 +55,15 @@ func runBeelzebub(cmd *cobra.Command, _ []string) error {
 		return validationErr
 	}
 
+	fmt.Println(
+		`
+██████  ███████ ███████ ██      ███████ ███████ ██████  ██    ██ ██████  
+██   ██ ██      ██      ██         ███  ██      ██   ██ ██    ██ ██   ██ 
+██████  █████   █████   ██        ███   █████   ██████  ██    ██ ██████  
+██   ██ ██      ██      ██       ███    ██      ██   ██ ██    ██ ██   ██ 
+██████  ███████ ███████ ███████ ███████ ███████ ██████   ██████  ██████  
+Deception runtime framework, happy hacking!`)
+
 	beelzebubBuilder := builder.NewBuilder()
 	director := builder.NewDirector(beelzebubBuilder)
 
@@ -66,9 +77,14 @@ func runBeelzebub(cmd *cobra.Command, _ []string) error {
 	}
 	defer beelzebubBuilder.Close()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
+	sig := func() os.Signal {
+		if testShutdownCh != nil {
+			return <-testShutdownCh
+		}
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		return <-quit
+	}()
 	fmt.Fprintf(cmd.OutOrStdout(), "\nReceived signal %s, shutting down...\n", sig)
 
 	return nil

@@ -3,7 +3,30 @@ title: Optional Integrations
 description: Connect RabbitMQ, Prometheus, LLM providers, and Beelzebub Cloud with explicit data-flow controls.
 ---
 
-RabbitMQ is configured under `core.tracings.rabbit-mq`. Beelzebub Cloud uses `core.beelzebub-cloud` or `BEELZEBUB_CLOUD_*` variables and requires both a URI and authorization token. The installer can verify the Cloud endpoint and writes credentials to a private `.env` file.
+## Beelzebub Cloud
+
+Beelzebub Cloud uses `core.beelzebub-cloud` or the `BEELZEBUB_CLOUD_*` variables and requires both a URI and authorization token. The installer can verify the Cloud endpoint and writes credentials to a private `.env` file. Keep the token in the environment or an orchestrator secret rather than committing it to YAML.
+
+When Cloud is enabled, the runtime loads the service configurations at startup and synchronizes them periodically. Configure the interval with `beelzebub-cloud.pollingIntervalSeconds`; the default is 15 seconds and values less than or equal to zero use that default.
+
+```yaml
+core:
+  beelzebub-cloud:
+    enabled: true
+    uri: https://cloud.example.invalid
+    pollingIntervalSeconds: 15
+```
+
+On a detected change, Beelzebub applies an in-process hot-reload. Unchanged services remain available while affected services are updated:
+
+- unchanged services keep running;
+- added or changed services are started;
+- removed or changed services are stopped;
+- if a changed service cannot start, the runtime attempts to stop the newly started services and restore the previous configuration.
+
+After startup, Cloud polling or reload errors are logged, the current configuration remains active, and the next poll retries the synchronization. An error during the initial Cloud load prevents startup. Stopping the runtime also stops the Cloud polling loop. Validate configurations before publishing them to Cloud; invalid YAML, regular expressions, trusted proxies, or service settings are rejected when the response is loaded.
+
+RabbitMQ is configured under `core.tracings.rabbit-mq`.
 
 LLM providers are configured per service. OpenAI uses `OPEN_AI_SECRET_KEY`; Ollama uses a configured `host`. Keep provider egress allowlisted and document what captured input is sent to each provider.
 

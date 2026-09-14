@@ -2,10 +2,12 @@ package TELNET
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,45 +20,72 @@ import (
 	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
 )
 
-// Telnet IAC (Interpret As Command) constants
 const (
-	IAC               = 255 // Interpret As Command
-	DO                = 253 // Do perform option
-	DONT              = 254 // Don't perform option
-	WILL              = 251 // Will perform option
-	WONT              = 252 // Won't perform option
-	SB                = 250 // Subnegotiation Begin
-	SE                = 240 // Subnegotiation End
-	ECHO              = 1   // Echo option
-	SUPPRESS_GO_AHEAD = 3   // Suppress Go Ahead option
+	IAC               = 255
+	DO                = 253
+	DONT              = 254
+	WILL              = 251
+	WONT              = 252
+	SB                = 250
+	SE                = 240
+	ECHO              = 1
+	SUPPRESS_GO_AHEAD = 3
 )
 
 type TelnetStrategy struct {
-	Sessions *historystore.HistoryStore
+	Sessions    *historystore.HistoryStore
+	listeners   map[string]net.Listener
+	listenerWgs map[string]*sync.WaitGroup
+	cleanerOnce sync.Once
 }
 
+var listenTCP = net.Listen
+
 func (telnetStrategy *TelnetStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
+	if oldListener, ok := telnetStrategy.listeners[servConf.Address]; ok {
+		oldListener.Close()
+		if oldWg, ok := telnetStrategy.listenerWgs[servConf.Address]; ok {
+			oldWg.Wait()
+			delete(telnetStrategy.listenerWgs, servConf.Address)
+		}
+	}
+
 	if telnetStrategy.Sessions == nil {
 		telnetStrategy.Sessions = historystore.NewHistoryStore()
 	}
-	go telnetStrategy.Sessions.HistoryCleaner()
+	telnetStrategy.cleanerOnce.Do(func() {
+		go telnetStrategy.Sessions.HistoryCleaner()
+	})
 
+	listener, err := listenTCP("tcp", servConf.Address)
+	if err != nil {
+		log.Errorf("error during init TELNET Protocol: %s", err.Error())
+		return err
+	}
+
+	if telnetStrategy.listeners == nil {
+		telnetStrategy.listeners = make(map[string]net.Listener)
+	}
+	if telnetStrategy.listenerWgs == nil {
+		telnetStrategy.listenerWgs = make(map[string]*sync.WaitGroup)
+	}
+	telnetStrategy.listeners[servConf.Address] = listener
+
+	listenerWg := &sync.WaitGroup{}
+	listenerWg.Add(1)
+	telnetStrategy.listenerWgs[servConf.Address] = listenerWg
 	go func() {
-		listener, err := net.Listen("tcp", servConf.Address)
-		if err != nil {
-			log.Errorf("error during init TELNET Protocol: %s", err.Error())
-			return
-		}
-		defer listener.Close()
-
+		defer listenerWg.Done()
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
 				log.Errorf("error accepting TELNET connection: %s", err.Error())
 				continue
 			}
 
-			// Set deadline timeout
 			conn.SetDeadline(time.Now().Add(time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second))
 
 			go func(c net.Conn) {
@@ -70,10 +99,45 @@ func (telnetStrategy *TelnetStrategy) Init(servConf parser.BeelzebubServiceConfi
 		}
 	}()
 
-	log.WithFields(log.Fields{
-		"port":     servConf.Address,
-		"commands": len(servConf.Commands),
-	}).Infof("GetInstance service %s", servConf.Protocol)
+	return nil
+}
+
+func (telnetStrategy *TelnetStrategy) StopAll() error {
+	if telnetStrategy.Sessions != nil {
+		telnetStrategy.Sessions.Close()
+	}
+	telnetStrategy.cleanerOnce = sync.Once{}
+
+	var errs []error
+	for _, listener := range telnetStrategy.listeners {
+		if err := listener.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, listenerWg := range telnetStrategy.listenerWgs {
+		listenerWg.Wait()
+	}
+	telnetStrategy.listeners = nil
+	telnetStrategy.listenerWgs = nil
+	if len(errs) > 0 {
+		return fmt.Errorf("telnet stop errors: %w", errors.Join(errs...))
+	}
+	return nil
+}
+
+func (telnetStrategy *TelnetStrategy) Stop(servConf parser.BeelzebubServiceConfiguration) error {
+	listener, ok := telnetStrategy.listeners[servConf.Address]
+	if !ok {
+		return nil
+	}
+	if err := listener.Close(); err != nil {
+		return err
+	}
+	if listenerWg, ok := telnetStrategy.listenerWgs[servConf.Address]; ok {
+		listenerWg.Wait()
+		delete(telnetStrategy.listenerWgs, servConf.Address)
+	}
+	delete(telnetStrategy.listeners, servConf.Address)
 	return nil
 }
 
@@ -82,10 +146,8 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
-	// Drain any unsolicited client negotiation requests
 	negotiateTelnet(conn)
 
-	// Authentication phase
 	_, err := conn.Write([]byte("\r\nlogin: "))
 	if err != nil {
 		return
@@ -97,7 +159,6 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 	}
 	username = strings.TrimSpace(username)
 
-	// Send password prompt with echo suppression
 	_, err = conn.Write([]byte{IAC, WILL, ECHO})
 	if err != nil {
 		return
@@ -113,13 +174,11 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 	}
 	password = strings.TrimSpace(password)
 
-	// Re-enable echo
 	_, err = conn.Write([]byte{IAC, WONT, ECHO, '\r', '\n'})
 	if err != nil {
 		return
 	}
 
-	// Trace authentication attempt
 	tr.TraceEvent(tracer.Event{
 		Msg:         "New TELNET Login Attempt",
 		Protocol:    tracer.TELNET.String(),
@@ -133,7 +192,6 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 		Description: servConf.Description,
 	})
 
-	// Validate password
 	matched, err := regexp.MatchString(servConf.PasswordRegex, password)
 	if err != nil {
 		log.Errorf("error regex: %s, %s", servConf.PasswordRegex, err.Error())
@@ -146,7 +204,6 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 		return
 	}
 
-	// Session phase - authenticated
 	uuidSession := uuid.New()
 	sessionKey := "TELNET" + host + username
 
@@ -162,34 +219,28 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 		Description: servConf.Description,
 	})
 
-	// Load history for LLM context
 	var histories []plugins.Message
 	if telnetStrategy.Sessions.HasKey(sessionKey) {
 		histories = telnetStrategy.Sessions.Query(sessionKey)
 	}
 
-	// Interactive command loop
 	for {
-		// Display prompt (no newline - user types on same line)
 		prompt := buildPrompt(username, servConf.ServerName)
 		_, err := conn.Write([]byte(prompt))
 		if err != nil {
 			break
 		}
 
-		// Read command from user
 		commandInput, err := readLine(conn)
 		if err != nil {
 			break
 		}
 		commandInput = strings.TrimSpace(commandInput)
 
-		// Handle exit command
 		if commandInput == "exit" {
 			break
 		}
 
-		// Match command against regexes
 		matched := false
 		for _, command := range servConf.Commands {
 			if command.Regex.MatchString(commandInput) {
@@ -200,7 +251,6 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 					handlerName = "configured_regex"
 				}
 
-				// Plugin dispatch via registry
 				if command.Plugin != "" {
 					if cp, ok := plugin.GetCommand(command.Plugin); ok {
 						output, err := cp.Execute(context.Background(), plugin.CommandRequest{
@@ -221,20 +271,17 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 					}
 				}
 
-				// Store command and response in history
 				var newEntries []plugins.Message
 				newEntries = append(newEntries, plugins.Message{Role: plugins.USER.String(), Content: commandInput})
 				newEntries = append(newEntries, plugins.Message{Role: plugins.ASSISTANT.String(), Content: commandOutput})
 				telnetStrategy.Sessions.Append(sessionKey, newEntries...)
 				histories = append(histories, newEntries...)
 
-				// Send response to client
 				_, err := conn.Write([]byte(commandOutput + "\r\n"))
 				if err != nil {
 					break
 				}
 
-				// Trace interaction event
 				tr.TraceEvent(tracer.Event{
 					Msg:           "TELNET Terminal Session Interaction",
 					RemoteAddr:    conn.RemoteAddr().String(),
@@ -250,11 +297,10 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 					Handler:       handlerName,
 				})
 
-				break // Found match, exit command loop
+				break
 			}
 		}
 
-		// If no command matched, send "command not found"
 		if !matched {
 			commandOutput := "command not found"
 			_, err := conn.Write([]byte(commandOutput + "\r\n"))
@@ -262,7 +308,6 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 				break
 			}
 
-			// Still trace the interaction even for unmatched commands
 			tr.TraceEvent(tracer.Event{
 				Msg:           "TELNET Terminal Session Interaction",
 				RemoteAddr:    conn.RemoteAddr().String(),
@@ -280,7 +325,6 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 		}
 	}
 
-	// Trace session end
 	tr.TraceEvent(tracer.Event{
 		Msg:      "End TELNET Session",
 		Status:   tracer.End.String(),
@@ -290,9 +334,6 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 }
 
 func negotiateTelnet(conn net.Conn) {
-	// Minimal telnet negotiation
-	// Don't send WILL ECHO or SUPPRESS_GO_AHEAD, let client stay in NVT line mode
-	// WILL ECHO is only used during password phase to hide input
 	buf := make([]byte, 256)
 	conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	conn.Read(buf)
@@ -300,7 +341,6 @@ func negotiateTelnet(conn net.Conn) {
 }
 
 func readLine(conn net.Conn) (string, error) {
-	// Read one byte at a time until we get a newline
 	var line []byte
 	buf := make([]byte, 1)
 
@@ -312,14 +352,12 @@ func readLine(conn net.Conn) (string, error) {
 
 		b := buf[0]
 
-		// Skip IAC (Interpret As Command) sequences
 		if b == IAC {
 			if _, err := conn.Read(buf); err != nil {
 				return "", err
 			}
 			cmd := buf[0]
 			if cmd == SB {
-				// Subnegotiation: skip until IAC SE
 				for {
 					if _, err := conn.Read(buf); err != nil {
 						return "", err
@@ -334,17 +372,15 @@ func readLine(conn net.Conn) (string, error) {
 					}
 				}
 			} else if cmd == WILL || cmd == WONT || cmd == DO || cmd == DONT {
-				conn.Read(buf) // discard option byte
+				conn.Read(buf)
 			}
 			continue
 		}
 
-		// Check for newline
 		if b == '\n' {
 			break
 		}
 
-		// Only keep printable ASCII and tab, skip control bytes
 		if b >= 32 && b <= 126 || b == '\t' {
 			line = append(line, b)
 		}
