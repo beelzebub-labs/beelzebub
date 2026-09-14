@@ -5,4 +5,4 @@ description: Keep code, schemas, examples, validation, and documentation aligned
 
 For a new field: update the Go struct, shared/per-protocol schema, parser tests, validation tests, a representative example, and the configuration reference. For a new validator: implement and register `ServiceValidator`, add schema constraints where structural, and test errors and warnings. For a new protocol or plugin: update the strategy/SDK, registration, examples, CLI or deployment references, and the relevant guide.
 
-Behavior changes in CLI, parser, protocols, built-in plugins, schemas, installer, Docker, Compose, Helm, or public SDK files are documentation-sensitive. Add or update docs in the same pull request, or ask a maintainer to apply the `docs-not-needed` label with rationale.
+Behavior changes in CLI, parser, protocols, built-in plugins, schemas, installer, Docker, Compose, Helm, or public SDK files are documentation-sensitive. Add or update docs in the same pull request, or ask a maintainer to apply the `nodoc` label with rationale. Pull requests limited to Go dependency metadata (`go.mod` and `go.sum`) do not require a documentation update.
