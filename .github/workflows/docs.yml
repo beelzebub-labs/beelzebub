@@ -106,14 +106,20 @@ jobs:
       - name: Check Documentation Change Policy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          DOCS_NOT_NEEDED: ${{ contains(github.event.pull_request.labels.*.name, 'docs-not-needed') }}
+          NO_DOC: ${{ contains(github.event.pull_request.labels.*.name, 'nodoc') }}
 
         run: |
           changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
           public='^(cli/|pkg/plugin/|internal/parser/|internal/builder/|internal/plugins/|internal/protocols/|internal/tracer/|specs/|configurations/|Dockerfile$|docker-compose.yml$|install.sh$|go.mod$|Makefile$|beelzebub-chart/)'
           if printf '%s\n' "$changed" | grep -Eq '^docs/|^README.md$'; then exit 0; fi
-          if [ "$DOCS_NOT_NEEDED" = "true" ]; then exit 0; fi
+          if [ "$NO_DOC" = "true" ]; then exit 0; fi
+
+          if ! printf '%s\n' "$changed" | grep -Eqv '^(go\.mod|go\.sum)$'; then
+            echo "Only Go dependency metadata changed; no documentation update is required."
+            exit 0
+          fi
+
           if printf '%s\n' "$changed" | grep -Eq "$public"; then
-            echo "Public runtime behavior changed without a docs update. Add docs/ or README.md, or ask a maintainer to apply the docs-not-needed label with rationale."
+            echo "Public runtime behavior changed without a docs update. Add docs/ or README.md, or ask a maintainer to apply the nodoc label with rationale."
             exit 1
           fi
