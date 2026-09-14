@@ -1,0 +1,8 @@
+---
+title: SSH Deception
+description: Emulate interactive SSH sessions with static commands or stateful LLM responses.
+---
+
+Set `serverVersion`, `serverName`, and `passwordRegex` to shape the handshake and authentication surface. Command handlers receive the raw input; LLM sessions also receive per-session history. Set a finite `deadlineTimeoutSeconds` and use synthetic credentials.
+
+The [LLM SSH recipe](../../recipes/llm-ssh) demonstrates OpenAI configuration without putting a secret in YAML.

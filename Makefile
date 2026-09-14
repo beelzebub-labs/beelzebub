@@ -72,3 +72,19 @@ test.integration:
 .PHONY: test.integration.verbose
 test.integration.verbose:
 	INTEGRATION=1 go test ./... -v
+
+.PHONY: docs.install
+docs.install:
+	cd docs && pnpm install --frozen-lockfile
+
+.PHONY: docs.dev
+docs.dev:
+	cd docs && pnpm dev
+
+.PHONY: docs.check
+docs.check:
+	cd docs && ASTRO_TELEMETRY_DISABLED=1 pnpm check && pnpm verify
+
+.PHONY: docs.build
+docs.build:
+	cd docs && ASTRO_TELEMETRY_DISABLED=1 pnpm test

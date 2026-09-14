@@ -66,6 +66,7 @@ tools:
     handler: "reset_password ok"
 commands:
   - regex: "wp-admin"
+    methods: [GET, POST]
     handler: "login"
     headers:
       - "Content-Type: text/html"
@@ -225,6 +226,7 @@ func TestReadConfigurationsServicesValid(t *testing.T) {
 	assert.Equal(t, len(firstBeelzebubServiceConfiguration.Commands), 2)
 	assert.Equal(t, firstBeelzebubServiceConfiguration.Commands[0].RegexStr, "wp-admin")
 	assert.Equal(t, firstBeelzebubServiceConfiguration.Commands[0].Regex.String(), "wp-admin")
+	assert.Equal(t, []string{"GET", "POST"}, firstBeelzebubServiceConfiguration.Commands[0].Methods)
 	assert.Equal(t, firstBeelzebubServiceConfiguration.Commands[0].Handler, "login")
 	assert.Equal(t, len(firstBeelzebubServiceConfiguration.Commands[0].Headers), 1)
 	assert.Equal(t, firstBeelzebubServiceConfiguration.Commands[0].Headers[0], "Content-Type: text/html")
@@ -279,7 +281,7 @@ func TestReadConfigurationsServicesGenerateHashCode(t *testing.T) {
 
 	assert.Nil(t, err)
 	assert.Nil(t, errHashCode)
-	assert.Equal(t, "34c8a2e81787e09f9e24efd6f60b2ceb808e47d9fa180ea8af9f054797ad4e00", hashCode)
+	assert.Equal(t, "9c9c924bbe65f4f39bf9698248ece5c5d8f298932bd5f4d974915510b95f023f", hashCode)
 }
 
 func TestReadConfigurationsPluginGuardrailsValid(t *testing.T) {
@@ -620,7 +622,7 @@ func TestToolAnnotationsHashCodeStability(t *testing.T) {
 	// the hash for configs that don't use annotations
 	hashCode, errHashCode := beelzebubServicesConfiguration[0].HashCode()
 	assert.Nil(t, errHashCode)
-	assert.Equal(t, "34c8a2e81787e09f9e24efd6f60b2ceb808e47d9fa180ea8af9f054797ad4e00", hashCode)
+	assert.Equal(t, "9c9c924bbe65f4f39bf9698248ece5c5d8f298932bd5f4d974915510b95f023f", hashCode)
 }
 
 func TestReadConfigurationsCoreEnvOverridesFile(t *testing.T) {

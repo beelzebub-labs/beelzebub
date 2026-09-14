@@ -1,0 +1,14 @@
+---
+title: External Plugin
+description: Install the hello-demon blueprint, wire it to a route, and verify a compiled extension.
+---
+
+Use this recipe to verify the installation flow with the maintained [Beelzebub Plugin Blueprint](https://github.com/beelzebub-labs/beelzebub-plugin-blueprint). To turn it into your own extension first, follow [Start From The Plugin Blueprint](/plugins/blueprint).
+
+```bash
+beelzebub plugin install https://github.com/beelzebub-labs/beelzebub-plugin-blueprint --no-build
+beelzebub plugin list
+make build
+```
+
+Add a route with `plugin: "hello-demon"`, place it before a catch-all, restart the runtime, and request the route. Review the plugin repository and lockfile before using any third-party extension.

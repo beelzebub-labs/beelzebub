@@ -1,0 +1,8 @@
+---
+title: TCP Service Emulation
+description: Emulate a text service with a banner, ordered payload handlers, and observable responses.
+---
+
+Start with `examples/tcp-redis.yaml` for a line-oriented service. Define an optional banner, then place specific command expressions before a fallback or catch-all rule. Exercise the service with the real client where possible and confirm that requests, named handlers, and responses appear in interaction events.
+
+For protocols whose messages contain arbitrary bytes or can span multiple TCP reads, use the [binary TCP framework](/protocols/binary-tcp) instead. The [VNC credential capture recipe](/recipes/vnc-credential-capture) demonstrates a stateful framed handshake.

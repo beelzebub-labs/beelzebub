@@ -45,6 +45,9 @@ type Event struct {
 	SourcePort      string
 	TLSServerName   string
 	Handler         string
+	// Metadata carries protocol-specific values contributed by plugins without
+	// coupling the tracer to any wire protocol implementation.
+	Metadata map[string]string `json:",omitempty"`
 }
 
 type (

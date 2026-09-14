@@ -202,7 +202,12 @@ func validateFallbackCommand(svc BeelzebubServiceConfiguration) []ValidationIssu
 
 func validatePluginConfig(svc BeelzebubServiceConfiguration) []ValidationIssue {
 	var issues []ValidationIssue
-	if (svc.Protocol == "tcp" || svc.Protocol == "telnet" || svc.Protocol == "ssh") && svc.DeadlineTimeoutSeconds == 0 && len(svc.Commands) > 0 {
+	if svc.Protocol == "tcp" && svc.DeadlineTimeoutSeconds == 0 && len(svc.Commands) > 0 {
+		issues = append(issues, ValidationIssue{
+			Level:   LevelWarning,
+			Message: "deadlineTimeoutSeconds is not set, connections have no deadline",
+		})
+	} else if (svc.Protocol == "telnet" || svc.Protocol == "ssh") && svc.DeadlineTimeoutSeconds == 0 && len(svc.Commands) > 0 {
 		issues = append(issues, ValidationIssue{
 			Level:   LevelWarning,
 			Message: "deadlineTimeoutSeconds is not set, connections may be closed immediately",

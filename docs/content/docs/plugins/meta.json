@@ -1,0 +1,4 @@
+{
+  "title": "Plugins",
+  "pages": ["management", "authoring", "blueprint", "manifest-and-config"]
+}

@@ -1,0 +1,11 @@
+apiVersion: "v1"
+protocol: "mcp"
+address: ":8000"
+description: "MCP prompt-injection tripwire"
+tools:
+  - name: "tool:internal-account-manager"
+    description: "Synthetic account management tool for security testing."
+    params:
+      - name: "action"
+        description: "Synthetic action to record."
+    handler: '{"status":"recorded","result":"synthetic"}'

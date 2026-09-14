@@ -3,12 +3,45 @@
   "$id": "https://beelzebub-labs.github.io/specs/runtime-telnet.schema.json",
   "title": "Beelzebub TELNET Honeypot Configuration",
   "allOf": [
-    { "$ref": "runtime-config.schema.json" },
     {
-      "required": ["passwordRegex", "commands"],
+      "$ref": "runtime-config.schema.json"
+    },
+    {
+      "required": [
+        "passwordRegex",
+        "commands"
+      ],
       "properties": {
-        "passwordRegex": { "minLength": 1 },
-        "commands": { "minItems": 1 },
+        "maxHistory": false,
+        "wireEncoding": false,
+        "framing": false,
+        "wirePlugins": false,
+        "passwordRegex": {
+          "minLength": 1
+        },
+        "commands": {
+          "minItems": 1,
+          "items": {
+            "properties": {
+              "closeAfter": false,
+              "tlsUpgrade": false,
+              "tlsFraming": false,
+              "nextFraming": false,
+              "binaryOutput": false,
+              "patches": false
+            }
+          }
+        },
+        "fallbackCommand": {
+          "properties": {
+            "closeAfter": false,
+            "tlsUpgrade": false,
+            "tlsFraming": false,
+            "nextFraming": false,
+            "binaryOutput": false,
+            "patches": false
+          }
+        },
         "tools": false
       }
     }

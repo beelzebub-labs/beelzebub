@@ -54,6 +54,32 @@ func GetHTTP(name string) (HTTPPlugin, bool) {
 	return hp, ok
 }
 
+// GetWire retrieves a WirePlugin by name. It returns (nil, false) if the name
+// is unknown or the registered plugin does not implement WirePlugin.
+func GetWire(name string) (WirePlugin, bool) {
+	p, ok := Get(name)
+	if !ok {
+		return nil, false
+	}
+	wp, ok := p.(WirePlugin)
+	return wp, ok
+}
+
+// WireNames returns the names of all registered WirePlugin implementations in
+// deterministic order.
+func WireNames() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	var names []string
+	for name, p := range registry {
+		if _, ok := p.(WirePlugin); ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Services returns sorted list of  all registered plugins that implement ServicePlugin
 func Services() []ServicePlugin {
 	mu.RLock()

@@ -1,0 +1,12 @@
+---
+title: LLM-Powered SSH
+description: Create a stateful SSH decoy while keeping provider credentials outside the repository.
+---
+
+Use the `examples/ssh-llm.yaml` service and export `OPEN_AI_SECRET_KEY` only in the runtime environment. Set a finite deadline, an explicit password regex for synthetic credentials, and input/output validation prompts. Start in an isolated lab and inspect the emitted session events.
+
+```bash
+export OPEN_AI_SECRET_KEY='replace-with-a-secret-store-reference'
+beelzebub validate
+beelzebub run -s ./configurations/services
+```

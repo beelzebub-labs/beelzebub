@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -65,40 +66,7 @@ func parseLLMHTTPResponse(completions string, resp *httpResponse) {
 func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
 	serverMux := http.NewServeMux()
 
-	serverMux.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
-		var matched bool
-		var resp httpResponse
-		var err error
-		for _, command := range servConf.Commands {
-			var err error
-			matched = command.Regex.MatchString(request.RequestURI)
-			if matched {
-				resp, err = buildHTTPResponse(servConf, tr, command, request)
-				if err != nil {
-					log.Errorf("error building http response: %s: %v", request.RequestURI, err)
-					resp.StatusCode = 500
-					resp.Body = "500 Internal Server Error"
-				}
-				break
-			}
-		}
-		// If none of the main commands matched, and we have a fallback command configured, process it here.
-		// The regexp is ignored for fallback commands, as they are catch-all for any request.
-		if !matched {
-			command := servConf.FallbackCommand
-			if command.Handler != "" || command.Plugin != "" {
-				resp, err = buildHTTPResponse(servConf, tr, command, request)
-				if err != nil {
-					log.Errorf("error building http response: %s: %v", request.RequestURI, err)
-					resp.StatusCode = 500
-					resp.Body = "500 Internal Server Error"
-				}
-			}
-		}
-		setResponseHeaders(responseWriter, resp.Headers, resp.StatusCode)
-		fmt.Fprint(responseWriter, resp.Body)
-
-	})
+	serverMux.HandleFunc("/", newHTTPHandler(servConf, tr))
 	go func() {
 		var err error
 		// Launch a TLS supporting server if we are supplied a TLS Key and Certificate.
@@ -120,6 +88,60 @@ func (httpStrategy HTTPStrategy) Init(servConf parser.BeelzebubServiceConfigurat
 		"commands": len(servConf.Commands),
 	}).Infof("Init service: %s", servConf.Description)
 	return nil
+}
+
+func newHTTPHandler(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) http.HandlerFunc {
+	return func(responseWriter http.ResponseWriter, request *http.Request) {
+		var resp httpResponse
+		var err error
+		command, allowedMethods := matchHTTPCommand(servConf.Commands, request)
+		if command != nil {
+			resp, err = buildHTTPResponse(servConf, tr, *command, request)
+			if err != nil {
+				log.Errorf("error building http response: %s: %v", request.RequestURI, err)
+				resp.StatusCode = 500
+				resp.Body = "500 Internal Server Error"
+			}
+		} else if len(allowedMethods) > 0 {
+			resp.StatusCode = http.StatusMethodNotAllowed
+			resp.Headers = []string{"Allow:" + strings.Join(allowedMethods, ", ")}
+			resp.Body = http.StatusText(http.StatusMethodNotAllowed)
+			traceRequest(request, tr, parser.Command{}, servConf.Description, "", servConf.TrustedProxiesNets)
+		} else {
+			// If none of the main commands matched, and we have a fallback command configured, process it here.
+			// The regexp is ignored for fallback commands, as they are catch-all for any request.
+			command := servConf.FallbackCommand
+			if command.Handler != "" || command.Plugin != "" {
+				resp, err = buildHTTPResponse(servConf, tr, command, request)
+				if err != nil {
+					log.Errorf("error building http response: %s: %v", request.RequestURI, err)
+					resp.StatusCode = 500
+					resp.Body = "500 Internal Server Error"
+				}
+			}
+		}
+		setResponseHeaders(responseWriter, resp.Headers, resp.StatusCode)
+		fmt.Fprint(responseWriter, resp.Body)
+	}
+}
+
+func matchHTTPCommand(commands []parser.Command, request *http.Request) (*parser.Command, []string) {
+	var allowedMethods []string
+	for i := range commands {
+		command := &commands[i]
+		if !command.Regex.MatchString(request.RequestURI) {
+			continue
+		}
+		if len(command.Methods) == 0 || slices.Contains(command.Methods, request.Method) {
+			return command, nil
+		}
+		for _, method := range command.Methods {
+			if !slices.Contains(allowedMethods, method) {
+				allowedMethods = append(allowedMethods, method)
+			}
+		}
+	}
+	return nil, allowedMethods
 }
 
 func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, command parser.Command, request *http.Request) (httpResponse, error) {

@@ -1,0 +1,74 @@
+---
+title: Author A Plugin
+description: Extend command responses, HTTP behavior, binary TCP exchanges, or background services through the public Go SDK.
+---
+
+For a ready-to-customize repository, begin with the [Beelzebub Plugin Blueprint](/plugins/blueprint). It includes a compatible Go module, `plugins.yaml`, automatic registration, and a focused unit test.
+
+Implement one or more interfaces from `pkg/plugin`, return metadata, and register from `init()`:
+
+```go
+type MyPlugin struct{}
+
+func (MyPlugin) Metadata() plugin.Metadata {
+    return plugin.Metadata{Name: "my-plugin", Version: "1.0.0", Author: "you"}
+}
+
+func (MyPlugin) Execute(ctx context.Context, req plugin.CommandRequest) (string, error) {
+    return "simulated response to: " + req.Command, nil
+}
+
+func init() { plugin.Register(&MyPlugin{}) }
+```
+
+`CommandRequest` includes the raw command, client IP, protocol, session history, and plugin configuration. `HTTPPlugin` returns status, headers, content type, and body. `ServicePlugin` owns a start/stop lifecycle. Add unit tests, a `plugins.yaml` manifest, and a compatible `go.mod`; then install from the plugin repository and reference its metadata name in a service route.
+
+## Implement a Wire Plugin
+
+Use `WirePlugin` when a framed TCP service needs protocol-aware access to exact request and response bytes. A wire plugin runs after command response generation and generic patches, but before the response is written and the interaction event is emitted.
+
+```go
+type MyWirePlugin struct{}
+
+func (MyWirePlugin) Metadata() plugin.Metadata {
+    return plugin.Metadata{Name: "my-wire-plugin", Version: "1.0.0", Author: "you"}
+}
+
+func (MyWirePlugin) OnExchange(ctx context.Context, exchange *plugin.WireContext) error {
+    if exchange.Command.Name == "selected_phase" {
+        if exchange.Metadata == nil {
+            exchange.Metadata = make(map[string]string)
+        }
+        exchange.Metadata["protocol_state"] = "observed"
+    }
+    return nil
+}
+
+func init() { plugin.Register(&MyWirePlugin{}) }
+```
+
+Enable the metadata name only on services that need it:
+
+```yaml
+wirePlugins:
+  - "my-wire-plugin"
+```
+
+`WireContext` supplies `Request`, `Response`, `CommandOutput`, `Metadata`, `History`, `ConnID`, client identity, and public command and service snapshots. Treat the request, history, command, and service values as read-only. Only response bytes, logical command output, and metadata are committed, and only when `OnExchange` returns `nil`. The runtime isolates errors and panics to that hook and continues with the next configured wire plugin.
+
+Hooks may run concurrently for different TCP connections. Synchronize shared state and key handshake state by `ConnID`, not `SessionKey`, because the latter can be shared by multiple connections from one source. If state survives between exchanges, implement the optional `WireSessionCloser` interface:
+
+```go
+func (p *MyWirePlugin) OnSessionClose(ctx context.Context, connID string) error {
+    p.deleteState(connID)
+    return nil
+}
+```
+
+Shutdown hooks receive a bounded context and must return promptly. Copy any byte slices you retain, cap per-connection state, delete incomplete sessions, and test simultaneous connections as well as plugin errors and panics. The built-in VNC implementation is the reference for correlating a challenge and response without process-global session state.
+
+Read the [binary TCP framework](/protocols/binary-tcp) for framing, patches, response order, and event behavior.
+
+## Beyond Beelzebub Runtime
+
+<BeyondRuntime />

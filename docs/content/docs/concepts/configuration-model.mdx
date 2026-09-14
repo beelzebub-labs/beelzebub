@@ -1,0 +1,10 @@
+---
+title: Configuration Model
+description: Understand core settings, service files, precedence, matching, and validation.
+---
+
+Core settings live in `configurations/beelzebub.yaml`; each decoy normally lives in one file under `configurations/services/`. The service `protocol` selects SSH, HTTP, TCP, TELNET, or MCP. `commands`, `fallbackCommand`, and `tools` are protocol-specific.
+
+Environment variables override core YAML values. When `BEELZEBUB_SERVICES_CONFIG` is set, its JSON array is used instead of the services directory. The complete field and precedence reference is in [configuration](../../reference/configuration).
+
+Validation has two layers: embedded draft-07 JSON Schemas enforce structure, while Go validators check cross-field constraints, regexes, files, collisions, and quality warnings. Treat errors as blockers; review warnings before exposure.

@@ -1,0 +1,118 @@
+---
+title: Binary TCP Framework
+description: Frame application messages, preserve bytes, transition protocol state, upgrade to TLS, and extend exchanges with wire plugins.
+---
+
+Binary protocols cannot safely treat individual TCP reads as complete requests. Beelzebub’s TCP framework first reassembles one bounded application frame, then performs byte-preserving command matching and response generation. It retains bytes read beyond the current frame for the next exchange.
+
+<BinaryTcpFlow />
+
+## Start With Explicit Framing
+
+Set `wireEncoding: latin1` to map each byte to one regex code point and each handler code point back to one byte. This mode requires `framing` so partial TCP segments never reach a command handler.
+
+```yaml
+wireEncoding: "latin1"
+framing:
+  mode: "length-prefix"
+  lengthOffset: 2
+  lengthSize: 2
+  headerSize: 8
+  bigEndian: true
+  lengthIncludesHeader: true
+```
+
+All framing modes reject malformed or oversized frames and cap one application message at 1 MiB.
+
+| Mode | Required Fields | Length Meaning | Typical Use |
+| --- | --- | --- | --- |
+| `length-prefix` | `lengthOffset`, `lengthSize`, `headerSize` | Fixed-width integer; byte order follows `bigEndian`; `lengthIncludesHeader` controls whether `headerSize` is added | TDS/MSSQL, TPKT/RDP, NetBIOS session framing |
+| `varint-length-prefix` | `lengthOffset`, `maxLengthBytes` | Unsigned base-128 little-endian value containing the payload length after the varint | MQTT Remaining Length |
+| `ber` | none | One definite-length top-level BER TLV | LDAP |
+| `fixed` | `fixedSize` | Exactly the configured number of bytes | Fixed handshake phases such as RFB/VNC |
+
+`lengthSize` is 1–8 bytes. `maxLengthBytes` is also 1–8. BER indefinite lengths are rejected. Consult the [TCP schema](/schemas/runtime-tcp.schema.json) for structural limits.
+
+## Model Stateful Handshakes
+
+A matching command may replace the reader’s framing for the next phase. `nextFraming` keeps already-buffered pipelined bytes, which is important when a client sends consecutive handshake messages in one network write.
+
+```yaml
+framing:
+  mode: "fixed"
+  fixedSize: 12
+commands:
+  - name: "protocol_version"
+    regex: "^RFB 003\\.008\\n$"
+    handler: "\x01\x02"
+    nextFraming:
+      mode: "fixed"
+      fixedSize: 1
+```
+
+Use stable command `name` values when a wire plugin needs to distinguish handshake phases. Keep commands ordered from narrowest to broadest because the first match wins.
+
+## Generate Dynamic Binary Responses
+
+Static handlers may declare `patches`. The runtime applies supported generic patches before wire plugins run:
+
+| Patch | Fields | Result |
+| --- | --- | --- |
+| `random` | `offset`, positive `length` | Cryptographically random bytes replace the selected range |
+| `filetime` | `offset` | An 8-byte, little-endian Windows FILETIME for the current UTC time replaces the selected range |
+
+```yaml
+handler: "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+patches:
+  - type: "random"
+    offset: 0
+    length: 16
+```
+
+An out-of-range generic patch is skipped and logged. Unknown patch types are left unchanged for configured wire plugins to interpret. When a `CommandPlugin` generates binary data, set `binaryOutput: true`; its string output is then mapped through Latin-1 and generic patches are applied. Ordinary command-plugin output remains UTF-8.
+
+## Upgrade a Connection to TLS
+
+Set `tlsUpgrade: true` on the cleartext command that precedes a protocol-driven TLS handshake. The response is written first, then Beelzebub performs a TLS 1.2-or-newer server handshake.
+
+```yaml
+- name: "start_tls"
+  regex: "..."
+  handler: "..."
+  tlsUpgrade: true
+  tlsFraming:
+    mode: "ber"
+```
+
+`tlsFraming` becomes active after a successful upgrade. Do not combine `nextFraming` and `tlsUpgrade`; use `tlsFraming` for the encrypted phase. Configure both `tlsCertPath` and `tlsKeyPath` to present an operator-managed certificate. If neither is set, the runtime creates an ephemeral self-signed P-256 certificate using `serverName` as its identity.
+
+Any cleartext bytes buffered beyond the upgrade command are intentionally discarded before TLS parsing. A failed handshake closes the connection.
+
+## Add Wire-Level Behavior
+
+`wirePlugins` enables registered `WirePlugin` implementations for one TCP service, in declaration order:
+
+```yaml
+wirePlugins:
+  - "vnc"
+```
+
+Each plugin receives the exact request and current response bytes, command and service snapshots, prior history, client data, connection ID, and event metadata. It may replace `Response`, `CommandOutput`, or `Metadata`. Other fields are read-only by contract. Mutations commit only when the hook returns `nil`; errors and panics are isolated so later configured wire plugins can still run.
+
+Wire hooks can execute concurrently on different connections. Implementations that keep per-connection state should key it by `ConnID`, synchronize shared state, implement `WireSessionCloser`, and return promptly when the connection ends. See [authoring a plugin](/plugins/authoring#implement-a-wire-plugin).
+
+## Understand the Evidence
+
+Every matched exchange emits `Command`, `CommandOutput`, `Handler`, and the shared connection ID. When the request is not valid UTF-8, `CommandRaw` contains a reversible escaped rendering of the exact bytes. Wire plugins can add protocol-specific values to `Metadata`; the built-in VNC plugin records `vnc_challenge`, `vnc_response`, and `vnc_john` after a complete authentication attempt.
+
+Treat captured authentication material as sensitive. Use synthetic credentials in tests, restrict event destinations, and follow [production safety](/operations/production-safety).
+
+## Use Maintained Examples
+
+The repository keeps validated binary configurations for MSSQL, MQTT, RDP, LDAP, SMB, and VNC under `configurations/services/`. Start with the closest framing model, then verify it against the real client implementation.
+
+<Cards>
+  <Card title="VNC Credential Capture Recipe" href="/recipes/vnc-credential-capture" />
+  <Card title="Service Configuration Reference" href="/reference/configuration#binary-tcp-fields" />
+  <Card title="Configuration Validation" href="/reference/validation" />
+</Cards>

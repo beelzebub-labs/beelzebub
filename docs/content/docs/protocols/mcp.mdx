@@ -1,0 +1,8 @@
+---
+title: MCP Deception
+description: Expose decoy tools that reveal prompt-injection attempts against AI agents.
+---
+
+MCP service files require `tools` and do not use `commands`. Each tool has a name, description, parameters, optional annotations, and a JSON handler. The Streamable HTTP endpoint is `/mcp` on the configured address.
+
+Keep the decoy tool outside any real tool execution boundary. Record invocations as security events, alert on unexpected use, and test with an isolated agent. See the [MCP tripwire recipe](../../recipes/mcp-tripwire).

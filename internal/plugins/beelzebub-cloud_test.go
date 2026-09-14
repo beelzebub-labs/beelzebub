@@ -474,6 +474,7 @@ func TestMapToEventDTO(t *testing.T) {
 		RemoteAddr:      "1.1.1.1:12345",
 		Protocol:        "SSH",
 		Command:         "cd /tmp",
+		CommandRaw:      `\xff`,
 		CommandOutput:   "",
 		Status:          "Interaction",
 		Msg:             "New SSH Terminal Session",
@@ -492,6 +493,7 @@ func TestMapToEventDTO(t *testing.T) {
 		SourceIp:        "1.1.1.1",
 		SourcePort:      "12345",
 		TLSServerName:   "beelzebub-honeypot.com",
+		Metadata:        map[string]string{"credential": "captured"},
 	}
 	beelzebubCloud := InitBeelzebubCloud("localhost:8081", "sdjdnklfjndslkjanfk", false)
 	eventDTO, err := beelzebubCloud.mapToEventDTO(event)
@@ -502,6 +504,7 @@ func TestMapToEventDTO(t *testing.T) {
 		RemoteAddr:      "1.1.1.1:12345",
 		Protocol:        "SSH",
 		Command:         "cd /tmp",
+		CommandRaw:      `\xff`,
 		CommandOutput:   "",
 		Status:          "Interaction",
 		Msg:             "New SSH Terminal Session",
@@ -520,5 +523,6 @@ func TestMapToEventDTO(t *testing.T) {
 		SourceIp:        "1.1.1.1",
 		SourcePort:      "12345",
 		TLSServerName:   "beelzebub-honeypot.com",
+		Metadata:        map[string]string{"credential": "captured"},
 	}, eventDTO)
 }

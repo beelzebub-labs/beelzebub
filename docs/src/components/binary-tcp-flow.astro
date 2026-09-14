@@ -1,0 +1,43 @@
+<figure class="binary-flow not-prose" aria-labelledby="binary-flow-caption">
+  <ol>
+    <li><strong>1. Read a Frame</strong><span>Reassemble one bounded application message from the TCP stream.</span></li>
+    <li><strong>2. Match Bytes</strong><span>Map bytes with <code>latin1</code> and select the first matching command.</span></li>
+    <li><strong>3. Build a Response</strong><span>Use a static handler or command plugin, then apply generic patches.</span></li>
+    <li><strong>4. Run Wire Plugins</strong><span>Inspect the exchange, replace the response, or enrich event metadata.</span></li>
+    <li><strong>5. Write and Transition</strong><span>Send the response, emit evidence, and optionally change framing, start TLS, or close.</span></li>
+  </ol>
+  <figcaption id="binary-flow-caption">One binary TCP exchange, from stream framing to connection-state transition.</figcaption>
+</figure>
+
+<style>
+  .binary-flow {
+    margin-block: 1.5rem;
+    border: 1px solid color-mix(in srgb, var(--color-fd-primary) 24%, var(--color-fd-border));
+    border-radius: 0.9rem;
+    background: linear-gradient(145deg, color-mix(in srgb, var(--color-fd-primary) 8%, transparent), transparent 58%), var(--color-fd-card);
+    padding: clamp(1rem, 3vw, 1.5rem);
+  }
+  .binary-flow ol {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .binary-flow li {
+    position: relative;
+    display: grid;
+    align-content: start;
+    gap: 0.45rem;
+    min-height: 8.25rem;
+    border: 1px solid var(--color-fd-border);
+    border-radius: 0.7rem;
+    background: color-mix(in srgb, var(--color-fd-background) 84%, transparent);
+    padding: 0.9rem;
+  }
+  .binary-flow strong { color: var(--color-fd-foreground); font-size: 0.9rem; }
+  .binary-flow span { color: var(--color-fd-muted-foreground); font-size: 0.82rem; line-height: 1.5; }
+  .binary-flow code { color: var(--color-fd-foreground); }
+  .binary-flow figcaption { margin-top: 1rem; color: var(--color-fd-muted-foreground); font-size: 0.78rem; text-align: center; }
+</style>

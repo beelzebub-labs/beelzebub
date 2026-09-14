@@ -1,0 +1,4 @@
+{
+  "title": "Concepts",
+  "pages": ["architecture", "configuration-model", "events-and-observability", "llm-and-mcp"]
+}

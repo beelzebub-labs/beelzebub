@@ -1,0 +1,11 @@
+apiVersion: "v1"
+protocol: "tcp"
+address: ":6379"
+description: "Redis lab decoy"
+commands:
+  - regex: "^PING"
+    handler: "+PONG\\r\\n"
+  - regex: "^(.+)$"
+    handler: "-ERR unknown command\\r\\n"
+deadlineTimeoutSeconds: 60
+serverName: "redis-lab"

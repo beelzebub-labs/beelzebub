@@ -1,0 +1,16 @@
+---
+title: Your First Service
+description: Create, validate, run, and test a minimal HTTP deception service.
+---
+
+Download or copy the maintained example into `configurations/services/http-lab.yaml`. The displayed file and download are generated from the same source that CI validates.
+
+<ExampleCode name="http-lab.yaml" />
+
+Validate before starting the runtime:
+
+```bash
+beelzebub validate
+```
+
+Start it with `beelzebub run`, then test `/` and an unknown path. Commands are evaluated in order: put specific routes before a catch-all. A route whose regex matches but whose method list excludes the request returns `405` with `Allow`; a catch-all without `methods` accepts every method.

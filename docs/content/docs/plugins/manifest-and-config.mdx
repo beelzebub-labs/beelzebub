@@ -1,0 +1,8 @@
+---
+title: Plugin Manifest And Configuration
+description: Package metadata and per-plugin YAML that make external extensions reproducible.
+---
+
+Each external plugin repository ships `plugins.yaml` with `name`, `version`, `module`, `entrypoint`, optional `description`, `author`, `min-core-version`, and dependency metadata. `module` must match `go.mod` and `entrypoint` must contain the package that calls `plugin.Register`.
+
+Optional runtime settings can live under `configurations/plugins/<name>.yaml`. The installer seeds a plugin-provided config file in Docker mode without overwriting an existing operator file. Keep credentials in environment variables or an orchestrator secret store.

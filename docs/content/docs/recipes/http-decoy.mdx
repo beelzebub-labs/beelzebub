@@ -1,0 +1,15 @@
+---
+title: Static HTTP Decoy
+description: Build a small web surface with ordered routes, realistic headers, and a safe fallback.
+---
+
+Copy `examples/http-lab.yaml` into `configurations/services/`, run `beelzebub validate`, and start the runtime. Test both the expected page and a method that is intentionally rejected. Keep a catch-all last and avoid real application content.
+
+<ExampleCode name="http-lab.yaml" />
+
+```bash
+curl -i http://localhost:8080/
+curl -i -X POST http://localhost:8080/
+```
+
+The downloadable example is validated in CI against the HTTP schema.

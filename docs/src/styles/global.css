@@ -1,0 +1,67 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+.beelzebub-brand-mark {
+  filter: brightness(0);
+}
+
+.dark .beelzebub-brand-mark {
+  filter: none;
+}
+
+:root {
+  --color-fd-background: #fcfaff;
+  --color-fd-foreground: #21172e;
+  --color-fd-muted: #f4effb;
+  --color-fd-muted-foreground: #71667f;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #21172e;
+  --color-fd-border: rgba(100, 57, 145, 0.18);
+  --color-fd-secondary: #f1eafb;
+  --color-fd-secondary-foreground: #38244f;
+  --color-fd-accent: #eee6fb;
+  --color-fd-accent-foreground: #35204d;
+  --color-fd-primary: #6930c3;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-ring: #7c3aed;
+}
+
+.dark {
+  --color-fd-primary: #b99cff;
+  --color-fd-primary-foreground: #190b2d;
+  --color-fd-ring: #c4b0ff;
+  --color-fd-background: #07020f;
+  --color-fd-foreground: #f8f6ff;
+  --color-fd-muted: #110b1f;
+  --color-fd-muted-foreground: #aaa0b8;
+  --color-fd-card: #0b0813;
+  --color-fd-card-foreground: #f8f6ff;
+  --color-fd-border: rgba(167, 139, 250, 0.18);
+  --color-fd-secondary: #110b1f;
+  --color-fd-secondary-foreground: #eee7ff;
+  --color-fd-accent: #1c1030;
+  --color-fd-accent-foreground: #f8f6ff;
+}
+
+:root:not(.dark) body {
+  background:
+    radial-gradient(circle at 50% -12%, rgba(124, 58, 237, 0.1), transparent 32rem),
+    radial-gradient(circle at 92% 72%, rgba(168, 85, 247, 0.07), transparent 28rem),
+    linear-gradient(180deg, #fcfaff, #ffffff 48%, #faf7ff);
+}
+
+.dark body {
+  background:
+    radial-gradient(circle at 50% -10%, rgba(91, 36, 242, 0.22), transparent 34rem),
+    radial-gradient(circle at 85% 70%, rgba(124, 60, 255, 0.12), transparent 30rem),
+    linear-gradient(180deg, #07020f, #050308 52%, #090317);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+code {
+  font-variant-ligatures: none;
+}
