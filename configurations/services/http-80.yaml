@@ -1,27 +1,309 @@
 apiVersion: "v1"
 protocol: "http"
 address: ":80"
-description: "Wordpress 6.0"
+description: "WordPress 6.9.4"
 commands:
-  - regex: "^(/index.php|/index.html|/)$"
-    handler:
-      <html>
-        <header>
-          <title>Wordpress 6 test page</title>
-        </header>
-        <body>
-          <h1>Hello from Wordpress</h1>
-        </body>
+  # WordPress 6.9.4 static routes. Keep batch routes before broad routes.
+  - regex: "^/wp-json/batch/v1/?(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: '{"code":"rest_no_route","message":"No route was found matching the URL and request method.","data":{"status":404}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "Allow: POST"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 404
+
+  - regex: "^/wp-json/batch/v1/?(?:\\?.*)?$"
+    methods: [POST]
+    # Static empty/malformed-batch response; bodies are not matchable here.
+    handler: '{"code":"rest_missing_callback_param","message":"Missing parameter(s): requests","data":{"status":400,"params":["requests"]}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-Content-Type-Options: nosniff"
+      - "Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages, Link"
+      - "Access-Control-Allow-Headers: Authorization, X-WP-Nonce, Content-Disposition, Content-MD5, Content-Type"
+      - "Allow: POST"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 400
+
+  # Batch aliases used by common WordPress clients.
+  - regex: "^/(?:index\\.php)?\\?rest_route=/batch/v1(?:&.*)?$"
+    methods: [POST]
+    handler: '{"code":"rest_missing_callback_param","message":"Missing parameter(s): requests","data":{"status":400,"params":["requests"]}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-Content-Type-Options: nosniff"
+      - "Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages, Link"
+      - "Access-Control-Allow-Headers: Authorization, X-WP-Nonce, Content-Disposition, Content-MD5, Content-Type"
+      - "Allow: POST"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 400
+
+  - regex: "^/(?:index\\.php)?\\?rest_route=/batch/v1(?:&.*)?$"
+    methods: [GET, HEAD]
+    handler: '{"code":"rest_no_route","message":"No route was found matching the URL and request method.","data":{"status":404}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-Content-Type-Options: nosniff"
+      - "Allow: POST"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 404
+
+  - regex: "^/index\\.php/wp-json/batch/v1/?(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: '{"code":"rest_no_route","message":"No route was found matching the URL and request method.","data":{"status":404}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-Content-Type-Options: nosniff"
+      - "Allow: POST"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 404
+
+  - regex: "^/index\\.php/wp-json/batch/v1/?(?:\\?.*)?$"
+    methods: [POST]
+    handler: '{"code":"rest_missing_callback_param","message":"Missing parameter(s): requests","data":{"status":400,"params":["requests"]}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "Allow: POST"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 400
+
+  - regex: "^/(?:index\\.php)?\\?rest_route=/(?:&.*)?$"
+    methods: [GET, HEAD]
+    handler: '{"name":"Example Site","description":"Example WordPress site","gmt_offset":"0","timezone_string":"","namespaces":["oembed/1.0","wp/v2","wp-site-health/v1","wp-block-editor/v1","wp-abilities/v1"],"authentication":[],"routes":{"/":{"namespace":"","methods":["GET"]},"/batch/v1":{"namespace":"","methods":["POST"]},"/wp/v2/posts":{"namespace":"wp/v2","methods":["GET","POST"]},"/wp/v2/users":{"namespace":"wp/v2","methods":["GET","POST"]}},"site_logo":0,"site_icon":0,"site_icon_url":""}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-Content-Type-Options: nosniff"
+      - "Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages, Link"
+      - "Access-Control-Allow-Headers: Authorization, X-WP-Nonce, Content-Disposition, Content-MD5, Content-Type"
+      - "Allow: GET"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/(?:index\\.php)?\\?rest_route=/wp/v2/posts(?:&.*)?$"
+    methods: [GET, HEAD]
+    handler: '[{"id":1,"date":"2026-07-18T13:54:26","date_gmt":"2026-07-18T13:54:26","guid":{"rendered":"https:\/\/example.org\/?p=1"},"modified":"2026-07-18T13:54:26","modified_gmt":"2026-07-18T13:54:26","slug":"hello-world","status":"publish","type":"post","link":"\/hello-world\/","title":{"rendered":"Hello world!"},"content":{"rendered":"\\n<p>Welcome to WordPress. This is your first post. Edit or delete it, then start writing!<\\/p>\\n","protected":false},"excerpt":{"rendered":"<p>Welcome to WordPress. This is your first post. Edit or delete it, then start writing!<\\/p>\\n","protected":false},"author":1,"featured_media":0,"comment_status":"open","ping_status":"open","sticky":false,"template":"","format":"standard","meta":{"footnotes":""},"categories":[1],"tags":[]}]'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-WP-Total: 1"
+      - "X-WP-TotalPages: 1"
+      - "Allow: GET"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/(?:index\\.php)?\\?rest_route=/wp/v2/users(?:&.*)?$"
+    methods: [GET, HEAD]
+    handler: '[{"id":1,"name":"author","url":"https:\/\/example.org","description":"","link":"\/author\/author\/","slug":"author","avatar_urls":{},"meta":[]}]'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-WP-Total: 1"
+      - "X-WP-TotalPages: 1"
+      - "Allow: GET"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^(/|/index\\.php|/index\\.html)(\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: |
+      <!doctype html>
+      <html lang="en-US">
+      <head>
+      <meta charset="UTF-8"><meta name="generator" content="WordPress 6.9.4">
+      <title>Example Site &#8211; Example WordPress site</title>
+      </head>
+      <body><h1>Example Site</h1><p>Example WordPress site</p></body>
+      </html>
+    headers:
+      - "Content-Type: text/html; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/wp-json/?(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: '{"name":"Example Site","description":"Example WordPress site","gmt_offset":"0","timezone_string":"","namespaces":["oembed/1.0","wp/v2","wp-site-health/v1","wp-block-editor/v1","wp-abilities/v1"],"authentication":[],"routes":{"/":{"namespace":"","methods":["GET"]},"/batch/v1":{"namespace":"","methods":["POST"]},"/wp/v2/posts":{"namespace":"wp/v2","methods":["GET","POST"]},"/wp/v2/users":{"namespace":"wp/v2","methods":["GET","POST"]}},"site_logo":0,"site_icon":0,"site_icon_url":""}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-Content-Type-Options: nosniff"
+      - "Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages, Link"
+      - "Access-Control-Allow-Headers: Authorization, X-WP-Nonce, Content-Disposition, Content-MD5, Content-Type"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/wp-json/wp/v2/?(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: '{"namespace":"wp/v2","methods":["GET"],"endpoints":[{"methods":["GET"]}]}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "Allow: GET"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/wp-json/wp/v2/posts(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: '[{"id":1,"date":"2026-07-18T13:54:26","date_gmt":"2026-07-18T13:54:26","guid":{"rendered":"https:\/\/example.org\/?p=1"},"modified":"2026-07-18T13:54:26","modified_gmt":"2026-07-18T13:54:26","slug":"hello-world","status":"publish","type":"post","link":"\/hello-world\/","title":{"rendered":"Hello world!"},"content":{"rendered":"\\n<p>Welcome to WordPress. This is your first post. Edit or delete it, then start writing!<\\/p>\\n","protected":false},"excerpt":{"rendered":"<p>Welcome to WordPress. This is your first post. Edit or delete it, then start writing!<\\/p>\\n","protected":false},"author":1,"featured_media":0,"comment_status":"open","ping_status":"open","sticky":false,"template":"","format":"standard","meta":{"footnotes":""},"categories":[1],"tags":[]}]'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-Content-Type-Options: nosniff"
+      - "X-WP-Total: 1"
+      - "X-WP-TotalPages: 1"
+      - "Allow: GET"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/wp-json/wp/v2/posts(?:\\?.*)?$"
+    methods: [POST]
+    handler: '{"code":"rest_cannot_create","message":"Sorry, you are not allowed to create posts as this user.","data":{"status":401}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "Allow: GET, POST"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 401
+
+  - regex: "^/wp-json/wp/v2/users\\?.*context=edit.*$"
+    methods: [GET, HEAD]
+    handler: '{"code":"rest_cannot_edit","message":"Sorry, you are not allowed to edit users.","data":{"status":401}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "Allow: GET"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 401
+
+  - regex: "^/wp-json/wp/v2/users(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: '[{"id":1,"name":"author","url":"https:\/\/example.org","description":"","link":"\/author\/author\/","slug":"author","avatar_urls":{},"meta":[]}]'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "X-Content-Type-Options: nosniff"
+      - "X-WP-Total: 1"
+      - "X-WP-TotalPages: 1"
+      - "Allow: GET"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/wp-json/.*$"
+    methods: [GET, HEAD]
+    handler: '{"code":"rest_no_route","message":"No route was found matching the URL and request method.","data":{"status":404}}'
+    headers:
+      - "Content-Type: application/json; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Robots-Tag: noindex"
+      - "Allow: GET"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 404
+
+  - regex: "^/xmlrpc\\.php(?:\\?.*)?$"
+    methods: [GET]
+    handler: "XML-RPC server accepts POST requests only."
+    headers:
+      - "Content-Type: text/plain;charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "Allow: POST"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 405
+
+  - regex: "^/xmlrpc\\.php(?:\\?.*)?$"
+    methods: [POST]
+    handler: "<?xml version=\"1.0\" encoding=\"UTF-8\"?><methodResponse><fault><value><struct><member><name>faultCode</name><value><int>-32700</int></value></member><member><name>faultString</name><value><string>parse error. not well formed</string></value></member></struct></value></fault></methodResponse>"
+    headers:
+      - "Content-Type: text/xml; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/wp-login\\.php(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: |
+      <!doctype html>
+      <html lang="en-US">
+      <head><meta charset="UTF-8"><meta name="robots" content="noindex, nofollow, noarchive"><title>Log In ‹ Example Site — WordPress</title></head>
+      <body class="login"><form name="loginform" id="loginform" action="/wp-login.php" method="post">
+      <label for="user_login">Username or Email Address</label>
+      <input type="text" name="log" id="user_login">
+      <label for="user_pass">Password</label>
+      <input type="password" name="pwd" id="user_pass">
+      <input type="submit" name="wp-submit" value="Log In">
+      </form></body>
+      </html>
+    headers:
+      - "Content-Type: text/html; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "Set-Cookie: wordpress_test_cookie=WP%20Cookie%20check; path=/; HttpOnly"
+      - "X-Frame-Options: SAMEORIGIN"
+      - "Content-Security-Policy: frame-ancestors 'self'"
+      - "Referrer-Policy: strict-origin-when-cross-origin"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/wp-login\\.php(?:\\?.*)?$"
+    methods: [POST]
+    handler: "<!doctype html><html lang=\"en-US\"><head><title>Log In ‹ Example Site — WordPress</title></head><body><div id=\"login_error\">Error: The username or password you entered is incorrect.</div></body></html>"
+    headers:
+      - "Content-Type: text/html; charset=UTF-8"
+      - "X-Powered-By: PHP/8.3.31"
+      - "Set-Cookie: wordpress_test_cookie=WP%20Cookie%20check; path=/; HttpOnly"
+      - "X-Frame-Options: SAMEORIGIN"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 200
+
+  - regex: "^/wp-admin(?:/.*)?(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: ""
+    headers:
+      - "Location: /wp-login.php?redirect_to=%2Fwp-admin%2F&reauth=1"
+      - "X-Powered-By: PHP/8.3.31"
+      - "X-Redirect-By: WordPress"
+      - "Server: Apache/2.4.67 (Debian)"
+    statusCode: 302
+
+  - regex: "^/readme\\.html(?:\\?.*)?$"
+    methods: [GET, HEAD]
+    handler: |
+      <!DOCTYPE html>
+      <html xmlns="http://www.w3.org/1999/xhtml">
+      <head><meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><meta name="robots" content="noindex,nofollow" /><title>WordPress › ReadMe</title></head>
+      <body><h1>WordPress 6.9.4</h1><h2>First Things First</h2><p>Welcome. WordPress is a very special project to me. Every developer and contributor adds something unique to the mix.</p></body>
       </html>
     headers:
       - "Content-Type: text/html"
-      - "Server: Apache/2.4.53 (Debian)"
-      - "X-Powered-By: PHP/7.4.29"
+      - "X-Powered-By: PHP/8.3.31"
+      - "Server: Apache/2.4.67 (Debian)"
     statusCode: 200
-  - regex: "^.*$"
-    plugin: "LLMHoneypot"
-    statusCode: 200
-plugin:
-  llmProvider: "openai"
-  llmModel: "gpt-4o"
-  openAISecretKey: "sk-proj-123456"
+
+fallbackCommand:
+  handler: "<!doctype html><html><head><meta name=\"generator\" content=\"WordPress 6.9.4\"><title>Page not found — Example Site</title></head><body><h1>Page not found</h1><p>The requested URL was not found on this server.</p></body></html>"
+  headers:
+    - "Content-Type: text/html; charset=UTF-8"
+    - "X-Powered-By: PHP/8.3.31"
+    - "Server: Apache/2.4.67 (Debian)"
+  statusCode: 404
