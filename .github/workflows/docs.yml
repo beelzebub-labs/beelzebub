@@ -24,6 +24,7 @@ on:
       - ".github/workflows/docs.yml"
 
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths:
       - "docs/**"
       - "README.md"
@@ -97,6 +98,9 @@ jobs:
     name: Policy
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout Repository History
         uses: actions/checkout@v7
@@ -106,12 +110,16 @@ jobs:
       - name: Check Documentation Change Policy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          NO_DOC: ${{ contains(github.event.pull_request.labels.*.name, 'nodoc') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
 
         run: |
           changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
           public='^(cli/|pkg/plugin/|internal/parser/|internal/builder/|internal/plugins/|internal/protocols/|internal/tracer/|specs/|configurations/|Dockerfile$|docker-compose.yml$|install.sh$|go.mod$|Makefile$|beelzebub-chart/)'
           if printf '%s\n' "$changed" | grep -Eq '^docs/|^README.md$'; then exit 0; fi
+
+          # Re-runs must use current labels, not the original event snapshot.
+          NO_DOC="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq 'any(.labels[]; .name == "nodoc")')"
           if [ "$NO_DOC" = "true" ]; then exit 0; fi
 
           if ! printf '%s\n' "$changed" | grep -Eqv '^(go\.mod|go\.sum)$'; then
@@ -120,6 +128,6 @@ jobs:
           fi
 
           if printf '%s\n' "$changed" | grep -Eq "$public"; then
-            echo "Public runtime behavior changed without a docs update. Add docs/ or README.md, or ask a maintainer to apply the nodoc label with rationale."
+            echo "Files in documentation-sensitive paths changed without a docs update. Add docs/ or README.md, or ask a maintainer to apply the nodoc label with rationale."
             exit 1
           fi
