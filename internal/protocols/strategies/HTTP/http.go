@@ -299,7 +299,7 @@ func mapCookiesToString(cookies []*http.Cookie) string {
 
 func setResponseHeaders(responseWriter http.ResponseWriter, headers []string, statusCode int) {
 	for _, headerStr := range headers {
-		keyValue := strings.Split(headerStr, ":")
+		keyValue := strings.SplitN(headerStr, ":", 2)
 		if len(keyValue) > 1 {
 			responseWriter.Header().Add(keyValue[0], keyValue[1])
 		}
