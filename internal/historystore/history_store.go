@@ -41,11 +41,17 @@ func (hs *HistoryStore) HasKey(key string) bool {
 	return ok
 }
 
-// Query returns the value stored at the map
+// Query returns an owned snapshot of the messages stored for key.
 func (hs *HistoryStore) Query(key string) []plugins.Message {
 	hs.RLock()
 	defer hs.RUnlock()
-	return hs.sessions[key].Messages
+	src := hs.sessions[key].Messages
+	if src == nil {
+		return nil
+	}
+	out := make([]plugins.Message, len(src))
+	copy(out, src)
+	return out
 }
 
 // Append will add the slice of Mesages to the entry for the key.
