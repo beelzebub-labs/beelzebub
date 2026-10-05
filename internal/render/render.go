@@ -45,26 +45,53 @@ func Render(s string, v Values) string {
 	if !strings.Contains(s, "{{") {
 		return s
 	}
-	out := tokenPattern.ReplaceAllStringFunc(s, func(match string) string {
-		name := tokenPattern.FindStringSubmatch(match)[1]
+	if len(s) > MaxOutput {
+		return s
+	}
+
+	// Render into a bounded builder. If token expansion would cross the limit,
+	// return the configured response unchanged; truncating a rendered body can
+	// turn valid JSON or another framed payload into a malformed response.
+	var out strings.Builder
+	out.Grow(len(s))
+	cursor := 0
+	for cursor < len(s) {
+		match := tokenPattern.FindStringSubmatchIndex(s[cursor:])
+		if match == nil {
+			break
+		}
+		start := cursor + match[0]
+		end := cursor + match[1]
+		name := s[cursor+match[2] : cursor+match[3]]
+		replacement := name
 		switch name {
 		case "uuid.v4":
-			return uuid.New().String()
+			replacement = uuid.New().String()
 		case "uuid.short":
-			return uuid.New().String()[:8]
+			replacement = uuid.New().String()[:8]
 		case "request.id":
-			return v.RequestID
+			replacement = v.RequestID
 		case "now.unix":
-			return strconv.FormatInt(v.Now.Unix(), 10)
+			replacement = strconv.FormatInt(v.Now.Unix(), 10)
 		case "now.rfc3339":
-			return v.Now.Format(time.RFC3339)
+			replacement = v.Now.Format(time.RFC3339)
+		default:
+			replacement = s[start:end]
 		}
-		return match
-	})
-	if len(out) > MaxOutput {
-		out = out[:MaxOutput]
+
+		segmentSize := start - cursor + len(replacement)
+		if out.Len()+segmentSize > MaxOutput {
+			return s
+		}
+		out.WriteString(s[cursor:start])
+		out.WriteString(replacement)
+		cursor = end
 	}
-	return out
+	if out.Len()+len(s)-cursor > MaxOutput {
+		return s
+	}
+	out.WriteString(s[cursor:])
+	return out.String()
 }
 
 // RenderAll renders every string in the slice with the same values.

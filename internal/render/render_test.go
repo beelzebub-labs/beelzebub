@@ -38,5 +38,7 @@ func TestRenderIsPerRequestAndPerOccurrence(t *testing.T) {
 
 func TestRenderIsBounded(t *testing.T) {
 	huge := strings.Repeat("{{uuid.v4}}", MaxOutput/8)
-	assert.LessOrEqual(t, len(Render(huge, NewValues())), MaxOutput)
+	// The original document remains intact when expansion would cross the
+	// budget; partial output could corrupt JSON or another framed response.
+	assert.Equal(t, huge, Render(huge, NewValues()))
 }
