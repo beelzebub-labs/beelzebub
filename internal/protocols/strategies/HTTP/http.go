@@ -184,14 +184,18 @@ func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.
 const maxRequestBodyBytes = 1024 * 1024
 
 // readRequestBody reads at most maxRequestBodyBytes of the body and reports,
-// through capture descriptors, how many bytes were kept and whether the body
+// through Metadata descriptors, how many bytes were kept and whether the body
 // was longer than that. One byte past the limit is read only to learn whether
 // more existed; it is not retained.
+//
+// Descriptor keys use the reserved "body." domain. Metadata keys are
+// lower-case and dot-namespaced by domain so plugins and strategies cannot
+// collide; see the key convention documented alongside Event.Metadata.
 func readRequestBody(request *http.Request) (string, map[string]string) {
 	meta := map[string]string{}
 	if request.Body == nil {
-		meta["capture.request.bytes"] = "0"
-		meta["capture.request.truncated"] = "false"
+		meta["body.request.size"] = "0"
+		meta["body.request.truncated"] = "false"
 		return "", meta
 	}
 	bodyBytes, err := io.ReadAll(io.LimitReader(request.Body, maxRequestBodyBytes+1))
@@ -202,20 +206,21 @@ func readRequestBody(request *http.Request) (string, map[string]string) {
 	if truncated {
 		bodyBytes = bodyBytes[:maxRequestBodyBytes]
 	}
-	meta["capture.request.bytes"] = strconv.Itoa(len(bodyBytes))
-	meta["capture.request.truncated"] = strconv.FormatBool(truncated)
+	meta["body.request.size"] = strconv.Itoa(len(bodyBytes))
+	meta["body.request.truncated"] = strconv.FormatBool(truncated)
 	return string(bodyBytes), meta
 }
 
 // addResponseDescriptors records the status and body size of the response as
 // built for this request. The size is what the handler produced, not bytes
-// confirmed on the wire.
+// confirmed on the wire. Status uses the reserved "http." domain, size the
+// "body." domain.
 func addResponseDescriptors(meta map[string]string, resp httpResponse) {
 	if meta == nil {
 		return
 	}
-	meta["capture.response.status"] = strconv.Itoa(resp.StatusCode)
-	meta["capture.response.bytes"] = strconv.Itoa(len(resp.Body))
+	meta["http.response.status"] = strconv.Itoa(resp.StatusCode)
+	meta["body.response.size"] = strconv.Itoa(len(resp.Body))
 }
 
 func traceRequest(request *http.Request, tr tracer.Tracer, command parser.Command, HoneypotDescription, body string, meta map[string]string, trustedProxies []*net.IPNet) {

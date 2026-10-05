@@ -39,10 +39,10 @@ func TestCaptureDescriptors_SmallBodyIsComplete(t *testing.T) {
 
 	if assert.Len(t, tr.events, 1) {
 		m := tr.events[0].Metadata
-		assert.Equal(t, "7", m["capture.request.bytes"])
-		assert.Equal(t, "false", m["capture.request.truncated"])
-		assert.Equal(t, "201", m["capture.response.status"])
-		assert.Equal(t, "11", m["capture.response.bytes"])
+		assert.Equal(t, "7", m["body.request.size"])
+		assert.Equal(t, "false", m["body.request.truncated"])
+		assert.Equal(t, "201", m["http.response.status"])
+		assert.Equal(t, "11", m["body.response.size"])
 		assert.Equal(t, `{"a":1}`, tr.events[0].Body)
 	}
 	assert.Equal(t, 201, rec.Code)
@@ -57,8 +57,8 @@ func TestCaptureDescriptors_OversizeBodyIsMarkedTruncated(t *testing.T) {
 
 	if assert.Len(t, tr.events, 1) {
 		m := tr.events[0].Metadata
-		assert.Equal(t, "1048576", m["capture.request.bytes"])
-		assert.Equal(t, "true", m["capture.request.truncated"])
+		assert.Equal(t, "1048576", m["body.request.size"])
+		assert.Equal(t, "true", m["body.request.truncated"])
 		assert.Len(t, tr.events[0].Body, maxRequestBodyBytes)
 	}
 }
@@ -73,8 +73,8 @@ func TestCaptureDescriptors_MethodNotAllowedPathIsDescribed(t *testing.T) {
 	assert.Equal(t, 405, rec.Code)
 	if assert.Len(t, tr.events, 1) {
 		m := tr.events[0].Metadata
-		assert.Equal(t, "405", m["capture.response.status"])
-		assert.Equal(t, "0", m["capture.request.bytes"])
-		assert.Equal(t, "false", m["capture.request.truncated"])
+		assert.Equal(t, "405", m["http.response.status"])
+		assert.Equal(t, "0", m["body.request.size"])
+		assert.Equal(t, "false", m["body.request.truncated"])
 	}
 }
