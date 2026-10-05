@@ -196,18 +196,17 @@ func readRequestBody(request *http.Request) (string, map[string]string) {
 	if request.Body == nil {
 		meta["body.request.size"] = "0"
 		meta["body.request.truncated"] = "false"
+		meta["body.request.read_error"] = "false"
 		return "", meta
 	}
 	bodyBytes, err := io.ReadAll(io.LimitReader(request.Body, maxRequestBodyBytes+1))
-	if err != nil {
-		bodyBytes = nil
-	}
 	truncated := len(bodyBytes) > maxRequestBodyBytes
 	if truncated {
 		bodyBytes = bodyBytes[:maxRequestBodyBytes]
 	}
 	meta["body.request.size"] = strconv.Itoa(len(bodyBytes))
 	meta["body.request.truncated"] = strconv.FormatBool(truncated)
+	meta["body.request.read_error"] = strconv.FormatBool(err != nil)
 	return string(bodyBytes), meta
 }
 

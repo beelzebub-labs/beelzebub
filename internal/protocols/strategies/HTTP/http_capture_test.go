@@ -1,6 +1,7 @@
 package HTTP
 
 import (
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -76,5 +77,30 @@ func TestCaptureDescriptors_MethodNotAllowedPathIsDescribed(t *testing.T) {
 		assert.Equal(t, "405", m["http.response.status"])
 		assert.Equal(t, "0", m["body.request.size"])
 		assert.Equal(t, "false", m["body.request.truncated"])
+	}
+}
+
+type partialErrorReader struct{ done bool }
+
+func (r *partialErrorReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, errors.New("body read failed")
+	}
+	r.done = true
+	return copy(p, "partial"), errors.New("body read failed")
+}
+
+func TestCaptureDescriptors_ReadErrorIsNotReportedAsComplete(t *testing.T) {
+	tr := &captureTracer{}
+	conf := captureConf()
+	req := httptest.NewRequest("POST", "/api", &partialErrorReader{})
+	newHTTPHandler(conf, tr)(httptest.NewRecorder(), req)
+
+	if assert.Len(t, tr.events, 1) {
+		m := tr.events[0].Metadata
+		assert.Equal(t, "7", m["body.request.size"])
+		assert.Equal(t, "false", m["body.request.truncated"])
+		assert.Equal(t, "true", m["body.request.read_error"])
+		assert.Equal(t, "partial", tr.events[0].Body)
 	}
 }

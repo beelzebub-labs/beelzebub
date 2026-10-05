@@ -45,8 +45,12 @@ type Event struct {
 	SourcePort      string
 	TLSServerName   string
 	Handler         string
-	// Metadata carries protocol-specific values contributed by plugins without
-	// coupling the tracer to any wire protocol implementation.
+	// Metadata carries protocol-specific values without coupling the tracer to
+	// any wire protocol implementation. Core capture descriptors use
+	// lower-case, dot-prefixed domains (for example, body.request.size and
+	// http.response.status); plugins should use a plugin-specific prefix to
+	// avoid collisions. Values are strings for compatibility with existing
+	// event sinks.
 	Metadata map[string]string `json:",omitempty"`
 }
 
