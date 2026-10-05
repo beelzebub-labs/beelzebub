@@ -250,7 +250,7 @@ func TestTraceRequest_HTTP(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:12345"
 
 	cmd := parser.Command{Name: "test-handler"}
-	traceRequest(req, mt, cmd, "test-honeypot", "body", nil)
+	traceRequest(req, mt, cmd, "test-honeypot", "body", nil, nil)
 
 	assert.Len(t, mt.events, 1)
 	event := mt.events[0]
@@ -269,7 +269,7 @@ func TestTraceRequest_WithCookiesAndHeaders(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "session", Value: "xyz"})
 	req.RemoteAddr = "192.168.1.1:54321"
 
-	traceRequest(req, mt, parser.Command{}, "login-honeypot", `{"user":"admin"}`, nil)
+	traceRequest(req, mt, parser.Command{}, "login-honeypot", `{"user":"admin"}`, nil, nil)
 
 	assert.Len(t, mt.events, 1)
 	event := mt.events[0]
@@ -432,7 +432,7 @@ func TestTraceRequest_TrustedProxy_ResolvesRealClient(t *testing.T) {
 	req.RemoteAddr = "172.20.0.5:54321"
 	req.Header.Set("X-Forwarded-For", "8.8.8.8")
 
-	traceRequest(req, mt, parser.Command{Name: "admin"}, "test", "", mustCIDRs(t, "172.16.0.0/12"))
+	traceRequest(req, mt, parser.Command{Name: "admin"}, "test", "", nil, mustCIDRs(t, "172.16.0.0/12"))
 
 	require.Len(t, mt.events, 1)
 	ev := mt.events[0]
@@ -448,7 +448,7 @@ func TestTraceRequest_UntrustedPeer_DoesNotTrustHeaders(t *testing.T) {
 	req.RemoteAddr = "203.0.113.7:8080"
 	req.Header.Set("X-Forwarded-For", "8.8.8.8")
 
-	traceRequest(req, mt, parser.Command{}, "test", "", mustCIDRs(t, "172.16.0.0/12"))
+	traceRequest(req, mt, parser.Command{}, "test", "", nil, mustCIDRs(t, "172.16.0.0/12"))
 
 	require.Len(t, mt.events, 1)
 	assert.Equal(t, "203.0.113.7", mt.events[0].SourceIp)
@@ -462,7 +462,7 @@ func TestTraceRequest_RemoteAddr_WithPort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "203.0.113.5:9000"
 
-	traceRequest(req, mt, parser.Command{}, "test", "", nil)
+	traceRequest(req, mt, parser.Command{}, "test", "", nil, nil)
 
 	require.Len(t, mt.events, 1)
 	ev := mt.events[0]
@@ -480,7 +480,7 @@ func TestTraceRequest_RemoteAddr_WithoutPort(t *testing.T) {
 	req.RemoteAddr = "172.20.0.5:54321"
 	req.Header.Set("X-Forwarded-For", "203.0.113.99")
 
-	traceRequest(req, mt, parser.Command{}, "test", "", mustCIDRs(t, "172.16.0.0/12"))
+	traceRequest(req, mt, parser.Command{}, "test", "", nil, mustCIDRs(t, "172.16.0.0/12"))
 
 	require.Len(t, mt.events, 1)
 	ev := mt.events[0]
@@ -498,7 +498,7 @@ func TestTraceRequest_RemoteAddr_IPv6WithPort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "[::1]:8080"
 
-	traceRequest(req, mt, parser.Command{}, "test", "", nil)
+	traceRequest(req, mt, parser.Command{}, "test", "", nil, nil)
 
 	require.Len(t, mt.events, 1)
 	ev := mt.events[0]
@@ -515,7 +515,7 @@ func TestTraceRequest_RemoteAddr_IPv6WithoutPort(t *testing.T) {
 	req.RemoteAddr = "[fd00::1]:54321"
 	req.Header.Set("X-Forwarded-For", "2001:db8::42")
 
-	traceRequest(req, mt, parser.Command{}, "test", "", mustCIDRs(t, "fd00::/8"))
+	traceRequest(req, mt, parser.Command{}, "test", "", nil, mustCIDRs(t, "fd00::/8"))
 
 	require.Len(t, mt.events, 1)
 	ev := mt.events[0]

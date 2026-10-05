@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -69,7 +70,9 @@ func newHTTPHandler(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tra
 			resp.StatusCode = http.StatusMethodNotAllowed
 			resp.Headers = []string{"Allow:" + strings.Join(allowedMethods, ", ")}
 			resp.Body = http.StatusText(http.StatusMethodNotAllowed)
-			traceRequest(request, tr, parser.Command{}, servConf.Description, "", servConf.TrustedProxiesNets)
+			body, meta := readRequestBody(request)
+			addResponseDescriptors(meta, resp)
+			traceRequest(request, tr, parser.Command{}, servConf.Description, body, meta, servConf.TrustedProxiesNets)
 		} else {
 			// If none of the main commands matched, and we have a fallback command configured, process it here.
 			// The regexp is ignored for fallback commands, as they are catch-all for any request.
@@ -107,20 +110,26 @@ func matchHTTPCommand(commands []parser.Command, request *http.Request) (*parser
 	return nil, allowedMethods
 }
 
-func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, command parser.Command, request *http.Request) (httpResponse, error) {
-	resp := httpResponse{
+func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, command parser.Command, request *http.Request) (resp httpResponse, err error) {
+	resp = httpResponse{
 		Body:       command.Handler,
 		Headers:    command.Headers,
 		StatusCode: command.StatusCode,
 	}
 
-	// Limit body read to 1MB to prevent DoS attacks
-	bodyBytes, err := io.ReadAll(io.LimitReader(request.Body, 1024*1024))
-	body := ""
-	if err == nil {
-		body = string(bodyBytes)
-	}
-	traceRequest(request, tr, command, servConf.Description, body, servConf.TrustedProxiesNets)
+	body, meta := readRequestBody(request)
+
+	// The event is emitted once the response is known, so it can carry the
+	// status and size actually decided for this request.
+	defer func() {
+		sent := resp
+		if err != nil {
+			// newHTTPHandler replaces a failed build with a 500; describe that.
+			sent = httpResponse{StatusCode: 500, Body: "500 Internal Server Error"}
+		}
+		addResponseDescriptors(meta, sent)
+		traceRequest(request, tr, command, servConf.Description, body, meta, servConf.TrustedProxiesNets)
+	}()
 
 	if command.Plugin != "" {
 		host, _ := realClientAddr(request, servConf.TrustedProxiesNets)
@@ -171,7 +180,45 @@ func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.
 	return resp, nil
 }
 
-func traceRequest(request *http.Request, tr tracer.Tracer, command parser.Command, HoneypotDescription, body string, trustedProxies []*net.IPNet) {
+// maxRequestBodyBytes bounds how much of a request body is read and traced.
+const maxRequestBodyBytes = 1024 * 1024
+
+// readRequestBody reads at most maxRequestBodyBytes of the body and reports,
+// through capture descriptors, how many bytes were kept and whether the body
+// was longer than that. One byte past the limit is read only to learn whether
+// more existed; it is not retained.
+func readRequestBody(request *http.Request) (string, map[string]string) {
+	meta := map[string]string{}
+	if request.Body == nil {
+		meta["capture.request.bytes"] = "0"
+		meta["capture.request.truncated"] = "false"
+		return "", meta
+	}
+	bodyBytes, err := io.ReadAll(io.LimitReader(request.Body, maxRequestBodyBytes+1))
+	if err != nil {
+		bodyBytes = nil
+	}
+	truncated := len(bodyBytes) > maxRequestBodyBytes
+	if truncated {
+		bodyBytes = bodyBytes[:maxRequestBodyBytes]
+	}
+	meta["capture.request.bytes"] = strconv.Itoa(len(bodyBytes))
+	meta["capture.request.truncated"] = strconv.FormatBool(truncated)
+	return string(bodyBytes), meta
+}
+
+// addResponseDescriptors records the status and body size of the response as
+// built for this request. The size is what the handler produced, not bytes
+// confirmed on the wire.
+func addResponseDescriptors(meta map[string]string, resp httpResponse) {
+	if meta == nil {
+		return
+	}
+	meta["capture.response.status"] = strconv.Itoa(resp.StatusCode)
+	meta["capture.response.bytes"] = strconv.Itoa(len(resp.Body))
+}
+
+func traceRequest(request *http.Request, tr tracer.Tracer, command parser.Command, HoneypotDescription, body string, meta map[string]string, trustedProxies []*net.IPNet) {
 	host, port := realClientAddr(request, trustedProxies)
 
 	remoteAddr := host
@@ -196,6 +243,7 @@ func traceRequest(request *http.Request, tr tracer.Tracer, command parser.Comman
 		ID:              uuid.New().String(),
 		Description:     HoneypotDescription,
 		Handler:         command.Name,
+		Metadata:        meta,
 	}
 	// Capture the TLS details from the request, if provided.
 	if request.TLS != nil {
