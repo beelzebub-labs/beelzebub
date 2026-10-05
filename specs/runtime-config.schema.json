@@ -80,6 +80,16 @@
       "type": "string",
       "description": "Regex pattern for accepted passwords. Required for SSH and TELNET. Syntax validated by Go at runtime."
     },
+    "dynamic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "description": "Render request-time tokens ({{uuid.v4}}, {{uuid.short}}, {{request.id}}, {{now.unix}}, {{now.rfc3339}}) in static handler bodies and headers. Off by default."
+    },
     "trustedProxies": {
       "type": "array",
       "items": {

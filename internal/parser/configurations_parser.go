@@ -89,6 +89,9 @@ type BeelzebubServiceConfiguration struct {
 	Plugin                 Plugin    `yaml:"plugin" json:"plugin,omitempty"`
 	TLSCertPath            string    `yaml:"tlsCertPath" json:"tlsCertPath,omitempty"`
 	TLSKeyPath             string    `yaml:"tlsKeyPath" json:"tlsKeyPath,omitempty"`
+	// Dynamic enables request-time tokens in static HTTP handler bodies and
+	// headers, so repeated requests do not receive byte-identical responses.
+	Dynamic *DynamicResponses `yaml:"dynamic,omitempty" json:"dynamic,omitempty"`
 	// MaxHistory caps how many session history entries are kept for LLM context
 	// on interactive TCP sessions. Zero means use the built-in
 	// default of 20 entries.
@@ -160,6 +163,11 @@ type Patch struct {
 }
 
 // Command is the struct that contains the configurations of the commands
+// DynamicResponses configures request-time token rendering for static handlers.
+type DynamicResponses struct {
+	Enabled bool `yaml:"enabled" json:"enabled,omitempty"`
+}
+
 type Command struct {
 	RegexStr   string         `yaml:"regex" json:"regex,omitempty"`
 	Regex      *regexp.Regexp `yaml:"-" json:"-"` // This field is parsed, not stored in the config itself.

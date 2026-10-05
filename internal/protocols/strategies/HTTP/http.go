@@ -11,6 +11,7 @@ import (
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
+	"github.com/beelzebub-labs/beelzebub/v3/internal/render"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/beelzebub-labs/beelzebub/v3/pkg/plugin"
 
@@ -112,6 +113,11 @@ func buildHTTPResponse(servConf parser.BeelzebubServiceConfiguration, tr tracer.
 		Body:       command.Handler,
 		Headers:    command.Headers,
 		StatusCode: command.StatusCode,
+	}
+	if command.Plugin == "" && servConf.Dynamic != nil && servConf.Dynamic.Enabled {
+		values := render.NewValues()
+		resp.Body = render.Render(resp.Body, values)
+		resp.Headers = render.RenderAll(resp.Headers, values)
 	}
 
 	// Limit body read to 1MB to prevent DoS attacks
