@@ -7,4 +7,23 @@ HTTP command regexes match the request URI. `methods` is optional; when present,
 
 Use `statusCode`, `headers`, and `handler` for static responses. `LLMHoneypot` can be used as a fallback for unmatched requests, while `MazeHoneypot` generates an expanding Apache-style directory maze. Configure TLS certificate/key pairs together. Configure `trustedProxies` only for networks you control.
 
+Static handlers can opt into a small set of request-time response tokens with `dynamic.enabled: true`:
+
+```yaml
+protocol: http
+address: ":8080"
+dynamic:
+  enabled: true
+commands:
+  - regex: "^/status$"
+    methods: [GET]
+    statusCode: 200
+    headers:
+      - "Content-Type: application/json"
+      - "X-Request-Id: {{request.id}}"
+    handler: '{"request_id":"{{request.id}}","generated_at":"{{now.rfc3339}}"}'
+```
+
+Supported tokens are `{{uuid.v4}}`, `{{uuid.short}}`, `{{request.id}}`, `{{now.unix}}`, and `{{now.rfc3339}}`. One `request.id` and one timestamp are shared across the body and headers of a response; UUID tokens are generated at each occurrence. Rendering is disabled by default and applies only to static handler bodies and headers, not plugin output or attacker-supplied request data. Unknown tokens remain literal. Rendering is capped at 1 MiB; if expansion would exceed that bound, the configured response is left unchanged rather than truncated.
+
 Try the [first service](../../getting-started/first-service) and the [HTTP recipe](../../recipes/http-decoy).
