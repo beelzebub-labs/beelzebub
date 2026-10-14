@@ -28,7 +28,7 @@
     "fumadocs-ui": "^16.15.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "takumi-js": "2.13.3"
   },
   "devDependencies": {
