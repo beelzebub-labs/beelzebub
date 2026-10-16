@@ -36,6 +36,7 @@ type Builder struct {
 	logsFile                       *os.File
 	startedServices                []plugin.ServicePlugin
 	servicesCancel                 context.CancelFunc
+	durableEvents                  *plugins.DurableEvents
 }
 
 func (b *Builder) setTraceStrategy(traceStrategy tracer.Strategy) {
@@ -89,6 +90,10 @@ func (b *Builder) buildRabbitMQ(rabbitMQURI string) error {
 }
 
 func (b *Builder) Close() error {
+	if b.durableEvents != nil {
+		b.durableEvents.Close()
+	}
+
 	// Stop background service plugins first so their goroutines drain before
 	// other teardown.
 	if b.servicesCancel != nil {
@@ -117,14 +122,23 @@ func (b *Builder) Close() error {
 	return nil
 }
 
-func (b *Builder) Run() error {
+func (b *Builder) Run() (runErr error) {
+	if err := b.startDurableEvents(); err != nil {
+		return err
+	}
+
+	defer func() {
+		if runErr != nil && b.durableEvents != nil {
+			b.durableEvents.Close()
+		}
+	}()
 	fmt.Println(
 		`
-██████  ███████ ███████ ██      ███████ ███████ ██████  ██    ██ ██████  
-██   ██ ██      ██      ██         ███  ██      ██   ██ ██    ██ ██   ██ 
-██████  █████   █████   ██        ███   █████   ██████  ██    ██ ██████  
-██   ██ ██      ██      ██       ███    ██      ██   ██ ██    ██ ██   ██ 
-██████  ███████ ███████ ███████ ███████ ███████ ██████   ██████  ██████  
+██████  ███████ ███████ ██      ███████ ███████ ██████  ██    ██ ██████
+██   ██ ██      ██      ██         ███  ██      ██   ██ ██    ██ ██   ██
+██████  █████   █████   ██        ███   █████   ██████  ██    ██ ██████
+██   ██ ██      ██      ██       ███    ██      ██   ██ ██    ██ ██   ██
+██████  ███████ ███████ ███████ ███████ ███████ ██████   ██████  ██████
 Deception runtime framework, happy hacking!`)
 	// Init Prometheus openmetrics
 	go func() {
@@ -158,6 +172,9 @@ Deception runtime framework, happy hacking!`)
 
 	// Init Tracer strategies, and set the trace strategy default HTTP
 	protocolManager := protocols.InitProtocolManager(b.traceStrategy, hypertextTransferProtocolStrategy)
+	if b.durableEvents != nil {
+		protocolManager.SetTracer(tracer.NewDurableTracer(b.durableEvents.Enqueue))
+	}
 
 	if b.beelzebubCoreConfigurations.Core.BeelzebubCloud.Enabled {
 		conf := b.beelzebubCoreConfigurations.Core.BeelzebubCloud
@@ -195,6 +212,23 @@ Deception runtime framework, happy hacking!`)
 		}
 	}
 
+	return nil
+}
+
+func (b *Builder) startDurableEvents() error {
+	conf := b.beelzebubCoreConfigurations.Core.BeelzebubCloud
+	if !conf.Enabled || conf.EventSpoolDir == "" {
+		return nil
+	}
+
+	delivery, err := plugins.NewDurableEvents(conf.URI, conf.AuthToken, conf.EventSpoolDir, conf.EventSpoolMaxBytes, conf.EventSpoolMaxRecords)
+
+	if err != nil {
+		return fmt.Errorf("opening durable event spool: %w", err)
+	}
+
+	b.durableEvents = delivery
+	delivery.Start()
 	return nil
 }
 

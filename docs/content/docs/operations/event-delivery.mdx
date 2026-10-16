@@ -1,0 +1,50 @@
+---
+title: Durable Event Delivery
+description: Retain optional Platform events on disk and recover pending delivery after sensor restarts.
+---
+
+## Enable Durable Delivery
+
+Durable delivery is opt-in for Cloud event reporting. Set `BEELZEBUB_EVENT_SPOOL_DIR` to a persistent, writable directory and enable the existing Cloud integration with its URI and token. An unset or empty spool directory preserves the existing delivery behavior. Configuration retrieval and configuration polling behavior are unchanged; this option addresses event delivery only.
+
+| Variable | Default | Behavior |
+| --- | --- | --- |
+| `BEELZEBUB_EVENT_SPOOL_DIR` | Empty; disabled | Persistent spool directory; the deployment examples use `/var/lib/beelzebub/events` |
+| `BEELZEBUB_EVENT_SPOOL_MAX_BYTES` | `1073741824` (1 GiB) | Storage budget including pending, temporary, and quarantined records |
+| `BEELZEBUB_EVENT_SPOOL_MAX_RECORDS` | `100000` | Record budget including pending, temporary, and quarantined records |
+
+Use one sensor process per spool. Give the sensor's runtime user read, write, and directory traversal permission on the mount, and read/traversal access to its ancestors for directory syncing. New directories use mode `0700` (with inherited setgid where applicable), and new records use `0600`; treat their contents as sensitive captured traffic. Existing directory permissions are preserved. A non-root deployment must provision the volume with the correct ownership or a compatible Kubernetes `fsGroup`; a root-owned, group-writable mount with mode `02775` is supported without requiring the sensor to chmod it. Restrict the mount's group to trusted operators. Avoid network filesystems unless their locking, atomic rename, and fsync guarantees are established. The volume must have enough free space for the configured budget and filesystem overhead.
+
+## Delivery And Retry Behavior
+
+Capture assigns each event a stable EventKey, preserving the session ID as a separate field. The event passes through synchronous durable storage before capture reports acceptance; the upstream tracer memory queue does not acknowledge it first. Initialization creates missing spool ancestors from the root down and syncs each parent entry before proceeding, including existing entries that an earlier interrupted initialization may have left unsynced. A directory-sync failure prevents startup and acceptance. New records retain the original serialized request in a versioned envelope. Writes sync the file, rename it atomically, and sync the directory before acceptance. The delivery worker replays pending records after restart and preserves the payload and identity across retries.
+
+HTTP 200 acknowledges an event. If the response supplies an EventKey, it must match the pending event before removal. For compatibility, legacy HTTP 200 responses without EventKey also acknowledge delivery; this cannot establish server-side durability or deduplication. Other success statuses are retained for investigation and retry.
+
+Acknowledgements may contain the full accepted EventDTO, including large captured fields. The worker reads their JSON incrementally and checks the top-level EventKey regardless of its position. Its response byte budget scales with the posted event, allowing sixfold JSON escaping expansion plus 64 KiB of envelope headroom. An incomplete, mismatched, or oversized response leaves the original event queued.
+
+Requests time out after ten seconds. Network failures, HTTP 408, 429, and 5xx retry with exponential backoff and jitter from one to thirty seconds. Valid `Retry-After` guidance can delay retries up to fifteen minutes. HTTP 401/403 and unexpected statuses retain the record and retry slowly, every sixty seconds, with actionable diagnostics. Logs exclude credentials and response bodies.
+
+HTTP 400/409/413/422 preserves the original record in `quarantine/` and allows later pending records to proceed. The filename records its rejection reason and HTTP status. Corrupt records and incomplete temporary writes are also retained in quarantine; complete temporary writes are recovered. Quarantine is diagnostic storage and is not automatically resubmitted.
+
+Disk errors and a full byte or record budget apply cancellation-aware capture backpressure rather than accepting events into an unbounded memory queue. An individual event larger than the entire configured byte budget fails capture explicitly. Shutdown cancels pending HTTP requests and waits without requiring the remote API to recover. Events that have not reached durable acceptance can still be lost on termination; producers must observe capture failures. Accepted pending events remain on disk.
+
+HTTP and MCP capture use the request context; SSH uses its session or authentication context. Ordinary TCP capture observes its service context and configured connection deadline, and TELNET capture observes its configured session deadline. TCP attempt events emitted after a read ends, final buffered interactions, and TCP/SSH/TELNET session-end events get a fresh five-second capture window so an expired connection context does not discard teardown evidence. Closing the spool still cancels that capture immediately. Cancellation releases other blocked, unaccepted captures. Once an event is durably accepted, producer cancellation does not cancel its independent delivery worker. Existing tracer implementations remain supported; context-aware tracers implement the optional `ContextTracer` interface and producers bind their lifetime with `tracer.WithContext`.
+
+The sensor counts retained bytes and records at startup, then updates those totals as writes and removals happen. Capturing an event does not enumerate the backlog or quarantine. A separate worker reconciles filesystem usage without holding the capture mutex, once per minute and on capacity pressure, with pressure scans limited to one per second. A scan racing a write or removal is discarded and retried. Moving resolved quarantine records out of the spool therefore releases capacity after reconciliation; do not add or rewrite spool records while the sensor is running.
+
+## Restart And Identity Guarantees
+
+Delivery is at least once after durable acceptance. Pending events survive process crashes, SIGKILL, and container recreation when the same persistent storage is retained. Deleting the volume, permanent disk loss, and failures before durable acceptance are outside that guarantee. Storage hardware must honor fsync.
+
+A server can accept an event before its HTTP acknowledgement is lost, or the sensor can crash after acknowledgement before durable removal. Both cases can replay the same EventKey. A compatible Platform deduplicates unchanged events using that identity; legacy servers and downstream effects can produce duplicates. This sensor option does not promise exactly-once processing or durable storage within other services.
+
+Retain the same Platform endpoint and sensor token while replaying a backlog. New spool records bind replay to the original endpoint/token identity without storing credentials. A changed identity holds those records for operator intervention. Restore the original configuration to resume delivery; do not edit identities or generate replacement keys blindly. A Platform that binds idempotency to the sensor token can reject replay under a replacement token. Drain the spool before rotating tokens where possible. Legacy raw JSON records from the cloud sensor patch are readable and bind to the current configuration because they lack stored endpoint/token identity.
+
+## Operator Recovery
+
+Monitor pending age and count, quarantine growth, filesystem free space, and delivery diagnostics. A running worker does not establish successful delivery. Preserve records and their volume while restoring connectivity, credentials, storage access, or capacity. Increasing the budget requires enough underlying volume capacity and a sensor restart with the updated limits.
+
+Inspect rejected or corrupt records only through restricted tooling; never paste captured credentials or payloads into logs or public reports. Keep an original copy before repair. Quarantine contributes to capacity, so move resolved diagnostic records to protected archival storage under an explicit retention policy. Correct the rejection cause before deliberately replaying a record, retaining the original event key, payload, endpoint, and token. Do not purge pending files to clear an alert.
+
+Use the [Compose override](/operations/docker#durable-cloud-events) or [Helm persistence options](/operations/kubernetes#durable-cloud-events) to retain the spool across container or pod replacement.

@@ -17,6 +17,7 @@ import (
 )
 
 type EventDTO struct {
+	EventKey        string `json:",omitempty"`
 	DateTime        string
 	RemoteAddr      string
 	Protocol        string
@@ -207,6 +208,7 @@ func (beelzebubCloud *beelzebubCloud) verifyConfigurationsChanged() error {
 
 func (beelzebubCloud *beelzebubCloud) mapToEventDTO(event tracer.Event) (EventDTO, error) {
 	eventDTO := EventDTO{
+		EventKey:        event.EventKey,
 		DateTime:        event.DateTime,
 		RemoteAddr:      event.RemoteAddr,
 		Protocol:        event.Protocol,

@@ -36,6 +36,7 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 			IdleTimeout: time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second,
 			Version:     servConf.ServerVersion,
 			Handler: func(sess ssh.Session) {
+				tr := tracer.WithContext(sess.Context(), tr)
 				uuidSession := uuid.New()
 
 				host, port, _ := net.SplitHostPort(sess.RemoteAddr().String())
@@ -172,7 +173,7 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 					}
 				}
 
-				tr.TraceEvent(tracer.Event{
+				tracer.TraceFinalEvent(sess.Context(), tr, tracer.Event{
 					Msg:      "End SSH Session",
 					Status:   tracer.End.String(),
 					ID:       uuidSession.String(),
@@ -180,6 +181,7 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 				})
 			},
 			PasswordHandler: func(ctx ssh.Context, password string) bool {
+				tr := tracer.WithContext(ctx, tr)
 				host, port, _ := net.SplitHostPort(ctx.RemoteAddr().String())
 
 				tr.TraceEvent(tracer.Event{
