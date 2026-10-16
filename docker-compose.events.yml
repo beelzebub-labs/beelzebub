@@ -1,0 +1,14 @@
+services:
+  beelzebub:
+    environment:
+      BEELZEBUB_EVENT_SPOOL_DIR: /var/lib/beelzebub/events
+      BEELZEBUB_EVENT_SPOOL_MAX_BYTES: ${BEELZEBUB_EVENT_SPOOL_MAX_BYTES:-1073741824}
+      BEELZEBUB_EVENT_SPOOL_MAX_RECORDS: ${BEELZEBUB_EVENT_SPOOL_MAX_RECORDS:-100000}
+
+    volumes:
+      - beelzebub-event-spool:/var/lib/beelzebub/events
+
+volumes:
+  beelzebub-event-spool:
+    external: true
+    name: ${BEELZEBUB_EVENT_SPOOL_VOLUME:-beelzebub-event-spool}

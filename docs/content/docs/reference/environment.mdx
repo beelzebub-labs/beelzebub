@@ -18,6 +18,9 @@ Non-empty runtime environment values override core YAML. Boolean values use Go's
 | `BEELZEBUB_CLOUD_ENABLED` | boolean | Enable optional Cloud reporting |
 | `BEELZEBUB_CLOUD_URI` | string | Cloud endpoint |
 | `BEELZEBUB_CLOUD_AUTH_TOKEN` | secret string | Cloud credential |
+| `BEELZEBUB_EVENT_SPOOL_DIR` | string | Opt-in persistent Cloud event spool directory; empty disables durable delivery |
+| `BEELZEBUB_EVENT_SPOOL_MAX_BYTES` | positive integer | Spool storage budget; default `1073741824` bytes including quarantine |
+| `BEELZEBUB_EVENT_SPOOL_MAX_RECORDS` | positive integer | Spool record budget; default `100000` including quarantine |
 | `BEELZEBUB_SERVICES_CONFIG` | JSON array | Replace service-directory loading with inline service objects |
 | `OPEN_AI_SECRET_KEY` | secret string | OpenAI credential used by the LLM integration |
 | `BEELZEBUB_GITHUB_TOKEN` | secret string | Private GitHub repository credential for plugin commands and the installer |
