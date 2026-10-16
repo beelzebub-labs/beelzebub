@@ -5,6 +5,8 @@ description: Connect RabbitMQ, Prometheus, LLM providers, and Beelzebub Cloud wi
 
 RabbitMQ is configured under `core.tracings.rabbit-mq`. Beelzebub Cloud uses `core.beelzebub-cloud` or `BEELZEBUB_CLOUD_*` variables and requires both a URI and authorization token. The installer can verify the Cloud endpoint and writes credentials to a private `.env` file.
 
+For optional disk-backed Cloud event delivery, set `BEELZEBUB_EVENT_SPOOL_DIR` to retained storage. See [durable event delivery](/operations/event-delivery) for configuration, failure behavior, and recovery. This option does not change Cloud configuration retrieval or polling.
+
 LLM providers are configured per service. OpenAI uses `OPEN_AI_SECRET_KEY`; Ollama uses a configured `host`. Keep provider egress allowlisted and document what captured input is sent to each provider.
 
 These integrations are optional and are not required for a local static-handler deployment.

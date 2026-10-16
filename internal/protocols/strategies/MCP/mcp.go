@@ -68,6 +68,7 @@ func (mcpStrategy *MCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 		tool := mcp.NewTool(toolConfig.Name, opts...)
 
 		mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			tr := tracer.WithContext(ctx, tr)
 			host, port, _ := net.SplitHostPort(ctx.Value(remoteAddrCtxKey{}).(string))
 
 			tr.TraceEvent(tracer.Event{

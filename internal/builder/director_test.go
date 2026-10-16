@@ -1,6 +1,8 @@
 package builder
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -42,12 +44,17 @@ func TestBuildBeelzebub_StoresServicesConfig(t *testing.T) {
 }
 
 func TestBuildBeelzebub_BeelzebubCloud(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	defer server.Close()
 	b := NewBuilder()
 	d := NewDirector(b)
 
 	coreConfig := &parser.BeelzebubCoreConfigurations{}
 	coreConfig.Core.BeelzebubCloud.Enabled = true
-	coreConfig.Core.BeelzebubCloud.URI = "http://localhost:8080"
+	coreConfig.Core.BeelzebubCloud.URI = server.URL
 	coreConfig.Core.BeelzebubCloud.AuthToken = "token"
 
 	result, err := d.BuildBeelzebub(coreConfig, nil)

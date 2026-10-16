@@ -79,6 +79,11 @@ func (telnetStrategy *TelnetStrategy) Init(servConf parser.BeelzebubServiceConfi
 
 func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, telnetStrategy *TelnetStrategy) {
 	defer conn.Close()
+	if servConf.DeadlineTimeoutSeconds > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(servConf.DeadlineTimeoutSeconds)*time.Second)
+		defer cancel()
+		tr = tracer.WithContext(ctx, tr)
+	}
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
@@ -281,7 +286,7 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 	}
 
 	// Trace session end
-	tr.TraceEvent(tracer.Event{
+	tracer.TraceFinalEvent(context.Background(), tr, tracer.Event{
 		Msg:      "End TELNET Session",
 		Status:   tracer.End.String(),
 		ID:       uuidSession.String(),
