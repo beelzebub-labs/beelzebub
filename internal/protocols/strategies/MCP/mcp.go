@@ -3,14 +3,15 @@ package MCP
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
+
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
-	"net"
-	"net/http"
 )
 
 type remoteAddrCtxKey struct{}
@@ -19,6 +20,12 @@ type MCPStrategy struct {
 }
 
 func (mcpStrategy *MCPStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
+	return mcpStrategy.initServer(servConf, tr, func(httpServer *server.StreamableHTTPServer) error {
+		return httpServer.Start(servConf.Address)
+	})
+}
+
+func (mcpStrategy *MCPStrategy) initServer(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, serve func(*server.StreamableHTTPServer) error) error {
 	mcpServer := server.NewMCPServer(
 		servConf.Description,
 		"1.0.0",
@@ -94,7 +101,8 @@ func (mcpStrategy *MCPStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 				return context.WithValue(ctx, remoteAddrCtxKey{}, r.RemoteAddr)
 			}),
 		)
-		if err := httpServer.Start(servConf.Address); err != nil {
+
+		if err := serve(httpServer); err != nil {
 			log.Errorf("Failed to start MCP server on %s: %v", servConf.Address, err)
 			return
 		}

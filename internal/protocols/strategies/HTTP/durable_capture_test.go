@@ -16,6 +16,7 @@ import (
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
+	"github.com/beelzebub-labs/beelzebub/v3/internal/testutil/durabletest"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/stretchr/testify/require"
 )
@@ -156,4 +157,64 @@ func TestDisconnectedHTTPClientsReleaseAllBlockedCaptures(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(directory, "*.json"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
+}
+
+func TestHTTPAndHTTPSCaptureReplayWithAndWithoutSpool(t *testing.T) {
+	for _, durable := range []bool{false, true} {
+		for _, mode := range []string{"http", "https", "fallback", "method-rejected"} {
+			name := "legacy-" + mode
+			if durable {
+				name = "durable-" + mode
+			}
+			t.Run(name, func(t *testing.T) {
+				recorded := &mockTracer{}
+				var capture tracer.Tracer = recorded
+				var replay *durabletest.Capture
+				if durable {
+					replay = durabletest.New(t)
+					capture = replay.Tracer
+				}
+				conf := captureConfiguration()
+				wantStatus := http.StatusOK
+				wantBody := "synthetic body"
+				if mode == "fallback" {
+					conf.FallbackCommand = conf.Commands[0]
+					conf.Commands = nil
+				}
+				if mode == "method-rejected" {
+					conf.Commands[0].Methods = []string{http.MethodGet}
+					wantStatus = http.StatusMethodNotAllowed
+					wantBody = ""
+				}
+				handler := newHTTPHandler(conf, capture)
+				server := httptest.NewUnstartedServer(handler)
+				if mode == "https" {
+					server.StartTLS()
+				} else {
+					server.Start()
+				}
+				t.Cleanup(server.Close)
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/capture", strings.NewReader("synthetic body"))
+				require.NoError(t, err)
+				resp, err := server.Client().Do(req)
+				require.NoError(t, err)
+				_, err = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				require.NoError(t, err)
+				require.Equal(t, wantStatus, resp.StatusCode)
+				events := recorded.events
+				if durable {
+					events = replay.Events()
+					replay.VerifyReplay()
+				}
+				require.Len(t, events, 1)
+				require.Equal(t, "HTTP", events[0].Protocol)
+				require.Equal(t, http.MethodPost, events[0].HTTPMethod)
+				require.Equal(t, "/capture", events[0].RequestURI)
+				require.Equal(t, wantBody, events[0].Body)
+			})
+		}
+	}
 }

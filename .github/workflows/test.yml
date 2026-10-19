@@ -32,8 +32,8 @@ jobs:
       - name: Unit Tests
 
         run: |
-          go test ./... -v -race -coverprofile coverage.tmp.out -covermode atomic
-          go tool cover -func coverage.tmp.out
+          go test ./... -v -race -coverpkg=./... -coverprofile coverage.out -covermode atomic
+          go tool cover -func coverage.out
 
       - name: Quality Gate
 
@@ -41,18 +41,21 @@ jobs:
           TESTCOVERAGE_THRESHOLD: 80
 
         run: |
-          grep -v "mcp.go" coverage.tmp.out \
+          grep -v "mcp.go" coverage.out \
           | grep -v "ssh.go" \
           | grep -v "http.go" \
           | grep -v "telnet.go" \
           | grep -v "tcp.go" \
           | grep -v "builder.go" \
-          | grep -v "director.go" > coverage.out
+          | grep -v "director.go" > gate.out
 
-          tc=$(go tool cover -func=coverage.out | grep total | grep -Eo '[0-9]+\.[0-9]+')
+          tc=$(go tool cover -func=gate.out | grep total | grep -Eo '[0-9]+\.[0-9]+')
 
           awk -v total="$tc" -v threshold="$TESTCOVERAGE_THRESHOLD" \
             'BEGIN { exit !(total > threshold) }'
+
+      - name: Protocol File Coverage Gate
+        run: python3 scripts/check-protocol-coverage.py coverage.out --minimum 80
 
       - name: Upload Coverage Reports To Codecov
         uses: codecov/codecov-action@v7

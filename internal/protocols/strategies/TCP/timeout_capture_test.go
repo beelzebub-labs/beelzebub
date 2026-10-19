@@ -2,17 +2,15 @@ package TCP
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
-	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
+	"github.com/beelzebub-labs/beelzebub/v3/internal/testutil/durabletest"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/stretchr/testify/require"
 )
@@ -32,13 +30,10 @@ func TestTCPTimeoutCapturePreservesAllAttemptsAndSessionEnds(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				recorded := &mockTracer{}
 				var capture tracer.Tracer = recorded
-				var directory string
+				var replay *durabletest.Capture
 				if durable {
-					directory = t.TempDir()
-					spool, err := plugins.NewDurableEvents("http://127.0.0.1:1", "synthetic-token", directory, 0, 0)
-					require.NoError(t, err)
-					t.Cleanup(spool.Close)
-					capture = tracer.NewDurableTracer(spool.Enqueue)
+					replay = durabletest.New(t)
+					capture = replay.Tracer
 				}
 
 				config := parser.BeelzebubServiceConfiguration{Protocol: "tcp", DeadlineTimeoutSeconds: 1}
@@ -64,18 +59,8 @@ func TestTCPTimeoutCapturePreservesAllAttemptsAndSessionEnds(t *testing.T) {
 
 				events := recorded.snapshot()
 				if durable {
-					paths, err := filepath.Glob(filepath.Join(directory, "*.json"))
-					require.NoError(t, err)
-					for _, path := range paths {
-						body, err := os.ReadFile(path)
-						require.NoError(t, err)
-						var record struct {
-							Payload tracer.Event `json:"payload"`
-						}
-
-						require.NoError(t, json.Unmarshal(body, &record))
-						events = append(events, record.Payload)
-					}
+					events = replay.Events()
+					replay.VerifyReplay()
 				}
 
 				counts := map[string]int{}

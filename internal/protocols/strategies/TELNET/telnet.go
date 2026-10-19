@@ -79,16 +79,26 @@ func (telnetStrategy *TelnetStrategy) Init(servConf parser.BeelzebubServiceConfi
 
 func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, telnetStrategy *TelnetStrategy) {
 	defer conn.Close()
+	ctx := context.Background()
 	if servConf.DeadlineTimeoutSeconds > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(servConf.DeadlineTimeoutSeconds)*time.Second)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(servConf.DeadlineTimeoutSeconds)*time.Second)
 		defer cancel()
-		tr = tracer.WithContext(ctx, tr)
 	}
+	tr = tracer.WithContext(ctx, tr)
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
 	// Drain any unsolicited client negotiation requests
 	negotiateTelnet(conn)
+	// Negotiation clears its temporary read deadline. Restore the connection
+	// lifetime so an idle read can finish and persist the session-end event.
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			log.Debugf("set TELNET connection deadline failed: %v", err)
+			return
+		}
+	}
 
 	// Authentication phase
 	_, err := conn.Write([]byte("\r\nlogin: "))
@@ -286,7 +296,7 @@ func handleTelnetConnection(conn net.Conn, servConf parser.BeelzebubServiceConfi
 	}
 
 	// Trace session end
-	tracer.TraceFinalEvent(context.Background(), tr, tracer.Event{
+	tracer.TraceFinalEvent(ctx, tr, tracer.Event{
 		Msg:      "End TELNET Session",
 		Status:   tracer.End.String(),
 		ID:       uuidSession.String(),
