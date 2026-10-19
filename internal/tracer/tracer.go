@@ -3,6 +3,7 @@ package tracer
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -278,7 +279,11 @@ func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) error 
 
 	if sink != nil {
 		if event.EventKey == "" {
-			event.EventKey = uuid.NewString()
+			key, err := uuid.NewV7()
+			if err != nil {
+				return fmt.Errorf("generate durable event key: %w", err)
+			}
+			event.EventKey = key.String()
 		}
 
 		event.DateTime = time.Now().UTC().Format(time.RFC3339Nano)

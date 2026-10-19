@@ -367,7 +367,13 @@ func (d *DurableEvents) Enqueue(ctx context.Context, event tracer.Event) error {
 	}
 
 	if event.EventKey == "" {
-		event.EventKey = uuid.NewString()
+		key, err := uuid.NewV7()
+
+		if err != nil {
+			return fmt.Errorf("generate durable event key: %w", err)
+		}
+
+		event.EventKey = key.String()
 	}
 
 	if _, err := uuid.Parse(event.EventKey); err != nil {
@@ -895,58 +901,46 @@ func (d *DurableEvents) removeRecord(path string) error {
 
 func (d *DurableEvents) run() {
 	retry := d.retryBase
+	var pending []eventReplayEntry
 	for d.ctx.Err() == nil {
-		failed := false
-		found := false
-		var requested time.Duration
-
-		// Stop a scan at its first retryable failure to avoid an outage causing a
-		// request storm. Enqueue never wakes or shortens this retry delay.
-		stop := errors.New("retry pending")
-		err := walkEventFiles(d.directory, func(path string, entry os.DirEntry) error {
-			if d.ctx.Err() != nil {
-				return stop
+		var err error
+		if len(pending) == 0 {
+			pending, err = d.oldestPendingEvents(eventReplayBatchSize)
+			if err != nil {
+				log.Error("Unable to scan event spool; records retained")
 			}
-
-			if !strings.HasSuffix(entry.Name(), ".json") {
-				return nil
-			}
-
-			found = true
-			delay, complete := d.deliver(path)
-			if !complete {
-				failed = true
-				requested = delay
-				return stop
-			}
-
-			return nil
-		})
-
-		if err != nil && !errors.Is(err, stop) {
-			failed = true
-			log.Error("Unable to scan event spool; records retained")
 		}
 
-		if failed {
-			delay := retry/2 + time.Duration(rand.Int64N(max(1, int64(retry/2))))
-			if !d.wait(d.ctx, max(delay, requested)) {
-				return
-			}
-
-			retry = min(retry*2, d.retryCap)
-		} else {
-			retry = d.retryBase
-			if found {
-				continue
-			}
-
+		if err == nil && len(pending) == 0 {
 			select {
 			case <-d.ctx.Done():
 				return
 			case <-d.wake:
 			case <-time.After(d.retryBase):
 			}
+			continue
 		}
+
+		var requested time.Duration
+		if err == nil {
+			var complete bool
+			requested, complete = d.deliver(filepath.Join(d.directory, pending[0].name))
+			if complete {
+				// Keep only filenames/order metadata, never queued event payloads.
+				pending[0] = eventReplayEntry{}
+				pending = pending[1:]
+				retry = d.retryBase
+				continue
+			}
+		}
+
+		// Retry the same head before advancing. Retain the batch during an
+		// outage rather than repeatedly scanning/sorting the whole backlog.
+		// Enqueue never wakes or shortens this retry delay.
+		delay := retry/2 + time.Duration(rand.Int64N(max(1, int64(retry/2))))
+		if !d.wait(d.ctx, max(delay, requested)) {
+			return
+		}
+		retry = min(retry*2, d.retryCap)
 	}
 }

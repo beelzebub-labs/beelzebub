@@ -52,6 +52,19 @@ func TestDurableLargeAcknowledgementsDrainFollowingEvents(t *testing.T) {
 	}
 }
 
+func TestAcknowledgementRejectsTruncatedObjectsAndTransportErrors(t *testing.T) {
+	for _, body := range []string{`{"EventKey":`, `{"EventKey":"key"`, `{42:0}`, `{"Body":[1,{"nested":`, `{"Body":[1,2`} {
+		_, _, err := readEventAcknowledgement(strings.NewReader(body))
+		require.Error(t, err, "incomplete structured acknowledgement must not release its event: %s", body)
+	}
+	_, _, err := readEventAcknowledgement(failedAcknowledgementReader{})
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
+type failedAcknowledgementReader struct{}
+
+func (failedAcknowledgementReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
 func TestDurableLargeAcknowledgementsPreserveIdentityChecks(t *testing.T) {
 	for _, identity := range []string{`"wrong"`, `null`, `42`, `{"nested":"value"}`} {
 		t.Run(identity, func(t *testing.T) {

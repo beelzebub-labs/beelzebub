@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,8 +20,11 @@ func TestDurableCaptureWaitsBeforeAcceptance(t *testing.T) {
 	go func() { tr.TraceEvent(Event{ID: "synthetic-session", Protocol: "SSH"}); close(done) }()
 	event := <-entered
 	require.NotEmpty(t, event.EventKey)
+	key, err := uuid.Parse(event.EventKey)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), key.Version())
 	require.Equal(t, "synthetic-session", event.ID)
-	_, err := time.Parse(time.RFC3339Nano, event.DateTime)
+	_, err = time.Parse(time.RFC3339Nano, event.DateTime)
 	require.NoError(t, err)
 
 	select {
@@ -33,6 +37,35 @@ func TestDurableCaptureWaitsBeforeAcceptance(t *testing.T) {
 	<-done
 	require.Equal(t, 1, counters["total"].count)
 	require.Empty(t, tr.eventsChan)
+}
+
+func TestDurableCaptureMonotonicKeysAndExistingIdentity(t *testing.T) {
+	tr, _ := newTracerWithMockCounters(func(Event) { t.Error("used volatile strategy") })
+	var keys []uuid.UUID
+	tr.SetDurableSink(func(_ context.Context, event Event) error {
+		key, err := uuid.Parse(event.EventKey)
+		require.NoError(t, err)
+		keys = append(keys, key)
+		return nil
+	})
+
+	for range 512 {
+		require.NoError(t, tr.TraceEventContext(context.Background(), Event{}))
+	}
+
+	sameMillisecond := false
+	for i, key := range keys {
+		require.Equal(t, uuid.Version(7), key.Version())
+		if i > 0 {
+			require.Less(t, keys[i-1].String(), key.String())
+			sameMillisecond = sameMillisecond || keys[i-1].Time() == key.Time()
+		}
+	}
+
+	require.True(t, sameMillisecond, "exercise ordering within a millisecond")
+	existing := uuid.New()
+	require.NoError(t, tr.TraceEventContext(context.Background(), Event{EventKey: existing.String()}))
+	require.Equal(t, existing, keys[len(keys)-1], "never rewrite a supplied key")
 }
 
 func TestDurableCaptureFailureIsNotCounted(t *testing.T) {
@@ -128,4 +161,45 @@ func TestFinalCapturePreservesHealthyLegacyTracer(t *testing.T) {
 	cancel()
 	TraceFinalEvent(ctx, WithContext(ctx, capture), Event{Status: End.String()})
 	require.Equal(t, 1, capture.calls)
+}
+
+func TestLegacyDeliveryWithoutDurableSink(t *testing.T) {
+	delivered := make(chan Event, 1)
+	legacy := GetInstance(func(Event) {})
+	previous := legacy.GetStrategy()
+	legacy.SetStrategy(func(event Event) { delivered <- event })
+	t.Cleanup(func() { legacy.SetStrategy(previous) })
+	require.Nil(t, legacy.durableSink)
+	require.NoError(t, legacy.TraceEventContext(context.Background(), Event{ID: "synthetic-legacy", Protocol: "HTTP"}))
+
+	select {
+	case event := <-delivered:
+		require.Equal(t, "synthetic-legacy", event.ID)
+		require.Empty(t, event.EventKey, "legacy mode keeps its original wire shape")
+		_, err := time.Parse(time.RFC3339, event.DateTime)
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("legacy delivery stopped without a disk queue")
+	}
+}
+
+func TestLegacyQueueCancellationDoesNotCountUnacceptedEvent(t *testing.T) {
+	tr, counters := newTracerWithMockCounters(func(Event) {})
+	for range cap(tr.eventsChan) {
+		require.NoError(t, tr.TraceEventContext(context.Background(), Event{ID: "accepted"}))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, tr.TraceEventContext(ctx, Event{ID: "unaccepted"}), context.DeadlineExceeded)
+	require.Equal(t, cap(tr.eventsChan), counters["total"].count)
+	require.Len(t, tr.eventsChan, cap(tr.eventsChan))
+	require.ErrorIs(t, tr.TraceEventContext(ctx, Event{}), context.DeadlineExceeded)
+}
+
+func TestCaptureWithNilProducerContext(t *testing.T) {
+	capture := &legacyCapture{}
+	WithContext(nil, capture).TraceEvent(Event{})
+	TraceFinalEvent(nil, capture, Event{})
+	require.Equal(t, 2, capture.calls)
 }

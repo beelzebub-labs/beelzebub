@@ -154,8 +154,12 @@ def main():
         before = snapshot()
         assert len(before) >= 5, "every accepted capture must be pending during the outage"
         assert all(r["uid"] == 65532 and r["mode"] == 0o600 for r in before), "spool ownership/permissions"
+        assert all(uuid.UUID(r["key"]).version == 7 for r in before), "new captures must use UUIDv7"
         original = {record["key"]: record["wirePayload"] for record in before}
         assert len(original) == len(before), "individual captures must have distinct identities"
+        attempts = state()["attempts"]
+        assert len({attempt["key"] for attempt in attempts}) == 1, "outage retries must stay on the oldest event"
+        assert attempts[0]["key"] == min(original), "first capture must remain the replay head"
         print("HTTP 500/502/503/504 retained " + str(len(original)) + " events as UID 65532", flush=True)
 
         docker("kill", "--signal", "KILL", sensor)
@@ -174,6 +178,9 @@ def main():
                 assert attempt["payload"] == original[attempt["key"]]
 
         print("SIGKILL, container removal/recreation, original payload/key replay, and volume drain passed", flush=True)
+        replayed = [a["key"] for a in state()["attempts"] if a["status"] == 200 and a["key"] in original]
+        assert replayed == sorted(original), "retained UUIDv7 events must drain oldest first after recreation"
+        print("UUIDv7 identities and oldest-first replay across 5xx failures and restart passed", flush=True)
 
         fixture("trigger-large", "large-ack")
         eventually(lambda: not snapshot(), "large EventDTO acknowledgement draining")

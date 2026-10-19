@@ -10,6 +10,8 @@ It rebuilds the root Dockerfile locally, uses a synthetic Platform on a disposab
 internal network, and tests HTTP 500/502/503/504 retries, full EventDTO
 acknowledgements above 64 KiB, a lost acknowledgement,
 and SIGKILL followed by container removal/recreation with a retained named volume.
+It checks UUIDv7 generation, retries staying on the oldest pending event, and
+chronological key order when the recreated sensor drains that volume.
 The sensor runs as UID/GID 65532. No host ports or existing containers are used;
 only test-created containers, volume, network, and uniquely tagged image are removed.
 Configuration GET responses always succeed; configuration polling is outside this test.
