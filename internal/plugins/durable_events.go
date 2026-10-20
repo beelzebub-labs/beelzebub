@@ -358,10 +358,6 @@ func (d *DurableEvents) Close() {
 }
 
 func (d *DurableEvents) Enqueue(ctx context.Context, event tracer.Event) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
 	if d.ctx.Err() != nil {
 		return ErrEventSpoolClosed
 	}
@@ -405,15 +401,21 @@ func (d *DurableEvents) Enqueue(ctx context.Context, event tracer.Event) error {
 		return ErrEventTooLarge
 	}
 
-	warned := false
+	warned, attempted := false, false
 	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
+		// A complete event gets one durable admission attempt even if its
+		// producer disconnected. Cancellation still stops capacity/storage waits
+		// and every later attempt. The spool's own shutdown always takes priority.
 		if d.ctx.Err() != nil {
 			return ErrEventSpoolClosed
 		}
+
+		if attempted {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		attempted = true
 
 		d.mu.Lock()
 		err = d.enqueue(record.EventKey, body)

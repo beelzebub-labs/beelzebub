@@ -304,3 +304,23 @@ func TestMCPServerStartupFailureIsLogged(t *testing.T) {
 	defer cancel()
 	require.NoError(t, srv.Shutdown(ctx))
 }
+
+func TestCompletedMCPEventAdmitsCanceledContext(t *testing.T) {
+	replay := durabletest.New(t)
+	handler := configuredMCPHandler(t, replay.Tracer)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		require.NoError(t, handler.Shutdown(ctx))
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request, err := mcpCaptureRequest(ctx, "http://synthetic.test", "", "tools/call", mcp.LATEST_PROTOCOL_VERSION)
+	require.NoError(t, err)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	events := replay.Events()
+	require.Len(t, events, 1)
+	require.Equal(t, "MCP", events[0].Protocol)
+	replay.VerifyReplay()
+}

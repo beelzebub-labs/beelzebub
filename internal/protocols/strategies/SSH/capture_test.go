@@ -212,12 +212,15 @@ func TestSSHExpiredProducerContextStillCapturesSessionEnd(t *testing.T) {
 	t.Cleanup(strategy.Sessions.Close)
 	var events []tracer.Event
 	capture := tracer.NewDurableTracer(func(ctx context.Context, event tracer.Event) error {
-		require.NoError(t, ctx.Err(), "end capture must outlive the connection context")
-		require.Equal(t, "synthetic-value", ctx.Value(contextKey{}))
-		deadline, ok := ctx.Deadline()
-		require.True(t, ok)
-		require.Positive(t, time.Until(deadline))
-		require.LessOrEqual(t, time.Until(deadline), 5*time.Second)
+		if event.Status == tracer.End.String() {
+			require.NoError(t, ctx.Err(), "end capture must outlive the connection context")
+			require.Equal(t, "synthetic-value", ctx.Value(contextKey{}))
+			deadline, ok := ctx.Deadline()
+			require.True(t, ok)
+			require.Positive(t, time.Until(deadline))
+			require.LessOrEqual(t, time.Until(deadline), 5*time.Second)
+		}
+
 		events = append(events, event)
 		return nil
 	})
@@ -237,10 +240,13 @@ func TestSSHExpiredProducerContextStillCapturesSessionEnd(t *testing.T) {
 
 	t.Cleanup(func() { srv.Close() })
 	require.True(t, srv.PasswordHandler(ctx, "synthetic-password"))
-	require.Empty(t, events, "expired authentication capture must not enter durable storage")
-	srv.Handler(expiredSSHSession{ctx: ctx})
+	// Already built authentication/start events still get one admission attempt.
 	require.Len(t, events, 1)
-	require.Equal(t, "End", events[0].Status)
+	require.Equal(t, "Stateless", events[0].Status)
+	srv.Handler(expiredSSHSession{ctx: ctx})
+	require.Len(t, events, 3)
+	require.Equal(t, "Start", events[1].Status)
+	require.Equal(t, "End", events[2].Status)
 }
 
 func TestSSHBlockedAuthenticationCaptureHonorsCancellationAndTimeout(t *testing.T) {

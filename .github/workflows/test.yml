@@ -27,7 +27,7 @@ jobs:
         run: go mod download
 
       - name: Validate Config Schemas
-        run: make validate-specs
+        run: make validate.specs
 
       - name: Unit Tests
 

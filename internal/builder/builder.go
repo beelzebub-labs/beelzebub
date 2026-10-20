@@ -27,16 +27,31 @@ import (
 
 const RabbitmqQueueName = "event"
 
+// eventChannel is the AMQP surface used for delivery; the real channel and
+// test publishers share the same routing and resource-lifetime contract.
+type eventChannel interface {
+	QueueDeclare(string, bool, bool, bool, bool, amqp.Table) (amqp.Queue, error)
+	PublishWithContext(context.Context, string, string, bool, bool, amqp.Publishing) error
+	Close() error
+}
+
+type cloudEventSender interface {
+	SendEvent(tracer.Event) (bool, error)
+	Stop()
+}
+
 type Builder struct {
 	beelzebubServicesConfiguration []parser.BeelzebubServiceConfiguration
 	beelzebubCoreConfigurations    *parser.BeelzebubCoreConfigurations
 	traceStrategy                  tracer.Strategy
-	rabbitMQChannel                *amqp.Channel
+	rabbitMQChannel                eventChannel
 	rabbitMQConnection             *amqp.Connection
 	logsFile                       *os.File
 	startedServices                []plugin.ServicePlugin
 	servicesCancel                 context.CancelFunc
 	durableEvents                  *plugins.DurableEvents
+	cloudSender                    cloudEventSender
+	cloudPollingStop               func()
 }
 
 func (b *Builder) setTraceStrategy(traceStrategy tracer.Strategy) {
@@ -93,6 +108,12 @@ func (b *Builder) Close() error {
 	if b.durableEvents != nil {
 		b.durableEvents.Close()
 	}
+	if b.cloudSender != nil {
+		b.cloudSender.Stop()
+	}
+	if b.cloudPollingStop != nil {
+		b.cloudPollingStop()
+	}
 
 	// Stop background service plugins first so their goroutines drain before
 	// other teardown.
@@ -130,6 +151,9 @@ func (b *Builder) Run() (runErr error) {
 	defer func() {
 		if runErr != nil && b.durableEvents != nil {
 			b.durableEvents.Close()
+		}
+		if runErr != nil && b.cloudPollingStop != nil {
+			b.cloudPollingStop()
 		}
 	}()
 	fmt.Println(
@@ -180,6 +204,7 @@ Deception runtime framework, happy hacking!`)
 		conf := b.beelzebubCoreConfigurations.Core.BeelzebubCloud
 
 		beelzebubCloud := plugins.InitBeelzebubCloud(conf.URI, conf.AuthToken, true)
+		b.cloudPollingStop = beelzebubCloud.Stop
 
 		if honeypotsConfiguration, _, err := beelzebubCloud.GetHoneypotsConfigurations(); err != nil {
 			return err
@@ -237,6 +262,7 @@ func (b *Builder) build() *Builder {
 		beelzebubServicesConfiguration: b.beelzebubServicesConfiguration,
 		traceStrategy:                  b.traceStrategy,
 		beelzebubCoreConfigurations:    b.beelzebubCoreConfigurations,
+		cloudSender:                    b.cloudSender,
 	}
 }
 

@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/plugins"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
@@ -39,6 +40,8 @@ func (d *Director) BuildBeelzebub(beelzebubCoreConfigurations *parser.BeelzebubC
 	}
 
 	if beelzebubCoreConfigurations.Core.BeelzebubCloud.Enabled {
+		conf := beelzebubCoreConfigurations.Core.BeelzebubCloud
+		d.builder.cloudSender = plugins.InitBeelzebubCloud(conf.URI, conf.AuthToken, false)
 		d.builder.setTraceStrategy(d.beelzebubCloudStrategy)
 	}
 
@@ -58,11 +61,12 @@ func (d *Director) beelzebubCloudStrategy(event tracer.Event) {
 		"event":  event,
 	}).Info("New Event")
 
-	conf := d.builder.beelzebubCoreConfigurations.Core.BeelzebubCloud
+	if d.builder.cloudSender == nil {
+		log.Error("Cloud event sender is not initialized")
+		return
+	}
 
-	beelzebubCloud := plugins.InitBeelzebubCloud(conf.URI, conf.AuthToken, false)
-
-	result, err := beelzebubCloud.SendEvent(event)
+	result, err := d.builder.cloudSender.SendEvent(event)
 	if err != nil {
 		log.Error(err.Error())
 	} else {

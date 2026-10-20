@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,10 @@ import (
 )
 
 const Workers = 5
+
+// LegacyQueueStallTimeout bounds a volatile queue that stops making progress.
+// Client cancellation cannot discard a completed event while workers drain it.
+const LegacyQueueStallTimeout = 5 * time.Second
 
 type Event struct {
 	EventKey   string `json:",omitempty"`
@@ -141,15 +146,11 @@ func TraceFinalEvent(ctx context.Context, capture Tracer, event Event) {
 
 func (t *contextualTracer) TraceEvent(event Event) {
 	if err := t.TraceEventContext(t.ctx, event); err != nil {
-		log.Error("Event was not accepted by capture; producer canceled or spool unavailable")
+		log.Error("Event was not accepted by capture; check storage, admission timeout, and shutdown state")
 	}
 }
 
 func (t *contextualTracer) TraceEventContext(ctx context.Context, event Event) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
 	if capture, ok := t.capture.(ContextTracer); ok {
 		return capture.TraceEventContext(ctx, event)
 	}
@@ -159,17 +160,20 @@ func (t *contextualTracer) TraceEventContext(ctx context.Context, event Event) e
 }
 
 type tracer struct {
-	strategy          Strategy
-	eventsChan        chan Event
-	eventsTotal       prometheus.Counter
-	eventsSSHTotal    prometheus.Counter
-	eventsTCPTotal    prometheus.Counter
-	eventsHTTPTotal   prometheus.Counter
-	eventsMCPTotal    prometheus.Counter
-	eventsTelnetTotal prometheus.Counter
+	strategy             Strategy
+	eventsChan           chan Event
+	eventsTotal          prometheus.Counter
+	eventsSSHTotal       prometheus.Counter
+	eventsTCPTotal       prometheus.Counter
+	eventsHTTPTotal      prometheus.Counter
+	eventsMCPTotal       prometheus.Counter
+	eventsTelnetTotal    prometheus.Counter
+	captureFailuresTotal prometheus.Counter
 
-	strategyMutex sync.RWMutex
-	durableSink   func(context.Context, Event) error
+	strategyMutex      sync.RWMutex
+	durableSink        func(context.Context, Event) error
+	legacyStallTimeout time.Duration
+	legacyDequeued     atomic.Uint64
 }
 
 var lock = &sync.Mutex{}
@@ -186,6 +190,11 @@ func GetInstance(defaultStrategy Strategy) *tracer {
 				Namespace: "beelzebub",
 				Name:      "events_total",
 				Help:      "The total number of events",
+			}),
+			captureFailuresTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "capture_failures_total",
+				Help:      "Events that failed admission before durable or volatile capture accepted them",
 			}),
 			eventsSSHTotal: promauto.NewCounter(prometheus.CounterOpts{
 				Namespace: "beelzebub",
@@ -218,6 +227,7 @@ func GetInstance(defaultStrategy Strategy) *tracer {
 			go func(i int) {
 				log.Debug("Trace worker: ", i)
 				for event := range singleton.eventsChan {
+					singleton.legacyDequeued.Add(1)
 					singleton.GetStrategy()(event)
 				}
 			}(i)
@@ -258,20 +268,23 @@ func (tracer *tracer) SetDurableSink(sink func(context.Context, Event) error) {
 func NewDurableTracer(sink func(context.Context, Event) error) Tracer {
 	base := GetInstance(func(Event) {})
 	return &tracer{
-		durableSink:       sink,
-		eventsTotal:       base.eventsTotal,
-		eventsSSHTotal:    base.eventsSSHTotal,
-		eventsTCPTotal:    base.eventsTCPTotal,
-		eventsHTTPTotal:   base.eventsHTTPTotal,
-		eventsMCPTotal:    base.eventsMCPTotal,
-		eventsTelnetTotal: base.eventsTelnetTotal,
+		durableSink:          sink,
+		eventsTotal:          base.eventsTotal,
+		eventsSSHTotal:       base.eventsSSHTotal,
+		eventsTCPTotal:       base.eventsTCPTotal,
+		eventsHTTPTotal:      base.eventsHTTPTotal,
+		eventsMCPTotal:       base.eventsMCPTotal,
+		eventsTelnetTotal:    base.eventsTelnetTotal,
+		captureFailuresTotal: base.captureFailuresTotal,
 	}
 }
 
-func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) (captureErr error) {
+	defer func() {
+		if captureErr != nil && tracer.captureFailuresTotal != nil {
+			tracer.captureFailuresTotal.Inc()
+		}
+	}()
 
 	tracer.strategyMutex.RLock()
 	sink := tracer.durableSink
@@ -299,12 +312,49 @@ func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) error 
 
 	select {
 	case tracer.eventsChan <- event:
-	case <-ctx.Done():
-		return ctx.Err()
+	default:
+		if err := tracer.waitForLegacyCapacity(event); err != nil {
+			return err
+		}
 	}
 
 	tracer.updatePrometheusCounters(event.Protocol)
 	return nil
+}
+
+func (tracer *tracer) waitForLegacyCapacity(event Event) error {
+	budget := tracer.legacyStallTimeout
+	if budget <= 0 {
+		budget = LegacyQueueStallTimeout
+	}
+
+	// Poll progress rather than broadcasting every dequeue to every waiting
+	// producer. Keep the ordinary channel send queued between polls.
+	progress := tracer.legacyDequeued.Load()
+	poll := time.NewTicker(min(100*time.Millisecond, max(time.Nanosecond, budget/4)))
+	defer poll.Stop()
+	stall := time.NewTimer(budget)
+	defer stall.Stop()
+
+	for {
+		select {
+		case tracer.eventsChan <- event:
+			return nil
+		case <-poll.C:
+			if current := tracer.legacyDequeued.Load(); current != progress {
+				progress = current
+				stall.Reset(budget)
+			}
+		case <-stall.C:
+			if current := tracer.legacyDequeued.Load(); current != progress {
+				progress = current
+				stall.Reset(budget)
+				continue
+			}
+
+			return context.DeadlineExceeded
+		}
+	}
 }
 
 func (tracer *tracer) updatePrometheusCounters(protocol string) {

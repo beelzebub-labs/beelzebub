@@ -82,8 +82,9 @@ percentages include unrelated protocol branches; the capture tests specifically
 exercise the changed durable capture and teardown lines. These checks do not
 promise 100% branch coverage.
 
-A producer canceled before durable acceptance can leave an event unaccepted;
-that failure is logged. Already persisted events remain owned by the spool.
+A complete event receives one durable admission attempt even after producer
+cancellation. When storage is full or unavailable, cancellation can end waiting
+and leave it unaccepted; that failure is logged and counted. Already persisted events remain owned by the spool.
 Timeout/teardown evidence gets a fresh capture context bounded to five seconds.
 Telnet restores the configured socket deadline after its temporary negotiation
 deadline so idle reads can finish and capture session end.

@@ -67,14 +67,14 @@ func InitBeelzebubCloud(uri, authToken string, enableVerifyConfigurationsChanged
 	beelzebubCloud := &beelzebubCloud{
 		URI:             uri,
 		AuthToken:       authToken,
-		client:          resty.New(),
+		client:          resty.New().SetTimeout(10 * time.Second),
 		PollingInterval: 15 * time.Second,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
 	if enableVerifyConfigurationsChanged {
 		go func() {
-			if err := beelzebubCloud.verifyConfigurationsChanged(); err != nil {
+			if err := beelzebubCloud.verifyConfigurationsChanged(); err != nil && ctx.Err() == nil {
 				log.Fatalf("Error verify configurations changed: %s", err.Error())
 			}
 		}()
@@ -98,13 +98,12 @@ func (beelzebubCloud *beelzebubCloud) SendEvent(event tracer.Event) (bool, error
 	}
 
 	response, err := beelzebubCloud.client.R().
+		SetContext(beelzebubCloud.ctx).
 		SetHeader("Content-Type", "application/json").
 		SetBody(requestJson).
 		SetHeader("Authorization", beelzebubCloud.AuthToken).
 		SetResult(&tracer.Event{}).
 		Post(fmt.Sprintf("%s/events", beelzebubCloud.URI))
-
-	log.Debug(response)
 
 	if err != nil {
 		return false, err
@@ -119,6 +118,7 @@ func (beelzebubCloud *beelzebubCloud) GetHoneypotsConfigurations() ([]parser.Bee
 	}
 
 	response, err := beelzebubCloud.client.R().
+		SetContext(beelzebubCloud.ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Authorization", beelzebubCloud.AuthToken).
 		SetResult([]HoneypotConfigResponseDTO{}).
@@ -170,6 +170,7 @@ var exitFunction func(code int) = os.Exit
 
 func (beelzebubCloud *beelzebubCloud) Stop() {
 	beelzebubCloud.cancel()
+	beelzebubCloud.client.GetClient().CloseIdleConnections()
 }
 
 func (beelzebubCloud *beelzebubCloud) checkConfigurationsChanged(lastHash string) (newHash string, changed bool, err error) {

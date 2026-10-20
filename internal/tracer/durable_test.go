@@ -74,6 +74,7 @@ func TestDurableCaptureFailureIsNotCounted(t *testing.T) {
 	tr.SetDurableSink(func(context.Context, Event) error { return failure })
 	require.ErrorIs(t, tr.TraceEventContext(context.Background(), Event{}), failure)
 	require.Zero(t, counters["total"].count)
+	require.Equal(t, 1, counters["capture_failures"].count)
 	require.Empty(t, tr.eventsChan)
 }
 
@@ -115,6 +116,7 @@ func TestWithContextCancelsDurableCapture(t *testing.T) {
 
 	require.ErrorIs(t, <-result, context.Canceled)
 	require.Zero(t, counters["total"].count)
+	require.Equal(t, 1, counters["capture_failures"].count)
 }
 
 type legacyCapture struct{ calls int }
@@ -127,8 +129,9 @@ func TestWithContextSupportsLegacyImplementations(t *testing.T) {
 	require.Equal(t, 1, capture.calls)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, WithContext(ctx, capture).(ContextTracer).TraceEventContext(ctx, Event{}), context.Canceled)
-	require.Equal(t, 1, capture.calls)
+	require.NoError(t, WithContext(ctx, capture).(ContextTracer).TraceEventContext(ctx, Event{}))
+	// Legacy implementations cannot be interrupted; admit the built event.
+	require.Equal(t, 2, capture.calls)
 }
 
 func TestFinalCaptureDetachesExpiredContextAndRemainsBounded(t *testing.T) {
@@ -183,18 +186,56 @@ func TestLegacyDeliveryWithoutDurableSink(t *testing.T) {
 	}
 }
 
-func TestLegacyQueueCancellationDoesNotCountUnacceptedEvent(t *testing.T) {
+func TestLegacyQueueAdmissionTimeoutDoesNotCountUnacceptedEvent(t *testing.T) {
 	tr, counters := newTracerWithMockCounters(func(Event) {})
+	tr.legacyStallTimeout = 20 * time.Millisecond
 	for range cap(tr.eventsChan) {
-		require.NoError(t, tr.TraceEventContext(context.Background(), Event{ID: "accepted"}))
+		tr.eventsChan <- Event{ID: "accepted"}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := time.Now()
+	require.ErrorIs(t, tr.TraceEventContext(ctx, Event{ID: "unaccepted"}), context.DeadlineExceeded)
+	require.GreaterOrEqual(t, time.Since(started), 15*time.Millisecond)
+	require.Less(t, time.Since(started), time.Second)
+	require.Zero(t, counters["total"].count)
+	require.Equal(t, 1, counters["capture_failures"].count)
+	require.Len(t, tr.eventsChan, cap(tr.eventsChan))
+}
+
+func TestLegacyQueueAdmissionOutlivesDisconnectAndBriefPressure(t *testing.T) {
+	tr, counters := newTracerWithMockCounters(func(Event) {})
+	tr.legacyStallTimeout = time.Second
+	for range cap(tr.eventsChan) {
+		tr.eventsChan <- Event{ID: "existing"}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	require.ErrorIs(t, tr.TraceEventContext(ctx, Event{ID: "unaccepted"}), context.DeadlineExceeded)
-	require.Equal(t, cap(tr.eventsChan), counters["total"].count)
-	require.Len(t, tr.eventsChan, cap(tr.eventsChan))
-	require.ErrorIs(t, tr.TraceEventContext(ctx, Event{}), context.DeadlineExceeded)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+
+	go func() { done <- tr.TraceEventContext(ctx, Event{ID: "received", Protocol: "HTTP"}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("client cancellation discarded a built event: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	<-tr.eventsChan
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("healthy queue did not admit completed event")
+	}
+
+	require.Equal(t, 1, counters["total"].count)
+	found := false
+	for range cap(tr.eventsChan) {
+		found = (<-tr.eventsChan).ID == "received" || found
+	}
+
+	require.True(t, found)
 }
 
 func TestCaptureWithNilProducerContext(t *testing.T) {
@@ -202,4 +243,46 @@ func TestCaptureWithNilProducerContext(t *testing.T) {
 	WithContext(nil, capture).TraceEvent(Event{})
 	TraceFinalEvent(nil, capture, Event{})
 	require.Equal(t, 2, capture.calls)
+}
+
+func TestLegacyAdmissionStallBudgetTracksProgress(t *testing.T) {
+	tr, _ := newTracerWithMockCounters(func(Event) {})
+	tr.legacyStallTimeout = 40 * time.Millisecond
+	for range cap(tr.eventsChan) {
+		tr.eventsChan <- Event{ID: "existing"}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+
+	go func() { done <- tr.TraceEventContext(ctx, Event{ID: "received"}) }()
+
+	// Model dequeues immediately refilled by other producers: total waiting
+	// exceeds the stall budget, while delivery is still making progress.
+	for range 8 {
+		select {
+		case err := <-done:
+			t.Fatalf("active delivery was treated as stalled: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+		tr.legacyDequeued.Add(1)
+	}
+	<-tr.eventsChan
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("admission failed after capacity became available")
+	}
+}
+
+func TestCanceledContextAdmitsToHealthyLegacyQueue(t *testing.T) {
+	tr, counters := newTracerWithMockCounters(func(Event) {})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, tr.TraceEventContext(ctx, Event{ID: "received", Protocol: "HTTP"}))
+	require.Equal(t, "received", (<-tr.eventsChan).ID)
+	require.Equal(t, 1, counters["total"].count)
 }

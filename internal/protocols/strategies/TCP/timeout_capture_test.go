@@ -95,8 +95,9 @@ func TestTCPTerminalCaptureGetsLiveBoundedContext(t *testing.T) {
 			var captured []tracer.Event
 
 			capture := tracer.NewDurableTracer(func(eventCtx context.Context, event tracer.Event) error {
-				require.NoError(t, eventCtx.Err(), "terminal capture inherited expired producer context")
+				// Only terminal events detach from the producer context.
 				if event.Status == tracer.End.String() || event.Status == tracer.Stateless.String() {
+					require.NoError(t, eventCtx.Err(), "terminal capture inherited expired producer context")
 					require.ErrorIs(t, ctx.Err(), context.Canceled)
 					deadline, ok := eventCtx.Deadline()
 					require.True(t, ok)

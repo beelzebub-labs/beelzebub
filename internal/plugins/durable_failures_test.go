@@ -68,9 +68,7 @@ func TestDurableStartupRejectsInvalidSettingsAndReleasesFailedOwnership(t *testi
 func TestDurableCaptureValidationAndDuplicateIdentity(t *testing.T) {
 	d := testDelivery(t, "http://synthetic.invalid", t.TempDir(), 0, 0)
 	event := durableTestEvent()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	require.ErrorIs(t, d.Enqueue(ctx, event), context.Canceled)
+	// Canceled producers can attempt admission when the spool is healthy.
 	invalid := event
 	invalid.EventKey = "../../invalid"
 	require.ErrorContains(t, d.Enqueue(context.Background(), invalid), "invalid durable event key")
@@ -91,7 +89,7 @@ func TestDurableCaptureValidationAndDuplicateIdentity(t *testing.T) {
 	assertSpoolAccounting(t, d)
 	require.Equal(t, int64(1), d.usedRecords)
 	event.Command = "conflicting payload"
-	ctx, cancel = context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	require.ErrorIs(t, d.Enqueue(ctx, event), context.DeadlineExceeded)
 	retained, err := os.ReadFile(path)
