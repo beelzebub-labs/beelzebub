@@ -23,7 +23,13 @@ const Workers = 5
 const LegacyQueueStallTimeout = 5 * time.Second
 
 // LegacyQueueMaxWaiters bounds producers retaining events outside the queue.
-const LegacyQueueMaxWaiters = 16
+// Connected clients can apply backpressure without consuming the smaller
+// disconnected retention budget, but cannot retain unbounded requests either.
+const LegacyQueueMaxWaiters = 256
+
+// LegacyQueueMaxDisconnectedWaiters bounds canceled captures retained while
+// delivery makes progress, independently of the overall waiting budget.
+const LegacyQueueMaxDisconnectedWaiters = 16
 
 var ErrLegacyQueueCapacity = errors.New("memory event queue and waiting capacity exhausted; event not accepted")
 
@@ -177,12 +183,13 @@ type tracer struct {
 	eventsTelnetTotal    prometheus.Counter
 	captureFailuresTotal prometheus.Counter
 
-	strategyMutex      sync.RWMutex
-	durableSink        func(context.Context, Event) error
-	legacyStallTimeout time.Duration
-	legacyDequeued     atomic.Uint64
-	legacyWaiters      atomic.Int64
-	memoryCheck        func() error
+	strategyMutex             sync.RWMutex
+	durableSink               func(context.Context, Event) error
+	legacyStallTimeout        time.Duration
+	legacyDequeued            atomic.Uint64
+	legacyWaiters             atomic.Int64
+	legacyDisconnectedWaiters atomic.Int64
+	memoryCheck               func() error
 }
 
 var lock = &sync.Mutex{}
@@ -329,7 +336,7 @@ func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) (captu
 	select {
 	case tracer.eventsChan <- event:
 	default:
-		if err := tracer.waitForLegacyCapacity(event); err != nil {
+		if err := tracer.waitForLegacyCapacity(ctx, event); err != nil {
 			return err
 		}
 	}
@@ -338,20 +345,29 @@ func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) (captu
 	return nil
 }
 
-func (tracer *tracer) waitForLegacyCapacity(event Event) error {
-	// Admission to the waiting budget must itself be nonblocking. Apply it to
-	// every producer, including clients that disconnect after starting to wait.
-	for {
-		waiting := tracer.legacyWaiters.Load()
-		if waiting >= LegacyQueueMaxWaiters {
-			return ErrLegacyQueueCapacity
-		}
-
-		if tracer.legacyWaiters.CompareAndSwap(waiting, waiting+1) {
-			break
-		}
+func (tracer *tracer) waitForLegacyCapacity(ctx context.Context, event Event) error {
+	if !reserveLegacyWaiter(&tracer.legacyWaiters, LegacyQueueMaxWaiters) {
+		return ErrLegacyQueueCapacity
 	}
 	defer tracer.legacyWaiters.Add(-1)
+
+	// Observe cancellation without discarding an already received event while
+	// delivery makes progress. Only canceled producers use the retention budget,
+	// including clients that disconnect after they have started waiting.
+	done := ctx.Done()
+	disconnected := false
+	defer func() {
+		if disconnected {
+			tracer.legacyDisconnectedWaiters.Add(-1)
+		}
+	}()
+
+	if ctx.Err() != nil {
+		if !reserveLegacyWaiter(&tracer.legacyDisconnectedWaiters, LegacyQueueMaxDisconnectedWaiters) {
+			return ErrLegacyQueueCapacity
+		}
+		disconnected, done = true, nil
+	}
 
 	budget := tracer.legacyStallTimeout
 	if budget <= 0 {
@@ -370,6 +386,11 @@ func (tracer *tracer) waitForLegacyCapacity(event Event) error {
 		select {
 		case tracer.eventsChan <- event:
 			return nil
+		case <-done:
+			if !reserveLegacyWaiter(&tracer.legacyDisconnectedWaiters, LegacyQueueMaxDisconnectedWaiters) {
+				return ErrLegacyQueueCapacity
+			}
+			disconnected, done = true, nil
 		case <-poll.C:
 			if tracer.memoryCheck != nil {
 				if err := tracer.memoryCheck(); err != nil {
@@ -389,6 +410,18 @@ func (tracer *tracer) waitForLegacyCapacity(event Event) error {
 			}
 
 			return context.DeadlineExceeded
+		}
+	}
+}
+
+func reserveLegacyWaiter(waiters *atomic.Int64, limit int64) bool {
+	for {
+		waiting := waiters.Load()
+		if waiting >= limit {
+			return false
+		}
+		if waiters.CompareAndSwap(waiting, waiting+1) {
+			return true
 		}
 	}
 }

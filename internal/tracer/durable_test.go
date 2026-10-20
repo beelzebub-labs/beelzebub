@@ -202,6 +202,7 @@ func TestLegacyQueueAdmissionTimeoutDoesNotCountUnacceptedEvent(t *testing.T) {
 	require.Equal(t, 1, counters["capture_failures"].count)
 	require.Len(t, tr.eventsChan, cap(tr.eventsChan))
 	require.Zero(t, tr.legacyWaiters.Load(), "stalled admissions must release their waiting budget")
+	require.Zero(t, tr.legacyDisconnectedWaiters.Load(), "stalled captures must release their disconnected budget")
 }
 
 func TestLegacyQueueAdmissionOutlivesDisconnectAndBriefPressure(t *testing.T) {

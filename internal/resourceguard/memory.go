@@ -111,6 +111,10 @@ func (g *memoryGuard) check() error {
 		if err != nil {
 			return err
 		}
+		usage, err = g.workingSet(group, usage)
+		if err != nil {
+			return err
+		}
 
 		if usage >= limit {
 			return ErrMemoryPressure
@@ -122,6 +126,41 @@ func (g *memoryGuard) check() error {
 	}
 
 	return nil
+}
+
+// Inactive file cache is reclaimable under pressure. Counting it as occupied
+// memory can reject every event after an ordinary file write, without any
+// allocations that would prompt the kernel to reclaim that cache.
+func (g *memoryGuard) workingSet(group memoryGroup, usage uint64) (uint64, error) {
+	data, err := g.readFile(filepath.Join(group.directory, "memory.stat"))
+	if err != nil {
+		return 0, fmt.Errorf("measure container memory cache: %w", err)
+	}
+
+	key := "inactive_file"
+	if group.usageFile == "memory.usage_in_bytes" {
+		key = "total_inactive_file" // Include descendants, like v1 usage does.
+	}
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != key {
+			continue
+		}
+		if len(fields) != 2 {
+			return 0, errors.New("invalid container inactive file cache measurement")
+		}
+
+		cache, err := parseMemoryValue([]byte(fields[1]))
+		if err != nil {
+			return 0, fmt.Errorf("measure container memory cache: %w", err)
+		}
+
+		// Usage and statistics are separate snapshots; avoid unsigned underflow
+		// when reclaim or accounting updates race these reads.
+		return usage - min(usage, cache), nil
+	}
+	return 0, errors.New("container inactive file cache measurement missing")
 }
 
 func (g *memoryGuard) memoryGroups() ([]memoryGroup, error) {

@@ -60,6 +60,7 @@ type DurableEvents struct {
 	usedBytes, usedRecords int64
 	usageVersion           uint64
 	usageValid             bool
+	quarantinePending      bool // Protected by mu after startup.
 	lock                   *os.File
 	mu                     sync.Mutex
 	ctx                    context.Context
@@ -77,6 +78,10 @@ type DurableEvents struct {
 	remove                 func(string) error
 	writeFile              func(string, []byte) error
 	filesystemRoom         func(int64) error
+	memoryCheck            func() error
+	admissionMu            sync.Mutex
+	admissionRecords       int64
+	admissionBytes         int64
 	retryBase              time.Duration
 	retryCap               time.Duration
 	slowRetry              time.Duration
@@ -132,6 +137,7 @@ func newDurableEvents(uri, token, directory string, maxBytes, maxRecords int64, 
 	fingerprint := sha256.Sum256([]byte(strings.TrimRight(uri, "/") + "\x00" + token))
 	d := &DurableEvents{directory: directory, destination: hex.EncodeToString(fingerprint[:]), maxBytes: maxBytes, maxRecords: maxRecords, lock: lock, ctx: ctx, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1), syncDir: syncDir, rename: os.Rename, remove: os.Remove, writeFile: writeEventFile, retryBase: time.Second, retryCap: 30 * time.Second, slowRetry: time.Minute}
 	d.filesystemRoom = func(growth int64) error { return resourceguard.FilesystemHasRoom(directory, growth) }
+	d.memoryCheck = resourceguard.NewMemoryCheck()
 
 	d.reconcileDone = make(chan struct{})
 	d.reconcileWake = make(chan struct{}, 1)
@@ -364,6 +370,13 @@ func (d *DurableEvents) Enqueue(ctx context.Context, event tracer.Event) error {
 	if d.ctx.Err() != nil {
 		return ErrEventSpoolClosed
 	}
+	// Reserve before DTO mapping (which can encode headers) or JSON encoding.
+	// Waiting to acquire this budget would recreate the unbounded backlog.
+	reservation, err := d.reserveAdmission(event)
+	if err != nil {
+		return err
+	}
+	defer d.releaseAdmission(reservation)
 
 	if event.EventKey == "" {
 		key, err := uuid.NewV7()
@@ -417,6 +430,10 @@ func (d *DurableEvents) Enqueue(ctx context.Context, event tracer.Event) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+
+			if err := d.memoryCheck(); err != nil {
+				return err
+			}
 		}
 		attempted = true
 
@@ -454,6 +471,12 @@ func (d *DurableEvents) Enqueue(ctx context.Context, event tracer.Event) error {
 func (d *DurableEvents) enqueue(key string, body []byte) error {
 	if d.ctx.Err() != nil {
 		return ErrEventSpoolClosed
+	}
+
+	if d.quarantinePending {
+		if err := d.syncQuarantine(); err != nil {
+			return err
+		}
 	}
 
 	path := filepath.Join(d.directory, key+".json")
@@ -753,11 +776,8 @@ func (d *DurableEvents) quarantine(path, reason string) error {
 	}
 
 	d.usageVersion++
-	if err := d.syncDir(directory); err != nil {
-		return err
-	}
-
-	if err := d.syncDir(d.directory); err != nil {
+	d.quarantinePending = true
+	if err := d.syncQuarantine(); err != nil {
 		return err
 	}
 
@@ -765,7 +785,28 @@ func (d *DurableEvents) quarantine(path, reason string) error {
 	return nil
 }
 
+// Complete destination durability before syncing the removal from the source.
+// A missing source cannot prove that an earlier quarantine rename was durable.
+// Caller holds mu once workers are running; startup also calls this even though
+// the previous process's in-memory pending flag is no longer available.
+func (d *DurableEvents) syncQuarantine() error {
+	err := d.syncDir(filepath.Join(d.directory, "quarantine"))
+	if err != nil && (d.quarantinePending || !os.IsNotExist(err)) {
+		return fmt.Errorf("sync event quarantine directory: %w", err)
+	}
+
+	if err := d.syncDir(d.directory); err != nil {
+		return fmt.Errorf("sync event spool after quarantine: %w", err)
+	}
+
+	d.quarantinePending = false
+	return nil
+}
+
 func (d *DurableEvents) recover() error {
+	if err := d.syncQuarantine(); err != nil {
+		return err
+	}
 	return walkEventFiles(d.directory, func(path string, entry os.DirEntry) error {
 		if !strings.HasPrefix(entry.Name(), ".event-") || !strings.HasSuffix(entry.Name(), ".tmp") {
 			return nil
@@ -829,10 +870,19 @@ func eventRetryAfter(value string, now time.Time) time.Duration {
 
 func (d *DurableEvents) deliver(path string) (time.Duration, bool) {
 	d.mu.Lock()
+	if d.quarantinePending {
+		if err := d.syncQuarantine(); err != nil {
+			d.mu.Unlock()
+			log.WithError(err).Error("Quarantine persistence incomplete; capture and replay wait for storage recovery")
+			return d.slowRetry, false
+		}
+	}
+
 	record, err := d.readRecord(path)
 	if os.IsNotExist(err) {
+		err = d.syncQuarantine()
 		d.mu.Unlock()
-		return 0, true
+		return d.slowRetry, err == nil
 	}
 
 	if err != nil {

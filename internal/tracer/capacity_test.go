@@ -39,9 +39,9 @@ func TestLegacyWaitingCapacityRemainsBoundedWithDeliveryProgress(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	results := make(chan error, LegacyQueueMaxWaiters)
+	results := make(chan error, LegacyQueueMaxDisconnectedWaiters)
 	var producers sync.WaitGroup
-	for i := range LegacyQueueMaxWaiters {
+	for i := range LegacyQueueMaxDisconnectedWaiters {
 		producers.Go(func() { results <- tr.TraceEventContext(ctx, Event{ID: fmt.Sprint(i), Protocol: HTTP.String()}) })
 	}
 
@@ -80,8 +80,9 @@ func TestLegacyWaitingCapacityRemainsBoundedWithDeliveryProgress(t *testing.T) {
 		}
 	})
 
-	require.Eventually(t, func() bool { return tr.legacyWaiters.Load() == LegacyQueueMaxWaiters }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return tr.legacyWaiters.Load() == LegacyQueueMaxDisconnectedWaiters }, time.Second, time.Millisecond)
 	cancel() // Clients can disconnect after they start waiting.
+	require.Eventually(t, func() bool { return tr.legacyDisconnectedWaiters.Load() == LegacyQueueMaxDisconnectedWaiters }, time.Second, time.Millisecond)
 	// Model dequeues immediately refilled by competing traffic. Waiting lasts
 	// more than two stall budgets while the queue continues making progress.
 
@@ -91,7 +92,7 @@ func TestLegacyWaitingCapacityRemainsBoundedWithDeliveryProgress(t *testing.T) {
 	case <-time.After(1100 * time.Millisecond):
 	}
 
-	require.Equal(t, int64(LegacyQueueMaxWaiters), tr.legacyWaiters.Load())
+	require.Equal(t, int64(LegacyQueueMaxDisconnectedWaiters), tr.legacyWaiters.Load())
 	const excess = 64
 	rejected := make(chan error, excess)
 	var wave sync.WaitGroup
@@ -108,9 +109,9 @@ func TestLegacyWaitingCapacityRemainsBoundedWithDeliveryProgress(t *testing.T) {
 
 	require.Equal(t, float64(excess), counterValue(t, tr.captureFailuresTotal))
 	require.Zero(t, counterValue(t, tr.eventsTotal))
-	require.Equal(t, int64(LegacyQueueMaxWaiters), tr.legacyWaiters.Load())
+	require.Equal(t, int64(LegacyQueueMaxDisconnectedWaiters), tr.legacyWaiters.Load())
 	seen := map[string]int{}
-	for range Workers + LegacyQueueMaxWaiters {
+	for range Workers + LegacyQueueMaxDisconnectedWaiters {
 		select {
 		case event := <-tr.eventsChan:
 			seen[event.ID]++
@@ -121,18 +122,19 @@ func TestLegacyWaitingCapacityRemainsBoundedWithDeliveryProgress(t *testing.T) {
 	}
 	<-done
 
-	for range LegacyQueueMaxWaiters {
+	for range LegacyQueueMaxDisconnectedWaiters {
 		require.NoError(t, <-results)
 	}
 
 	require.Equal(t, Workers, seen["seed"])
 	require.Zero(t, seen["excess"])
-	for i := range LegacyQueueMaxWaiters {
+	for i := range LegacyQueueMaxDisconnectedWaiters {
 		require.Equal(t, 1, seen[fmt.Sprint(i)])
 	}
 
 	require.Zero(t, tr.legacyWaiters.Load())
-	require.Equal(t, float64(LegacyQueueMaxWaiters), counterValue(t, tr.eventsTotal))
+	require.Zero(t, tr.legacyDisconnectedWaiters.Load())
+	require.Equal(t, float64(LegacyQueueMaxDisconnectedWaiters), counterValue(t, tr.eventsTotal))
 	require.NoError(t, tr.TraceEventContext(ctx, Event{ID: "recovered", Protocol: HTTP.String()}))
 
 	require.Equal(t, "recovered", (<-tr.eventsChan).ID)
@@ -162,11 +164,13 @@ func TestLegacyMemoryPressureReleasesWaitersAndRecovers(t *testing.T) {
 	}
 
 	result := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	go func() {
-		result <- tr.TraceEventContext(context.Background(), Event{ID: "waiting", Protocol: HTTP.String()})
+		result <- tr.TraceEventContext(ctx, Event{ID: "waiting", Protocol: HTTP.String()})
 	}()
 
-	require.Eventually(t, func() bool { return tr.legacyWaiters.Load() == 1 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return tr.legacyWaiters.Load() == 1 && tr.legacyDisconnectedWaiters.Load() == 1 }, time.Second, time.Millisecond)
 	<-checked
 	pressure.Store(true)
 
@@ -178,6 +182,7 @@ func TestLegacyMemoryPressureReleasesWaitersAndRecovers(t *testing.T) {
 	}
 
 	require.Zero(t, tr.legacyWaiters.Load())
+	require.Zero(t, tr.legacyDisconnectedWaiters.Load())
 	require.Equal(t, float64(1), counterValue(t, tr.captureFailuresTotal))
 	require.ErrorIs(t, tr.TraceEventContext(context.Background(), Event{Protocol: HTTP.String()}), resourceguard.ErrMemoryPressure)
 	require.Zero(t, tr.legacyWaiters.Load())
@@ -215,4 +220,161 @@ func TestLegacyMemoryPressureRejectsAvailableQueueAndRecovers(t *testing.T) {
 	tr.memoryCheck = func() error { return nil }
 	require.NoError(t, tr.TraceEventContext(context.Background(), Event{Protocol: HTTP.String()}))
 	require.Len(t, tr.eventsChan, 1)
+}
+
+// Return results without leaving blocked capture goroutines behind if an
+// assertion fails before the test starts draining the deliberately full queue.
+func startWaitingCaptures(t *testing.T, tr *tracer, ctx context.Context, prefix string, count int) <-chan error {
+	t.Helper()
+	results := make(chan error, count)
+	var producers sync.WaitGroup
+	for i := range count {
+		producers.Go(func() {
+			results <- tr.TraceEventContext(ctx, Event{ID: fmt.Sprintf("%s-%d", prefix, i), Protocol: HTTP.String()})
+		})
+	}
+
+	done := make(chan struct{})
+	go func() { producers.Wait(); close(done) }()
+	t.Cleanup(func() {
+		deadline := time.NewTimer(3 * time.Second)
+		defer deadline.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tr.eventsChan:
+			case <-deadline.C:
+				t.Error("capture goroutines did not finish")
+				return
+			}
+		}
+	})
+
+	return results
+}
+
+func TestLegacyConnectedBurstDoesNotUseDisconnectedBudget(t *testing.T) {
+	tr := capacityTracer()
+	tr.legacyStallTimeout = 3 * time.Second
+	for range Workers {
+		tr.eventsChan <- Event{ID: "seed"}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	retained := startWaitingCaptures(t, tr, ctx, "disconnected", LegacyQueueMaxDisconnectedWaiters)
+	require.Eventually(t, func() bool { return tr.legacyDisconnectedWaiters.Load() == LegacyQueueMaxDisconnectedWaiters }, time.Second, time.Millisecond)
+
+	// A full disconnected budget must not prevent connected clients from waiting.
+	const count = 50
+	results := startWaitingCaptures(t, tr, context.Background(), "connected", count)
+	require.Eventually(t, func() bool { return tr.legacyWaiters.Load() == count+LegacyQueueMaxDisconnectedWaiters }, time.Second, time.Millisecond)
+	require.Zero(t, counterValue(t, tr.captureFailuresTotal))
+	seen := map[string]int{}
+
+	for range Workers + count + LegacyQueueMaxDisconnectedWaiters {
+		select {
+		case event := <-tr.eventsChan:
+			seen[event.ID]++
+			tr.legacyDequeued.Add(1)
+		case <-time.After(time.Second):
+			t.Fatal("connected burst did not drain")
+		}
+	}
+
+	for range count {
+		require.NoError(t, <-results)
+	}
+
+	for range LegacyQueueMaxDisconnectedWaiters {
+		require.NoError(t, <-retained)
+	}
+
+	for i := range count {
+		require.Equal(t, 1, seen[fmt.Sprintf("connected-%d", i)])
+	}
+
+	for i := range LegacyQueueMaxDisconnectedWaiters {
+		require.Equal(t, 1, seen[fmt.Sprintf("disconnected-%d", i)])
+	}
+
+	require.Equal(t, float64(count+LegacyQueueMaxDisconnectedWaiters), counterValue(t, tr.eventsTotal))
+	require.Zero(t, counterValue(t, tr.captureFailuresTotal))
+	require.Zero(t, tr.legacyWaiters.Load())
+	require.Zero(t, tr.legacyDisconnectedWaiters.Load())
+}
+
+func TestLegacyClientsDisconnectingWhileWaitingShareRetentionBudget(t *testing.T) {
+	tr := capacityTracer()
+	tr.legacyStallTimeout = 3 * time.Second
+
+	for range Workers {
+		tr.eventsChan <- Event{ID: "seed"}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const count = 50
+	results := startWaitingCaptures(t, tr, ctx, "disconnecting", count)
+	require.Eventually(t, func() bool { return tr.legacyWaiters.Load() == count }, time.Second, time.Millisecond)
+	require.Zero(t, tr.legacyDisconnectedWaiters.Load())
+	cancel()
+
+	require.Eventually(t, func() bool {
+		return tr.legacyWaiters.Load() == LegacyQueueMaxDisconnectedWaiters &&
+			tr.legacyDisconnectedWaiters.Load() == LegacyQueueMaxDisconnectedWaiters &&
+			counterValue(t, tr.captureFailuresTotal) == count-LegacyQueueMaxDisconnectedWaiters
+	}, time.Second, time.Millisecond)
+
+	for range count - LegacyQueueMaxDisconnectedWaiters {
+		require.ErrorIs(t, <-results, ErrLegacyQueueCapacity)
+	}
+
+	for range Workers + LegacyQueueMaxDisconnectedWaiters {
+		select {
+		case <-tr.eventsChan:
+			tr.legacyDequeued.Add(1)
+		case <-time.After(time.Second):
+			t.Fatal("retained events did not drain")
+		}
+	}
+
+	for range LegacyQueueMaxDisconnectedWaiters {
+		require.NoError(t, <-results)
+	}
+
+	require.Zero(t, tr.legacyWaiters.Load())
+	require.Zero(t, tr.legacyDisconnectedWaiters.Load())
+	require.Equal(t, float64(LegacyQueueMaxDisconnectedWaiters), counterValue(t, tr.eventsTotal))
+}
+
+func TestLegacyConnectedWaitersRemainBounded(t *testing.T) {
+	tr := capacityTracer()
+	tr.legacyStallTimeout = 3 * time.Second
+
+	for range Workers {
+		tr.eventsChan <- Event{ID: "seed"}
+	}
+
+	results := startWaitingCaptures(t, tr, context.Background(), "bounded", LegacyQueueMaxWaiters)
+	require.Eventually(t, func() bool { return tr.legacyWaiters.Load() == LegacyQueueMaxWaiters }, time.Second, time.Millisecond)
+	require.ErrorIs(t, tr.TraceEventContext(context.Background(), Event{Protocol: HTTP.String()}), ErrLegacyQueueCapacity)
+	require.Zero(t, tr.legacyDisconnectedWaiters.Load())
+	require.Equal(t, float64(1), counterValue(t, tr.captureFailuresTotal))
+
+	for range Workers + LegacyQueueMaxWaiters {
+		select {
+		case <-tr.eventsChan:
+			tr.legacyDequeued.Add(1)
+		case <-time.After(time.Second):
+			t.Fatal("connected waiters did not drain")
+		}
+	}
+
+	for range LegacyQueueMaxWaiters {
+		require.NoError(t, <-results)
+	}
+
+	require.Zero(t, tr.legacyWaiters.Load())
 }
