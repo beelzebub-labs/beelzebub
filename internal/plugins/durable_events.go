@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/beelzebub-labs/beelzebub/v3/internal/resourceguard"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
@@ -75,6 +76,7 @@ type DurableEvents struct {
 	rename                 func(string, string) error
 	remove                 func(string) error
 	writeFile              func(string, []byte) error
+	filesystemRoom         func(int64) error
 	retryBase              time.Duration
 	retryCap               time.Duration
 	slowRetry              time.Duration
@@ -129,6 +131,7 @@ func newDurableEvents(uri, token, directory string, maxBytes, maxRecords int64, 
 	ctx, cancel := context.WithCancel(context.Background())
 	fingerprint := sha256.Sum256([]byte(strings.TrimRight(uri, "/") + "\x00" + token))
 	d := &DurableEvents{directory: directory, destination: hex.EncodeToString(fingerprint[:]), maxBytes: maxBytes, maxRecords: maxRecords, lock: lock, ctx: ctx, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1), syncDir: syncDir, rename: os.Rename, remove: os.Remove, writeFile: writeEventFile, retryBase: time.Second, retryCap: 30 * time.Second, slowRetry: time.Minute}
+	d.filesystemRoom = func(growth int64) error { return resourceguard.FilesystemHasRoom(directory, growth) }
 
 	d.reconcileDone = make(chan struct{})
 	d.reconcileWake = make(chan struct{}, 1)
@@ -434,7 +437,7 @@ func (d *DurableEvents) Enqueue(ctx context.Context, event tracer.Event) error {
 		}
 
 		if !warned {
-			log.WithField("event_key", event.EventKey).Error("Event spool unavailable or full; capture blocked until storage recovers")
+			log.WithField("event_key", event.EventKey).WithError(err).Error("Event spool unavailable or full; capture blocked until storage recovers")
 			warned = true
 		}
 
@@ -480,6 +483,10 @@ func (d *DurableEvents) enqueue(key string, body []byte) error {
 
 	if d.usedBytes-previous+int64(len(body)) > d.maxBytes || d.usedRecords+count > d.maxRecords {
 		return ErrEventSpoolCapacity
+	}
+
+	if err := d.filesystemRoom(max(0, int64(len(body))-previous)); err != nil {
+		return err
 	}
 
 	// Account for partial writes as well as complete records. Only this process

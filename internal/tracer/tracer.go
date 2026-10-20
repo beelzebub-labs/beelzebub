@@ -3,11 +3,13 @@ package tracer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/beelzebub-labs/beelzebub/v3/internal/resourceguard"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -19,6 +21,11 @@ const Workers = 5
 // LegacyQueueStallTimeout bounds a volatile queue that stops making progress.
 // Client cancellation cannot discard a completed event while workers drain it.
 const LegacyQueueStallTimeout = 5 * time.Second
+
+// LegacyQueueMaxWaiters bounds producers retaining events outside the queue.
+const LegacyQueueMaxWaiters = 16
+
+var ErrLegacyQueueCapacity = errors.New("memory event queue and waiting capacity exhausted; event not accepted")
 
 type Event struct {
 	EventKey   string `json:",omitempty"`
@@ -146,7 +153,7 @@ func TraceFinalEvent(ctx context.Context, capture Tracer, event Event) {
 
 func (t *contextualTracer) TraceEvent(event Event) {
 	if err := t.TraceEventContext(t.ctx, event); err != nil {
-		log.Error("Event was not accepted by capture; check storage, admission timeout, and shutdown state")
+		log.WithError(err).Error("Event was not accepted by capture; check storage, admission timeout, and shutdown state")
 	}
 }
 
@@ -174,6 +181,8 @@ type tracer struct {
 	durableSink        func(context.Context, Event) error
 	legacyStallTimeout time.Duration
 	legacyDequeued     atomic.Uint64
+	legacyWaiters      atomic.Int64
+	memoryCheck        func() error
 }
 
 var lock = &sync.Mutex{}
@@ -184,8 +193,9 @@ func GetInstance(defaultStrategy Strategy) *tracer {
 	defer lock.Unlock()
 	if singleton == nil {
 		singleton = &tracer{
-			strategy:   defaultStrategy,
-			eventsChan: make(chan Event, Workers),
+			strategy:    defaultStrategy,
+			eventsChan:  make(chan Event, Workers),
+			memoryCheck: resourceguard.NewMemoryCheck(),
 			eventsTotal: promauto.NewCounter(prometheus.CounterOpts{
 				Namespace: "beelzebub",
 				Name:      "events_total",
@@ -251,7 +261,7 @@ func (tracer *tracer) GetStrategy() Strategy {
 
 func (tracer *tracer) TraceEvent(event Event) {
 	if err := tracer.TraceEventContext(context.Background(), event); err != nil {
-		log.Error("Event was not accepted by durable capture; check spool availability and shutdown state")
+		log.WithError(err).Error("Event was not accepted by capture")
 	}
 }
 
@@ -308,6 +318,12 @@ func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) (captu
 		return nil
 	}
 
+	if tracer.memoryCheck != nil {
+		if err := tracer.memoryCheck(); err != nil {
+			return err
+		}
+	}
+
 	event.DateTime = time.Now().UTC().Format(time.RFC3339)
 
 	select {
@@ -323,6 +339,20 @@ func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) (captu
 }
 
 func (tracer *tracer) waitForLegacyCapacity(event Event) error {
+	// Admission to the waiting budget must itself be nonblocking. Apply it to
+	// every producer, including clients that disconnect after starting to wait.
+	for {
+		waiting := tracer.legacyWaiters.Load()
+		if waiting >= LegacyQueueMaxWaiters {
+			return ErrLegacyQueueCapacity
+		}
+
+		if tracer.legacyWaiters.CompareAndSwap(waiting, waiting+1) {
+			break
+		}
+	}
+	defer tracer.legacyWaiters.Add(-1)
+
 	budget := tracer.legacyStallTimeout
 	if budget <= 0 {
 		budget = LegacyQueueStallTimeout
@@ -341,6 +371,12 @@ func (tracer *tracer) waitForLegacyCapacity(event Event) error {
 		case tracer.eventsChan <- event:
 			return nil
 		case <-poll.C:
+			if tracer.memoryCheck != nil {
+				if err := tracer.memoryCheck(); err != nil {
+					return err
+				}
+			}
+
 			if current := tracer.legacyDequeued.Load(); current != progress {
 				progress = current
 				stall.Reset(budget)
