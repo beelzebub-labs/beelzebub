@@ -5,6 +5,6 @@ description: Collect interaction evidence through logs, Prometheus, RabbitMQ, an
 
 Every interaction becomes a tracer event with protocol, source address, command/request data, response, status, identity fields, and protocol-specific metadata. Binary TCP input that is not valid UTF-8 is preserved in `CommandRaw` as reversible `\xNN` escapes. A wire plugin may enrich the event’s `Metadata` map; the built-in VNC plugin uses it for a correlated challenge, response, and authorized-analysis representation.
 
-Prometheus exposes `beelzebub_events_total` plus protocol counters such as `beelzebub_ssh_events_total`, `beelzebub_http_events_total`, `beelzebub_tcp_events_total`, `beelzebub_telnet_events_total`, and `beelzebub_mcp_events_total` at the configured endpoint (default `:2112/metrics`).
+Prometheus is disabled by default and binds no metrics port unless `core.prometheus.enabled` is `true` (or `BEELZEBUB_PROMETHEUS_ENABLED=true`). When enabled, it exposes `beelzebub_events_total` plus protocol counters such as `beelzebub_ssh_events_total`, `beelzebub_http_events_total`, `beelzebub_tcp_events_total`, `beelzebub_telnet_events_total`, and `beelzebub_mcp_events_total` at the configured endpoint (`:2112/metrics` in the repository configuration).
 
 RabbitMQ publishes structured JSON to the `event` queue when enabled. Cloud reporting is optional; read [Cloud integration](../../operations/integrations) before sending captured data outside the host.

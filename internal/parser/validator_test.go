@@ -548,6 +548,7 @@ func TestValidateCore(t *testing.T) {
 
 	t.Run("prometheus all valid", func(t *testing.T) {
 		config := &BeelzebubCoreConfigurations{}
+		config.Core.Prometheus.Enabled = true
 		config.Core.Prometheus.Path = "/metrics"
 		config.Core.Prometheus.Port = ":9090"
 		result := ValidateCore(config, "beelzebub.yaml")
@@ -557,6 +558,7 @@ func TestValidateCore(t *testing.T) {
 
 	t.Run("prometheus path empty", func(t *testing.T) {
 		config := &BeelzebubCoreConfigurations{}
+		config.Core.Prometheus.Enabled = true
 		config.Core.Prometheus.Port = ":9090"
 		result := ValidateCore(config, "beelzebub.yaml")
 		assert.Equal(t, 1, result.TotalErrors)
@@ -565,6 +567,7 @@ func TestValidateCore(t *testing.T) {
 
 	t.Run("prometheus path missing leading slash", func(t *testing.T) {
 		config := &BeelzebubCoreConfigurations{}
+		config.Core.Prometheus.Enabled = true
 		config.Core.Prometheus.Path = "metrics"
 		config.Core.Prometheus.Port = ":9090"
 		result := ValidateCore(config, "beelzebub.yaml")
@@ -574,6 +577,7 @@ func TestValidateCore(t *testing.T) {
 
 	t.Run("prometheus port empty", func(t *testing.T) {
 		config := &BeelzebubCoreConfigurations{}
+		config.Core.Prometheus.Enabled = true
 		config.Core.Prometheus.Path = "/metrics"
 		result := ValidateCore(config, "beelzebub.yaml")
 		assert.Equal(t, 1, result.TotalErrors)
@@ -588,8 +592,16 @@ func TestValidateCore(t *testing.T) {
 		assert.Equal(t, 0, result.TotalErrors)
 	})
 
-	t.Run("prometheus path empty and port empty", func(t *testing.T) {
+	t.Run("prometheus enabled with path and port empty", func(t *testing.T) {
 		config := &BeelzebubCoreConfigurations{}
+		config.Core.Prometheus.Enabled = true
+		result := ValidateCore(config, "beelzebub.yaml")
+		assert.Equal(t, 2, result.TotalErrors)
+	})
+
+	t.Run("prometheus disabled ignores inactive settings", func(t *testing.T) {
+		config := &BeelzebubCoreConfigurations{}
+		config.Core.Prometheus.Path = "invalid-path"
 		result := ValidateCore(config, "beelzebub.yaml")
 		assert.Equal(t, 0, result.TotalErrors)
 	})

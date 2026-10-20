@@ -626,6 +626,7 @@ func TestToolAnnotationsHashCodeStability(t *testing.T) {
 }
 
 func TestReadConfigurationsCoreEnvOverridesFile(t *testing.T) {
+	t.Setenv("BEELZEBUB_PROMETHEUS_ENABLED", "true")
 	t.Setenv("BEELZEBUB_PROMETHEUS_PORT", ":9999")
 	t.Setenv("BEELZEBUB_PROMETHEUS_PATH", "/custom-metrics")
 	t.Setenv("BEELZEBUB_RABBITMQ_ENABLED", "true")
@@ -642,6 +643,7 @@ func TestReadConfigurationsCoreEnvOverridesFile(t *testing.T) {
 	cfg, err := configurationsParser.ReadConfigurationsCore()
 	assert.Nil(t, err)
 
+	assert.True(t, cfg.Core.Prometheus.Enabled)
 	assert.Equal(t, ":9999", cfg.Core.Prometheus.Port)
 	assert.Equal(t, "/custom-metrics", cfg.Core.Prometheus.Path)
 	assert.Equal(t, true, cfg.Core.Tracings.RabbitMQ.Enabled)
@@ -654,6 +656,7 @@ func TestReadConfigurationsCoreEnvOverridesFile(t *testing.T) {
 }
 
 func TestReadConfigurationsCoreEnvOnlyNoFile(t *testing.T) {
+	t.Setenv("BEELZEBUB_PROMETHEUS_ENABLED", "")
 	t.Setenv("BEELZEBUB_PROMETHEUS_PORT", ":2112")
 	t.Setenv("BEELZEBUB_PROMETHEUS_PATH", "/metrics")
 	t.Setenv("BEELZEBUB_LOGGING_LOGS_PATH", "./logs")
@@ -663,9 +666,47 @@ func TestReadConfigurationsCoreEnvOnlyNoFile(t *testing.T) {
 
 	cfg, err := configurationsParser.ReadConfigurationsCore()
 	assert.Nil(t, err)
+	assert.False(t, cfg.Core.Prometheus.Enabled)
 	assert.Equal(t, ":2112", cfg.Core.Prometheus.Port)
 	assert.Equal(t, "/metrics", cfg.Core.Prometheus.Path)
 	assert.Equal(t, "./logs", cfg.Core.Logging.LogsPath)
+}
+
+func TestReadConfigurationsCorePrometheusEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		env     string
+		enabled bool
+		wantErr bool
+	}{
+		{name: "missing block", yaml: "core: {}"},
+		{name: "missing flag", yaml: "core:\n  prometheus:\n    path: /metrics\n    port: ':2112'"},
+		{name: "explicit false", yaml: "core:\n  prometheus:\n    enabled: false"},
+		{name: "explicit true", yaml: "core:\n  prometheus:\n    enabled: true", enabled: true},
+		{name: "env disables YAML", yaml: "core:\n  prometheus:\n    enabled: true", env: "false"},
+		{name: "env enables YAML", yaml: "core:\n  prometheus:\n    enabled: false", env: "true", enabled: true},
+		{name: "env only", env: "true", enabled: true},
+		{name: "invalid env", env: "invalid", wantErr: true},
+		{name: "invalid YAML", yaml: "core:\n  prometheus:\n    enabled: invalid", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("BEELZEBUB_PROMETHEUS_ENABLED", tc.env)
+			p := Init("", "")
+			p.readFileBytesByFilePathDependency = func(string) ([]byte, error) {
+				return []byte(tc.yaml), nil
+			}
+			cfg, err := p.ReadConfigurationsCore()
+			if tc.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, cfg)
+				return
+			}
+			if assert.NoError(t, err) {
+				assert.Equal(t, tc.enabled, cfg.Core.Prometheus.Enabled)
+			}
+		})
+	}
 }
 
 func TestReadConfigurationsCoreRejectsInvalidBooleanEnvironment(t *testing.T) {
