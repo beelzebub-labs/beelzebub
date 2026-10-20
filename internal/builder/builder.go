@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 
@@ -52,6 +53,7 @@ type Builder struct {
 	durableEvents                  *plugins.DurableEvents
 	cloudSender                    cloudEventSender
 	cloudPollingStop               func()
+	prometheusServer               *http.Server
 }
 
 func (b *Builder) setTraceStrategy(traceStrategy tracer.Strategy) {
@@ -114,6 +116,11 @@ func (b *Builder) Close() error {
 	if b.cloudPollingStop != nil {
 		b.cloudPollingStop()
 	}
+	if b.prometheusServer != nil {
+		if err := b.prometheusServer.Close(); err != nil {
+			return err
+		}
+	}
 
 	// Stop background service plugins first so their goroutines drain before
 	// other teardown.
@@ -155,6 +162,9 @@ func (b *Builder) Run() (runErr error) {
 		if runErr != nil && b.cloudPollingStop != nil {
 			b.cloudPollingStop()
 		}
+		if runErr != nil && b.prometheusServer != nil {
+			_ = b.prometheusServer.Close()
+		}
 	}()
 	fmt.Println(
 		`
@@ -164,16 +174,9 @@ func (b *Builder) Run() (runErr error) {
 ██   ██ ██      ██      ██       ███    ██      ██   ██ ██    ██ ██   ██
 ██████  ███████ ███████ ███████ ███████ ███████ ██████   ██████  ██████
 Deception runtime framework, happy hacking!`)
-	// Init Prometheus openmetrics
-	go func() {
-		if (b.beelzebubCoreConfigurations.Core.Prometheus != parser.Prometheus{}) {
-			http.Handle(b.beelzebubCoreConfigurations.Core.Prometheus.Path, promhttp.Handler())
-
-			if err := http.ListenAndServe(b.beelzebubCoreConfigurations.Core.Prometheus.Port, nil); err != nil {
-				log.Fatalf("Error init Prometheus: %s", err.Error())
-			}
-		}
-	}()
+	if err := b.startPrometheus(); err != nil {
+		return err
+	}
 
 	// Start registered background service plugins.
 	svcCtx, cancel := context.WithCancel(context.Background())
@@ -254,6 +257,29 @@ func (b *Builder) startDurableEvents() error {
 
 	b.durableEvents = delivery
 	delivery.Start()
+	return nil
+}
+
+func (b *Builder) startPrometheus() error {
+	config := b.beelzebubCoreConfigurations.Core.Prometheus
+	if !config.Enabled {
+		return nil
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(config.Path, promhttp.Handler())
+	listener, err := net.Listen("tcp", config.Port)
+	if err != nil {
+		return fmt.Errorf("error init Prometheus: %w", err)
+	}
+
+	server := &http.Server{Addr: listener.Addr().String(), Handler: mux}
+	b.prometheusServer = server
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Errorf("Error serving Prometheus: %s", err.Error())
+		}
+	}()
 	return nil
 }
 

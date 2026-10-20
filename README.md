@@ -20,7 +20,7 @@ Beelzebub gives security teams a configurable way to study activity directed at 
 
 - **Deploy decoys that fit your environment.** Define services, routes, and response rules in YAML. Use static handlers for predictable behavior or LLM-powered responses for adaptive interactions. Extend the runtime with trusted Go plugins when you need custom behavior.
 - **Observe what happens after contact.** Capture evidence from decoy interactions, including commands, HTTP request details, and session context, depending on the protocol. Give analysts a record of activity directed at the service to support investigation.
-- **Bring evidence into your workflow.** Inspect logs locally, publish structured events to RabbitMQ, or enable Beelzebub Platform reporting. Monitor runtime activity through Prometheus metrics and choose where captured data is sent.
+- **Bring evidence into your workflow.** Inspect logs locally, publish structured events to RabbitMQ, or enable Beelzebub Platform reporting. Enable Prometheus metrics with `core.prometheus.enabled: true` to monitor runtime activity; by default, the metrics listener is disabled and binds no port.
 
 ## See It In Action
 

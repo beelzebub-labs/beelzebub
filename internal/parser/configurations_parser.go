@@ -56,8 +56,9 @@ type RabbitMQ struct {
 	URI     string `yaml:"uri"`
 }
 type Prometheus struct {
-	Path string `yaml:"path"`
-	Port string `yaml:"port"`
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
+	Port    string `yaml:"port"`
 }
 
 type Plugin struct {
@@ -260,7 +261,7 @@ func (bp configurationsParser) ReadConfigurationsCore() (*BeelzebubCoreConfigura
 //	BEELZEBUB_LOGGING_DEBUG, BEELZEBUB_LOGGING_DEBUG_REPORT_CALLER,
 //	BEELZEBUB_LOGGING_LOG_DISABLE_TIMESTAMP, BEELZEBUB_LOGGING_LOGS_PATH,
 //	BEELZEBUB_RABBITMQ_ENABLED, BEELZEBUB_RABBITMQ_URI,
-//	BEELZEBUB_PROMETHEUS_PATH, BEELZEBUB_PROMETHEUS_PORT,
+//	BEELZEBUB_PROMETHEUS_ENABLED, BEELZEBUB_PROMETHEUS_PATH, BEELZEBUB_PROMETHEUS_PORT,
 //	BEELZEBUB_CLOUD_ENABLED, BEELZEBUB_CLOUD_URI, BEELZEBUB_CLOUD_AUTH_TOKEN
 func applyEnvOverrides(cfg *BeelzebubCoreConfigurations) error {
 	parse := func(name, value string) (bool, error) {
@@ -303,6 +304,13 @@ func applyEnvOverrides(cfg *BeelzebubCoreConfigurations) error {
 	}
 	if v := os.Getenv("BEELZEBUB_RABBITMQ_URI"); v != "" {
 		cfg.Core.Tracings.RabbitMQ.URI = v
+	}
+	if v := os.Getenv("BEELZEBUB_PROMETHEUS_ENABLED"); v != "" {
+		parsed, err := parse("BEELZEBUB_PROMETHEUS_ENABLED", v)
+		if err != nil {
+			return err
+		}
+		cfg.Core.Prometheus.Enabled = parsed
 	}
 	if v := os.Getenv("BEELZEBUB_PROMETHEUS_PATH"); v != "" {
 		cfg.Core.Prometheus.Path = v

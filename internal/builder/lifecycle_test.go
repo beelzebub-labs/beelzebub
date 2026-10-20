@@ -143,6 +143,7 @@ func TestBuilderFailedStartupClosesPollingAndSpool(t *testing.T) {
 
 		t.Cleanup(server.Close)
 		core := &parser.BeelzebubCoreConfigurations{}
+		core.Core.Prometheus = parser.Prometheus{Enabled: true, Path: "/metrics", Port: "127.0.0.1:0"}
 		core.Core.BeelzebubCloud.Enabled = true
 		core.Core.BeelzebubCloud.URI = server.URL
 		core.Core.BeelzebubCloud.AuthToken = "synthetic-token"
@@ -151,13 +152,17 @@ func TestBuilderFailedStartupClosesPollingAndSpool(t *testing.T) {
 		b.beelzebubCoreConfigurations = core
 		b.traceStrategy = func(tracer.Event) {}
 		t.Cleanup(func() { _ = b.Close() })
-		err = b.Run()
-		require.Error(t, err)
+		runErr := b.Run()
+		require.Error(t, runErr)
+		require.NotNil(t, b.prometheusServer)
+		metricsListener, err := net.Listen("tcp", b.prometheusServer.Addr)
+		require.NoError(t, err, "failed startup must release the metrics listener as well as the spool")
+		require.NoError(t, metricsListener.Close())
 
 		if empty {
-			require.ErrorContains(t, err, "no honeypots configuration")
+			require.ErrorContains(t, runErr, "no honeypots configuration")
 		} else {
-			require.ErrorContains(t, err, "error during init protocol")
+			require.ErrorContains(t, runErr, "error during init protocol")
 		}
 
 		reopened, err := plugins.NewDurableEvents(server.URL, "synthetic-token", core.Core.BeelzebubCloud.EventSpoolDir, 0, 0)

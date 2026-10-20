@@ -1,6 +1,10 @@
 package builder
 
 import (
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +13,8 @@ import (
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestBuilderClose_LogFile(t *testing.T) {
@@ -114,8 +120,83 @@ func TestBuilderRun_Empty(t *testing.T) {
 		t.Errorf("expected no error running empty builder, got %v", err)
 	}
 
-	// Give a little time for the prometheus goroutine (which will just exit immediately since prometheus config is empty)
-	time.Sleep(10 * time.Millisecond)
+	require.NoError(t, b.Close())
+}
+
+func TestBuilderRun_PrometheusDisabled(t *testing.T) {
+	for _, enabled := range []string{"", "enabled: false"} {
+		t.Run(enabled, func(t *testing.T) {
+			// Reserve a free address, then release it so Run would be able to bind it.
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			address := listener.Addr().String()
+			require.NoError(t, listener.Close())
+
+			config := &parser.BeelzebubCoreConfigurations{}
+			require.NoError(t, yaml.Unmarshal([]byte("core:\n  prometheus:\n    "+
+				enabled+"\n    path: /disabled-metrics\n    port: "+address+"\n"), config))
+			b := NewBuilder()
+			b.beelzebubCoreConfigurations = config
+			b.traceStrategy = func(event tracer.Event) {}
+			t.Cleanup(func() { assert.NoError(t, b.Close()) })
+
+			require.NoError(t, b.Run())
+			assert.Nil(t, b.prometheusServer)
+			conn, err := net.DialTimeout("tcp", address, time.Second)
+			if conn != nil {
+				conn.Close()
+			}
+			require.Error(t, err, "disabled Prometheus must not accept TCP connections")
+			listener, err = net.Listen("tcp", address)
+			require.NoError(t, err, "disabled Prometheus must leave its configured port free")
+			require.NoError(t, listener.Close())
+
+			// Metrics must not leak through another server using the default mux.
+			response := httptest.NewRecorder()
+			http.DefaultServeMux.ServeHTTP(response, httptest.NewRequest("GET", "/disabled-metrics", nil))
+			assert.Equal(t, http.StatusNotFound, response.Code)
+		})
+	}
+}
+
+func TestBuilderRun_PrometheusEnabled(t *testing.T) {
+	b := NewBuilder()
+	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{}
+	b.beelzebubCoreConfigurations.Core.Prometheus = parser.Prometheus{
+		Enabled: true, Path: "/custom-metrics", Port: "127.0.0.1:0",
+	}
+	b.traceStrategy = func(event tracer.Event) {}
+	t.Cleanup(func() { assert.NoError(t, b.Close()) })
+	require.NoError(t, b.Run())
+	require.NotNil(t, b.prometheusServer)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Get("http://" + b.prometheusServer.Addr + "/custom-metrics")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "go_goroutines")
+	assert.Contains(t, string(body), "beelzebub_capture_failures_total")
+
+	require.NoError(t, b.Close())
+	listener, err := net.Listen("tcp", b.prometheusServer.Addr)
+	require.NoError(t, err, "closing the builder must release the metrics port")
+	require.NoError(t, listener.Close())
+}
+
+func TestBuilderRun_PrometheusPortInUse(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	b := NewBuilder()
+	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{}
+	b.beelzebubCoreConfigurations.Core.Prometheus = parser.Prometheus{
+		Enabled: true, Path: "/metrics", Port: listener.Addr().String(),
+	}
+	require.ErrorContains(t, b.Run(), "error init Prometheus")
+	require.NoError(t, b.Close())
 }
 
 func TestBuilderRun_AllProtocols(t *testing.T) {

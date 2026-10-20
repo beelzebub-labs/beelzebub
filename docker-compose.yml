@@ -15,7 +15,7 @@ services:
       - "8081:8081"
       - "80:80"
       - "3306:3306"
-      - "2112:2112" #Prometheus Open Metrics
+      # Publish "127.0.0.1:2112:2112" here only when core.prometheus.enabled is true.
     env_file:
       - path: .env
         required: false
