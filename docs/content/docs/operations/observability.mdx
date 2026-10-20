@@ -3,6 +3,20 @@ title: Observability
 description: Monitor interactions, runtime health, and event delivery without losing sensitive-data control.
 ---
 
-Prometheus listens on the configured `path` and `port` (default `/metrics` and `:2112`). The counters are `beelzebub_events_total`, `beelzebub_ssh_events_total`, `beelzebub_http_events_total`, `beelzebub_tcp_events_total`, `beelzebub_telnet_events_total`, and `beelzebub_mcp_events_total`.
+Prometheus is disabled by default. When `core.prometheus.enabled` is `false` or omitted, the runtime does not start a metrics HTTP server or bind a metrics port, even if `path` and `port` are configured. Existing configurations must explicitly enable metrics after upgrading.
+
+Set `core.prometheus.enabled: true` or `BEELZEBUB_PROMETHEUS_ENABLED=true` to listen on the configured `path` and `port`. Both fields are required when enabled; the repository configuration supplies `/metrics` and `:2112`. Environment values override YAML, so `BEELZEBUB_PROMETHEUS_ENABLED=false` also disables a listener enabled in YAML.
+
+```yaml
+core:
+  prometheus:
+    enabled: true
+    path: "/metrics"
+    port: ":2112"
+```
+
+The default Docker Compose file does not publish the metrics port. To scrape from the host with bridge networking, enable metrics and add `"127.0.0.1:2112:2112"` to the `beelzebub` service's `ports`, then recreate the container. With host networking, the runtime flag directly controls the listener. The Helm chart also defaults to `enabled: false` in `beelzebubCoreConfigs`.
+
+The counters are `beelzebub_events_total`, `beelzebub_ssh_events_total`, `beelzebub_http_events_total`, `beelzebub_tcp_events_total`, `beelzebub_telnet_events_total`, and `beelzebub_mcp_events_total`.
 
 RabbitMQ tracing publishes JSON events to the `event` queue when enabled. Use TLS, authentication, queue permissions, retention controls, and a dedicated vhost. Logs and events can include credentials, headers, request bodies, commands, and environment data; restrict access and redact downstream.
