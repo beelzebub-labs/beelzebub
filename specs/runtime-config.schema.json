@@ -579,7 +579,8 @@
           "enum": [
             "",
             "ollama",
-            "openai"
+            "openai",
+            "orcarouter"
           ]
         },
         "llmModel": {
@@ -589,6 +590,9 @@
           "type": "string"
         },
         "openAISecretKey": {
+          "type": "string"
+        },
+        "orcarouterSecretKey": {
           "type": "string"
         },
         "host": {

@@ -315,6 +315,16 @@ func TestValidateInlineSecretKey(t *testing.T) {
 	assert.True(t, hasIssue(issues, LevelWarning, "openAISecretKey is set inline in config — prefer using the OPEN_AI_SECRET_KEY environment variable to avoid exposing secrets in version control"))
 }
 
+func TestValidateInlineOrcaRouterSecretKey(t *testing.T) {
+	svc := makeService("test.yaml", "http", ":8080", []Command{
+		{RegexStr: "test", Plugin: "LLMHoneypot"},
+	})
+	svc.Plugin.OrcaRouterSecretKey = "sk-orca-test-only"
+	result := Validate([]BeelzebubServiceConfiguration{svc}, nil)
+	issues := findIssues(result, "test.yaml")
+	assert.True(t, hasIssue(issues, LevelWarning, "orcarouterSecretKey is set inline in config — prefer using the ORCAROUTER_API_KEY environment variable to avoid exposing secrets in version control"))
+}
+
 func TestValidateDeadlineTimeout(t *testing.T) {
 	tests := []struct {
 		name     string

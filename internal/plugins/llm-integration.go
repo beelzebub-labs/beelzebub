@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,11 @@ const (
 	LLMPluginName                       = "LLMHoneypot"
 	openAIEndpoint                      = "https://api.openai.com/v1/chat/completions"
 	ollamaEndpoint                      = "http://localhost:11434/api/chat"
+	// OrcaRouter is an OpenAI-compatible AI gateway. Keep its endpoint and
+	// credential independent from the OpenAI provider.
+	orcaRouterBaseURL      = "https://api.orcarouter.ai/v1"
+	orcaRouterChatEndpoint = orcaRouterBaseURL + "/chat/completions"
+	orcaRouterKeyEnv       = "ORCAROUTER_API_KEY"
 )
 
 var ErrRateLimited = errors.New("rate limited")
@@ -36,6 +42,7 @@ var globalRateLimiterMutex sync.RWMutex
 type LLMHoneypot struct {
 	Histories               []Message
 	OpenAIKey               string
+	OrcaRouterKey           string
 	client                  *resty.Client
 	Protocol                tracer.Protocol
 	Provider                LLMProvider
@@ -49,6 +56,7 @@ type LLMHoneypot struct {
 	RateLimitEnabled        bool
 	RateLimitRequests       int
 	RateLimitWindowSeconds  int
+	catalog                 *OrcaRouterCatalog
 }
 
 type Choice struct {
@@ -99,7 +107,11 @@ type LLMProvider int
 const (
 	Ollama LLMProvider = iota
 	OpenAI
+	OrcaRouter
 )
+
+// llmProviderNames lists the accepted llmProvider values in configuration order.
+const llmProviderNames = "ollama, openai, orcarouter"
 
 func FromStringToLLMProvider(llmProvider string) (LLMProvider, error) {
 	switch strings.ToLower(llmProvider) {
@@ -107,8 +119,10 @@ func FromStringToLLMProvider(llmProvider string) (LLMProvider, error) {
 		return Ollama, nil
 	case "openai":
 		return OpenAI, nil
+	case "orcarouter":
+		return OrcaRouter, nil
 	default:
-		return -1, fmt.Errorf("provider %s not found, valid providers: ollama, openai", llmProvider)
+		return -1, fmt.Errorf("provider %s not found, valid providers: %s", llmProvider, llmProviderNames)
 	}
 }
 
@@ -121,6 +135,7 @@ func BuildHoneypot(
 	return &LLMHoneypot{
 		Histories:               histories,
 		OpenAIKey:               servConf.Plugin.OpenAISecretKey,
+		OrcaRouterKey:           servConf.Plugin.OrcaRouterSecretKey,
 		Protocol:                protocol,
 		Host:                    servConf.Plugin.Host,
 		Model:                   servConf.Plugin.LLMModel,
@@ -142,6 +157,10 @@ func InitLLMHoneypot(config LLMHoneypot) *LLMHoneypot {
 
 	if os.Getenv("OPEN_AI_SECRET_KEY") != "" {
 		config.OpenAIKey = os.Getenv("OPEN_AI_SECRET_KEY")
+	}
+
+	if os.Getenv(orcaRouterKeyEnv) != "" {
+		config.OrcaRouterKey = os.Getenv(orcaRouterKeyEnv)
 	}
 
 	return &config
@@ -309,6 +328,89 @@ func (llmHoneypot *LLMHoneypot) openAICaller(messages []Message) (string, error)
 	return removeQuotes(response.Result().(*Response).Choices[0].Message.Content), nil
 }
 
+// orcaRouterCaller posts an OpenAI-compatible chat completion to OrcaRouter.
+// OrcaRouter routes many providers behind one endpoint, so the request shape is
+// the same as OpenAI while the endpoint, credential and model naming stay
+// OrcaRouter's own.
+func (llmHoneypot *LLMHoneypot) orcaRouterCaller(messages []Message) (string, error) {
+	requestJSON, err := json.Marshal(Request{
+		Model:    llmHoneypot.Model,
+		Messages: messages,
+		Stream:   false,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if llmHoneypot.OrcaRouterKey == "" {
+		return "", fmt.Errorf("orcaRouterKey is empty: set %s or orcarouterSecretKey", orcaRouterKeyEnv)
+	}
+
+	if err := llmHoneypot.checkOrcaRouterModelSupport(); err != nil {
+		return "", err
+	}
+
+	host := llmHoneypot.Host
+	if host == "" {
+		host = orcaRouterChatEndpoint
+	}
+
+	log.Debug(string(requestJSON))
+	response, err := llmHoneypot.client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(requestJSON).
+		SetAuthToken(llmHoneypot.OrcaRouterKey).
+		SetResult(&Response{}).
+		Post(host)
+
+	if err != nil {
+		return "", fmt.Errorf("orcarouter request failed: %w", err)
+	}
+
+	if err := orcaRouterHTTPError(response.StatusCode(), response.Body()); err != nil {
+		return "", err
+	}
+
+	if len(response.Result().(*Response).Choices) == 0 {
+		return "", errors.New("no choices")
+	}
+
+	return removeQuotes(response.Result().(*Response).Choices[0].Message.Content), nil
+}
+
+// checkOrcaRouterModelSupport fails closed when the OrcaRouter catalog reports
+// that the configured model cannot serve chat completions. Models missing from
+// the catalog (or a catalog that cannot be reached) are left to the provider to
+// accept or reject, so a catalog outage never blocks deception traffic.
+func (llmHoneypot *LLMHoneypot) checkOrcaRouterModelSupport() error {
+	catalog := llmHoneypot.ensureOrcaRouterCatalog()
+	if catalog == nil {
+		return nil
+	}
+
+	model, known := catalog.Lookup(llmHoneypot.Model)
+	if !known {
+		return nil
+	}
+
+	if !model.SupportsChat() {
+		return fmt.Errorf("orcarouter model %q does not support chat completions (endpoints: %s); choose a chat-capable model such as %s",
+			llmHoneypot.Model, strings.Join(model.SupportedEndpointTypes, ", "), orcaRouterDefaultModel)
+	}
+
+	return nil
+}
+
+// ensureOrcaRouterCatalog returns the catalog for this honeypot, performing at
+// most one bounded discovery request (cached process-wide for a fixed window).
+func (llmHoneypot *LLMHoneypot) ensureOrcaRouterCatalog() *OrcaRouterCatalog {
+	if llmHoneypot.catalog != nil {
+		return llmHoneypot.catalog
+	}
+	llmHoneypot.catalog = fetchOrcaRouterCatalog(context.Background(), llmHoneypot.client, OrcaRouterModelsURL(llmHoneypot.Host), llmHoneypot.OrcaRouterKey)
+	return llmHoneypot.catalog
+}
+
 func (llmHoneypot *LLMHoneypot) ollamaCaller(messages []Message) (string, error) {
 	var err error
 
@@ -461,8 +563,10 @@ func (llmHoneypot *LLMHoneypot) executeModel(prompt []Message) (string, error) {
 		return llmHoneypot.ollamaCaller(prompt)
 	case OpenAI:
 		return llmHoneypot.openAICaller(prompt)
+	case OrcaRouter:
+		return llmHoneypot.orcaRouterCaller(prompt)
 	default:
-		return "", fmt.Errorf("provider %d not found, valid providers: ollama, openai", llmHoneypot.Provider)
+		return "", fmt.Errorf("provider %d not found, valid providers: %s", llmHoneypot.Provider, llmProviderNames)
 	}
 }
 

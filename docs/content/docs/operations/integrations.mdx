@@ -7,6 +7,14 @@ RabbitMQ is configured under `core.tracings.rabbit-mq`. Beelzebub Cloud uses `co
 
 LLM providers are configured per service. OpenAI uses `OPEN_AI_SECRET_KEY`; Ollama uses a configured `host`. Keep provider egress allowlisted and document what captured input is sent to each provider.
 
+## OrcaRouter
+
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible AI gateway that routes many providers behind one endpoint. Select it with `llmProvider: "orcarouter"` and authenticate with `ORCAROUTER_API_KEY`; the key is independent from `OPEN_AI_SECRET_KEY`, and the `orcarouterSecretKey` field exists only as an explicit alternative for deployments that cannot inject environment variables. Requests go to `https://api.orcarouter.ai/v1/chat/completions` unless `host` overrides the origin.
+
+The catalog is read from `GET /v1/models` on the same origin as inference, cached for ten minutes, and falls back to a small verified seed if the catalog is unreachable. Discovery is used to reject a model that cannot serve chat completions before an inference request is spent, so an embedding or image-generation model is never silently wired into a terminal decoy. The recommended default is `orcacyber-zero`, OrcaRouter's security-specialised model, which requires a business-verified workspace; `orcarouter/fusion` is the documented fallback when that model is not unlocked for the workspace that owns the key. Set `llmModel` to the exact ID returned by the catalog.
+
+It also runs gateway-level, zero-trust security for AI agents on the same endpoint — screening every prompt and response and governing every tool call on a default-deny basis — through Agent Firewall, Guardrails for prompt and response policy, and the OrcaCode Review merge gate.
+
 These integrations are optional and are not required for a local static-handler deployment.
 
 ## Beyond Beelzebub Runtime

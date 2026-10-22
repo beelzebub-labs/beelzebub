@@ -167,6 +167,7 @@ type Config struct {
 	LLMProvider             string
 	LLMModel                string
 	OpenAISecretKey         string
+	OrcaRouterSecretKey     string
 	Host                    string
 	Prompt                  string
 	InputValidationEnabled  bool

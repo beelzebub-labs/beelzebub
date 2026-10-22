@@ -168,6 +168,20 @@ func TestValidateConfigSchema_Valid(t *testing.T) {
 			},
 		},
 		{
+			name: "SSH with OrcaRouter LLM",
+			config: BeelzebubServiceConfiguration{
+				ApiVersion: "v1",
+				Protocol:   "ssh", Address: ":2223",
+				ServerVersion: "OpenSSH", PasswordRegex: "^(.+)$",
+				Commands: []Command{{RegexStr: "^(.+)$", Plugin: "LLMHoneypot"}},
+				Plugin: Plugin{
+					LLMProvider:         "orcarouter",
+					LLMModel:            "orcarouter/auto",
+					OrcaRouterSecretKey: "sk-orca-...",
+				},
+			},
+		},
+		{
 			name: "HTTP with Maze",
 			config: BeelzebubServiceConfiguration{
 				ApiVersion: "v1",

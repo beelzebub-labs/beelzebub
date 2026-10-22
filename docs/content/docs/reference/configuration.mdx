@@ -100,11 +100,12 @@ MCP tools require a non-empty `name`. They may include `description`, a static `
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `llmProvider` | string | `openai` or `ollama`; required with an LLM command |
+| `llmProvider` | string | `openai`, `ollama`, or `orcarouter`; required with an LLM command |
 | `llmModel` | string | Non-empty model name required with an LLM command |
-| `host` | string | Provider endpoint, commonly used for Ollama |
+| `host` | string | Provider endpoint, commonly used for Ollama or a self-hosted OrcaRouter origin |
 | `prompt` | string | System behavior for generated responses |
 | `openAISecretKey` | string | Compatibility field; use `OPEN_AI_SECRET_KEY` instead |
+| `orcarouterSecretKey` | string | Compatibility field; use `ORCAROUTER_API_KEY` instead. Independent from the OpenAI credential |
 | `inputValidationEnabled` / `outputValidationEnabled` | boolean | Enable the corresponding LLM safety check |
 | `inputValidationPrompt` / `outputValidationPrompt` | string | Prompt used by the corresponding safety check |
 | `rateLimitEnabled` | boolean | Enable per-client request limiting |

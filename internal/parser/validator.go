@@ -214,6 +214,13 @@ func validatePluginConfig(svc BeelzebubServiceConfiguration) []ValidationIssue {
 		})
 	}
 
+	if svc.Plugin.OrcaRouterSecretKey != "" {
+		issues = append(issues, ValidationIssue{
+			Level:   LevelWarning,
+			Message: "orcarouterSecretKey is set inline in config — prefer using the ORCAROUTER_API_KEY environment variable to avoid exposing secrets in version control",
+		})
+	}
+
 	if svc.Plugin.OpenAISecretKey != "" {
 		issues = append(issues, ValidationIssue{
 			Level:   LevelWarning,

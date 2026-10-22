@@ -15,7 +15,7 @@ type llmPlugin struct{}
 func (l *llmPlugin) Metadata() plugin.Metadata {
 	return plugin.Metadata{
 		Name:        LLMPluginName,
-		Description: "LLM-powered response generator — emulates realistic system behaviour via OpenAI or Ollama",
+		Description: "LLM-powered response generator — emulates realistic system behaviour via OpenAI, Ollama, or OrcaRouter",
 		Version:     "1.0.0",
 		Author:      "beelzebub",
 	}
@@ -35,6 +35,7 @@ func (l *llmPlugin) Execute(ctx context.Context, req plugin.CommandRequest) (str
 	hp := &LLMHoneypot{
 		Histories:               MessagesFromPlugin(req.History),
 		OpenAIKey:               req.Config.OpenAISecretKey,
+		OrcaRouterKey:           req.Config.OrcaRouterSecretKey,
 		Protocol:                proto,
 		Host:                    req.Config.Host,
 		Model:                   req.Config.LLMModel,

@@ -29,6 +29,7 @@ func ConfigFromServiceConf(servConf parser.BeelzebubServiceConfiguration) plugin
 		LLMProvider:             servConf.Plugin.LLMProvider,
 		LLMModel:                servConf.Plugin.LLMModel,
 		OpenAISecretKey:         servConf.Plugin.OpenAISecretKey,
+		OrcaRouterSecretKey:     servConf.Plugin.OrcaRouterSecretKey,
 		Host:                    servConf.Plugin.Host,
 		Prompt:                  servConf.Plugin.Prompt,
 		InputValidationEnabled:  servConf.Plugin.InputValidationEnabled,

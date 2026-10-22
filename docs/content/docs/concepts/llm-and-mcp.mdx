@@ -3,7 +3,7 @@ title: LLM Deception And MCP Tripwires
 description: Use adaptive responses and decoy tools to study attacker behavior and agent guardrail bypasses.
 ---
 
-`LLMHoneypot` uses OpenAI or Ollama to generate protocol-shaped responses and can keep per-session history. Configure provider, model, host, validation prompts, and rate limiting where appropriate. OpenAI credentials should come from `OPEN_AI_SECRET_KEY`.
+`LLMHoneypot` uses OpenAI, Ollama, or OrcaRouter to generate protocol-shaped responses and can keep per-session history. Configure provider, model, host, validation prompts, and rate limiting where appropriate. OpenAI credentials should come from `OPEN_AI_SECRET_KEY`; the `orcarouter` provider uses its own `ORCAROUTER_API_KEY` and endpoint, and its model catalog is discovered from the same origin so that a non-chat model is rejected before inference.
 
 MCP services expose decoy tools over Streamable HTTP at `/mcp`. A tool invocation that should never occur under normal agent behavior is a high-signal prompt-injection indicator. Make tool descriptions realistic, log the exact invocation, and isolate the MCP service from real tools and credentials.
 

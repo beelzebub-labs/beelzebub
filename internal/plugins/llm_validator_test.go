@@ -118,6 +118,47 @@ func TestLLMPluginValidator_OllamaEmptySecretKey(t *testing.T) {
 	assert.Empty(t, issues)
 }
 
+func TestLLMPluginValidator_ValidOrcaRouterProvider(t *testing.T) {
+	validator := &LLMPluginValidator{}
+
+	config := makeLLMService("orcarouter", orcaRouterDefaultModel, "")
+	config.Plugin.OrcaRouterSecretKey = "sk-orca-test-only"
+
+	issues := validator.Validate(config)
+	assert.Empty(t, issues)
+}
+
+func TestLLMPluginValidator_OrcaRouterEmptySecretKey(t *testing.T) {
+	t.Setenv(orcaRouterKeyEnv, "")
+	validator := &LLMPluginValidator{}
+
+	config := makeLLMService("orcarouter", orcaRouterDefaultModel, "")
+
+	issues := validator.Validate(config)
+	assert.Len(t, issues, 1)
+	assert.Equal(t, parser.LevelWarning, issues[0].Level)
+	assert.Contains(t, issues[0].Message, "orcarouterSecretKey is empty")
+	assert.Contains(t, issues[0].Message, orcaRouterKeyEnv)
+}
+
+func TestLLMPluginValidator_OrcaRouterSecretKeyFromEnv(t *testing.T) {
+	t.Setenv(orcaRouterKeyEnv, "test-only-key")
+	issues := (&LLMPluginValidator{}).Validate(makeLLMService("orcarouter", orcaRouterDefaultModel, ""))
+	assert.Empty(t, issues)
+}
+
+func TestLLMPluginValidator_OpenAIKeyDoesNotSatisfyOrcaRouter(t *testing.T) {
+	t.Setenv(orcaRouterKeyEnv, "")
+	validator := &LLMPluginValidator{}
+
+	config := makeLLMService("orcarouter", orcaRouterDefaultModel, "sk-openai-key")
+
+	issues := validator.Validate(config)
+	assert.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Message, "orcarouterSecretKey is empty",
+		"OrcaRouter credentials are independent from the OpenAI key")
+}
+
 func TestLLMPluginValidator_FallbackCommand(t *testing.T) {
 	validator := &LLMPluginValidator{}
 

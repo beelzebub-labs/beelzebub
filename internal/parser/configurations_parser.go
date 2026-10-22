@@ -59,6 +59,7 @@ type Prometheus struct {
 
 type Plugin struct {
 	OpenAISecretKey         string `yaml:"openAISecretKey" json:"openAISecretKey,omitempty"`
+	OrcaRouterSecretKey     string `yaml:"orcarouterSecretKey" json:"orcarouterSecretKey,omitempty"`
 	Host                    string `yaml:"host" json:"host,omitempty"`
 	LLMModel                string `yaml:"llmModel" json:"llmModel,omitempty"`
 	LLMProvider             string `yaml:"llmProvider" json:"llmProvider,omitempty"`
