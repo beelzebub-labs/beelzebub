@@ -1,6 +1,18 @@
 # Default values for beelzebub-chart.
 replicaCount: 1
 
+eventSpool:
+  enabled: false
+  mountPath: /var/lib/beelzebub/events
+  maxBytes: "1073741824"
+  maxRecords: "100000"
+  persistence:
+    existingClaim: ""
+    size: 2Gi
+    storageClassName: null
+    accessModes:
+      - ReadWriteOnce
+
 image:
   repository: m4r10/beelzebub
   pullPolicy: IfNotPresent

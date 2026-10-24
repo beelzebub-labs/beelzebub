@@ -22,13 +22,13 @@ Beelzebub gives security teams a configurable way to study activity directed at 
 - **Observe what happens after contact.** Capture evidence from decoy interactions, including commands, HTTP request details, and session context, depending on the protocol. Give analysts a record of activity directed at the service to support investigation.
 - **Bring evidence into your workflow.** Inspect logs locally, publish structured events to RabbitMQ, or enable Beelzebub Platform reporting. Enable Prometheus metrics with `core.prometheus.enabled: true` to monitor runtime activity; by default, the metrics listener is disabled and binds no port.
 
-## See it in action
+## See It In Action
 
 Watch an LLM-powered decoy respond to attacker input. The demo illustrates how generated responses can sustain an interaction beyond a fixed set of command handlers.
 
 ![Demo of an LLM-powered Beelzebub decoy responding to attacker input](https://github.com/user-attachments/assets/4dbb9a67-6c12-49c5-82ac-9b3e340406ca)
 
-## How it works
+## How It Works
 
 [![Interactions reach decoy services, receive responses from the Beelzebub runtime, and produce security events. YAML configuration feeds the runtime through validation; Go plugins are compiled into the runtime to extend services and responses. Events go to logs with optional RabbitMQ or Platform reporting, while Prometheus exposes metrics separately.](docs/public/readme/how-it-works.svg)](docs/public/readme/how-it-works.svg)
 
@@ -37,6 +37,8 @@ Define services and rules in YAML, validate the configuration, and start the run
 The framework supports **SSH, HTTP, TCP, TELNET, and MCP**. MCP decoys expose bait tools that make suspicious invocations observable during controlled agent testing. They can provide evidence of prompt-injection attempts; they do not guarantee detection of every attempt.
 
 Deployment options include a local Go binary, Docker Compose, and Kubernetes with Helm. See the [architecture guide](https://docs.beelzebub.ai/concepts/architecture) for runtime behavior and extension boundaries.
+
+Cloud event reporting optionally supports a persistent disk queue. Set `BEELZEBUB_EVENT_SPOOL_DIR` to retained writable storage, or use the optional Compose override or Helm persistence settings. Read the [durable delivery and recovery guide](docs/content/docs/operations/event-delivery.mdx) for retries, capacity, and at-least-once delivery limitations. Existing configuration retrieval and default delivery behavior remain unchanged.
 
 ## Explore the decoys
 
@@ -53,7 +55,7 @@ Start with one of the **18 example configurations** in [configurations/services]
 
 Examples range from banners and selected responses to interactive exchanges. **LLM** examples require a configured provider; WordPress uses it for its catch-all route. Check your deployment's port mappings when enabling additional examples.
 
-## Get started
+## Get Started
 
 You need **Git, a shell, and Docker Engine with Compose v2**. Use an **isolated lab host** with authorization for all configured listeners: the installer starts a bundle of example services, including privileged ports. On Linux it can enable **host networking**; Docker does not provide network isolation in that mode.
 
@@ -92,13 +94,13 @@ Explore the platform's deployment, investigation, and reporting capabilities, an
 
 **[Explore Beelzebub Platform →](https://beelzebub.ai/products/beelzebub-cloud/)**
 
-## Resources and community
+## Resources And Community
 
 - **[Documentation](https://docs.beelzebub.ai):** configuration, protocols, operations, integrations, and recipes.
 - **[Plugin authoring](https://docs.beelzebub.ai/plugins/authoring):** build extensions with the public Go SDK. Plugins execute in-process; review their source and pin trusted versions.
 - **[Contributing](CONTRIBUTING.md):** contribute code, examples, or documentation under the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately through [SECURITY.md](SECURITY.md).
 
-For development, use the Go version declared in [go.mod](go.mod), Git, and Make. Build with `make build`; run `make test.unit`, `go vet ./...`, and `make validate-all` before submitting runtime changes. The [development workflow](https://docs.beelzebub.ai/contributing/development) covers integration tests and their Docker dependencies.
+For development, use the Go version declared in [go.mod](go.mod), Git, and Make. Build with `make build`; run `make test.unit`, `go vet ./...`, and `make validate.all` before submitting runtime changes. The [development workflow](https://docs.beelzebub.ai/contributing/development) covers integration tests and their Docker dependencies.
 
 Thank you to [JetBrains](https://jb.gg/OpenSourceSupport) for supporting development with tools through its open-source support program.
 
