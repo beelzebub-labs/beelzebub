@@ -28,8 +28,9 @@ The repository's default bundle includes many examples. To run only one non-priv
 ```bash
 curl -i http://localhost:8080/
 docker compose logs -f beelzebub
-curl http://localhost:2112/metrics | grep beelzebub_
 ```
+
+Prometheus is disabled by default and the Compose file does not publish its port. To collect metrics, follow the [observability setup](../../operations/observability), then query `http://localhost:2112/metrics`.
 
 Stop the lab with `docker compose down`. Remove the generated container state only after deciding how captured events and logs should be retained.
 

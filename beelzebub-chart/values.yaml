@@ -19,6 +19,7 @@ beelzebubCoreConfigs: |
           enabled: false
           uri: ""
       prometheus:
+        enabled: false
         path: "/metrics"
         port: ":2112"
 
