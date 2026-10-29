@@ -28,6 +28,11 @@ func (pm *ProtocolManager) SetProtocolStrategy(strategy ServiceStrategy) {
 	pm.strategy = strategy
 }
 
+// SetTracer selects a capture boundary before any services are initialized.
+func (pm *ProtocolManager) SetTracer(capture tracer.Tracer) {
+	pm.tracer = capture
+}
+
 // InitService is the method that initializes the honeypot
 func (pm *ProtocolManager) InitService(beelzebubServiceConfiguration parser.BeelzebubServiceConfiguration) error {
 	return pm.strategy.Init(beelzebubServiceConfiguration, pm.tracer)

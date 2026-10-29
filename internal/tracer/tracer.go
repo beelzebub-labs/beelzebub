@@ -2,9 +2,15 @@
 package tracer
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/beelzebub-labs/beelzebub/v3/internal/resourceguard"
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	log "github.com/sirupsen/logrus"
@@ -12,7 +18,23 @@ import (
 
 const Workers = 5
 
+// LegacyQueueStallTimeout bounds a volatile queue that stops making progress.
+// Client cancellation cannot discard a completed event while workers drain it.
+const LegacyQueueStallTimeout = 5 * time.Second
+
+// LegacyQueueMaxWaiters bounds producers retaining events outside the queue.
+// Connected clients can apply backpressure without consuming the smaller
+// disconnected retention budget, but cannot retain unbounded requests either.
+const LegacyQueueMaxWaiters = 256
+
+// LegacyQueueMaxDisconnectedWaiters bounds canceled captures retained while
+// delivery makes progress, independently of the overall waiting budget.
+const LegacyQueueMaxDisconnectedWaiters = 16
+
+var ErrLegacyQueueCapacity = errors.New("memory event queue and waiting capacity exhausted; event not accepted")
+
 type Event struct {
+	EventKey   string `json:",omitempty"`
 	DateTime   string
 	RemoteAddr string
 	Protocol   string
@@ -102,71 +124,130 @@ type Tracer interface {
 	TraceEvent(event Event)
 }
 
-type tracer struct {
-	strategy          Strategy
-	eventsChan        chan Event
-	eventsTotal       prometheus.Counter
-	eventsSSHTotal    prometheus.Counter
-	eventsTCPTotal    prometheus.Counter
-	eventsHTTPTotal   prometheus.Counter
-	eventsMCPTotal    prometheus.Counter
-	eventsTelnetTotal prometheus.Counter
+// ContextTracer extends legacy capture without requiring existing tracer
+// implementations to change. Durable producers should bind their lifetime
+// with WithContext before calling TraceEvent.
+type ContextTracer interface {
+	Tracer
+	TraceEventContext(context.Context, Event) error
+}
 
-	strategyMutex sync.RWMutex
+type contextualTracer struct {
+	ctx     context.Context
+	capture Tracer
+}
+
+func WithContext(ctx context.Context, capture Tracer) ContextTracer {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &contextualTracer{ctx: ctx, capture: capture}
+}
+
+// TraceFinalEvent gives timeout and teardown evidence a fresh, bounded chance
+// to persist after the producer lifetime ends. Accepted delivery stays owned
+// by the spool; closing the spool still cancels this capture immediately.
+func TraceFinalEvent(ctx context.Context, capture Tracer, event Event) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	WithContext(ctx, capture).TraceEvent(event)
+}
+
+func (t *contextualTracer) TraceEvent(event Event) {
+	if err := t.TraceEventContext(t.ctx, event); err != nil {
+		log.WithError(err).Error("Event was not accepted by capture; check storage, admission timeout, and shutdown state")
+	}
+}
+
+func (t *contextualTracer) TraceEventContext(ctx context.Context, event Event) error {
+	if capture, ok := t.capture.(ContextTracer); ok {
+		return capture.TraceEventContext(ctx, event)
+	}
+
+	t.capture.TraceEvent(event)
+	return nil
+}
+
+type tracer struct {
+	strategy             Strategy
+	eventsChan           chan Event
+	eventsTotal          prometheus.Counter
+	eventsSSHTotal       prometheus.Counter
+	eventsTCPTotal       prometheus.Counter
+	eventsHTTPTotal      prometheus.Counter
+	eventsMCPTotal       prometheus.Counter
+	eventsTelnetTotal    prometheus.Counter
+	captureFailuresTotal prometheus.Counter
+
+	strategyMutex             sync.RWMutex
+	durableSink               func(context.Context, Event) error
+	legacyStallTimeout        time.Duration
+	legacyDequeued            atomic.Uint64
+	legacyWaiters             atomic.Int64
+	legacyDisconnectedWaiters atomic.Int64
+	memoryCheck               func() error
 }
 
 var lock = &sync.Mutex{}
 var singleton *tracer
 
 func GetInstance(defaultStrategy Strategy) *tracer {
+	lock.Lock()
+	defer lock.Unlock()
 	if singleton == nil {
-		lock.Lock()
-		defer lock.Unlock()
-		// This is to prevent expensive lock operations every time the GetInstance method is called
-		if singleton == nil {
-			singleton = &tracer{
-				strategy:   defaultStrategy,
-				eventsChan: make(chan Event, Workers),
-				eventsTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "events_total",
-					Help:      "The total number of events",
-				}),
-				eventsSSHTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "ssh_events_total",
-					Help:      "The total number of SSH events",
-				}),
-				eventsTCPTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "tcp_events_total",
-					Help:      "The total number of TCP events",
-				}),
-				eventsHTTPTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "http_events_total",
-					Help:      "The total number of HTTP events",
-				}),
-				eventsMCPTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "mcp_events_total",
-					Help:      "The total number of MCP events",
-				}),
-				eventsTelnetTotal: promauto.NewCounter(prometheus.CounterOpts{
-					Namespace: "beelzebub",
-					Name:      "telnet_events_total",
-					Help:      "The total number of TELNET events",
-				}),
-			}
+		singleton = &tracer{
+			strategy:    defaultStrategy,
+			eventsChan:  make(chan Event, Workers),
+			memoryCheck: resourceguard.NewMemoryCheck(),
+			eventsTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "events_total",
+				Help:      "The total number of events",
+			}),
+			captureFailuresTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "capture_failures_total",
+				Help:      "Events that failed admission before durable or volatile capture accepted them",
+			}),
+			eventsSSHTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "ssh_events_total",
+				Help:      "The total number of SSH events",
+			}),
+			eventsTCPTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "tcp_events_total",
+				Help:      "The total number of TCP events",
+			}),
+			eventsHTTPTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "http_events_total",
+				Help:      "The total number of HTTP events",
+			}),
+			eventsMCPTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "mcp_events_total",
+				Help:      "The total number of MCP events",
+			}),
+			eventsTelnetTotal: promauto.NewCounter(prometheus.CounterOpts{
+				Namespace: "beelzebub",
+				Name:      "telnet_events_total",
+				Help:      "The total number of TELNET events",
+			}),
+		}
 
-			for i := 0; i < Workers; i++ {
-				go func(i int) {
-					log.Debug("Trace worker: ", i)
-					for event := range singleton.eventsChan {
-						singleton.strategy(event)
-					}
-				}(i)
-			}
+		for i := 0; i < Workers; i++ {
+			go func(i int) {
+				log.Debug("Trace worker: ", i)
+				for event := range singleton.eventsChan {
+					singleton.legacyDequeued.Add(1)
+					singleton.GetStrategy()(event)
+				}
+			}(i)
 		}
 	}
 
@@ -186,11 +267,163 @@ func (tracer *tracer) GetStrategy() Strategy {
 }
 
 func (tracer *tracer) TraceEvent(event Event) {
+	if err := tracer.TraceEventContext(context.Background(), event); err != nil {
+		log.WithError(err).Error("Event was not accepted by capture")
+	}
+}
+
+// SetDurableSink installs synchronous capture before the volatile worker queue.
+// A closed sink remains installed so shutdown cannot fall back to volatile delivery.
+func (tracer *tracer) SetDurableSink(sink func(context.Context, Event) error) {
+	tracer.strategyMutex.Lock()
+	defer tracer.strategyMutex.Unlock()
+	tracer.durableSink = sink
+}
+
+// NewDurableTracer shares runtime counters without changing the legacy singleton
+// or starting another set of volatile workers.
+func NewDurableTracer(sink func(context.Context, Event) error) Tracer {
+	base := GetInstance(func(Event) {})
+	return &tracer{
+		durableSink:          sink,
+		eventsTotal:          base.eventsTotal,
+		eventsSSHTotal:       base.eventsSSHTotal,
+		eventsTCPTotal:       base.eventsTCPTotal,
+		eventsHTTPTotal:      base.eventsHTTPTotal,
+		eventsMCPTotal:       base.eventsMCPTotal,
+		eventsTelnetTotal:    base.eventsTelnetTotal,
+		captureFailuresTotal: base.captureFailuresTotal,
+	}
+}
+
+func (tracer *tracer) TraceEventContext(ctx context.Context, event Event) (captureErr error) {
+	defer func() {
+		if captureErr != nil && tracer.captureFailuresTotal != nil {
+			tracer.captureFailuresTotal.Inc()
+		}
+	}()
+
+	tracer.strategyMutex.RLock()
+	sink := tracer.durableSink
+	tracer.strategyMutex.RUnlock()
+
+	if sink != nil {
+		if event.EventKey == "" {
+			key, err := uuid.NewV7()
+			if err != nil {
+				return fmt.Errorf("generate durable event key: %w", err)
+			}
+			event.EventKey = key.String()
+		}
+
+		event.DateTime = time.Now().UTC().Format(time.RFC3339Nano)
+		if err := sink(ctx, event); err != nil {
+			return err
+		}
+
+		tracer.updatePrometheusCounters(event.Protocol)
+		return nil
+	}
+
+	if tracer.memoryCheck != nil {
+		if err := tracer.memoryCheck(); err != nil {
+			return err
+		}
+	}
+
 	event.DateTime = time.Now().UTC().Format(time.RFC3339)
 
-	tracer.eventsChan <- event
+	select {
+	case tracer.eventsChan <- event:
+	default:
+		if err := tracer.waitForLegacyCapacity(ctx, event); err != nil {
+			return err
+		}
+	}
 
 	tracer.updatePrometheusCounters(event.Protocol)
+	return nil
+}
+
+func (tracer *tracer) waitForLegacyCapacity(ctx context.Context, event Event) error {
+	if !reserveLegacyWaiter(&tracer.legacyWaiters, LegacyQueueMaxWaiters) {
+		return ErrLegacyQueueCapacity
+	}
+	defer tracer.legacyWaiters.Add(-1)
+
+	// Observe cancellation without discarding an already received event while
+	// delivery makes progress. Only canceled producers use the retention budget,
+	// including clients that disconnect after they have started waiting.
+	done := ctx.Done()
+	disconnected := false
+	defer func() {
+		if disconnected {
+			tracer.legacyDisconnectedWaiters.Add(-1)
+		}
+	}()
+
+	if ctx.Err() != nil {
+		if !reserveLegacyWaiter(&tracer.legacyDisconnectedWaiters, LegacyQueueMaxDisconnectedWaiters) {
+			return ErrLegacyQueueCapacity
+		}
+		disconnected, done = true, nil
+	}
+
+	budget := tracer.legacyStallTimeout
+	if budget <= 0 {
+		budget = LegacyQueueStallTimeout
+	}
+
+	// Poll progress rather than broadcasting every dequeue to every waiting
+	// producer. Keep the ordinary channel send queued between polls.
+	progress := tracer.legacyDequeued.Load()
+	poll := time.NewTicker(min(100*time.Millisecond, max(time.Nanosecond, budget/4)))
+	defer poll.Stop()
+	stall := time.NewTimer(budget)
+	defer stall.Stop()
+
+	for {
+		select {
+		case tracer.eventsChan <- event:
+			return nil
+		case <-done:
+			if !reserveLegacyWaiter(&tracer.legacyDisconnectedWaiters, LegacyQueueMaxDisconnectedWaiters) {
+				return ErrLegacyQueueCapacity
+			}
+			disconnected, done = true, nil
+		case <-poll.C:
+			if tracer.memoryCheck != nil {
+				if err := tracer.memoryCheck(); err != nil {
+					return err
+				}
+			}
+
+			if current := tracer.legacyDequeued.Load(); current != progress {
+				progress = current
+				stall.Reset(budget)
+			}
+		case <-stall.C:
+			if current := tracer.legacyDequeued.Load(); current != progress {
+				progress = current
+				stall.Reset(budget)
+				continue
+			}
+
+			return context.DeadlineExceeded
+		}
+	}
+}
+
+func reserveLegacyWaiter(waiters *atomic.Int64, limit int64) bool {
+	for {
+		waiting := waiters.Load()
+		if waiting >= limit {
+			return false
+		}
+		if waiters.CompareAndSwap(waiting, waiting+1) {
+			return true
+		}
+	}
 }
 
 func (tracer *tracer) updatePrometheusCounters(protocol string) {

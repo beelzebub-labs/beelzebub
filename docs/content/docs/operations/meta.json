@@ -1,4 +1,4 @@
 {
   "title": "Operations",
-  "pages": ["docker", "kubernetes", "hosting", "observability", "integrations", "production-safety"]
+  "pages": ["docker", "kubernetes", "event-delivery", "hosting", "observability", "integrations", "production-safety"]
 }

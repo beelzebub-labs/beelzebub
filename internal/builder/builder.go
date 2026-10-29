@@ -28,15 +28,31 @@ import (
 
 const RabbitmqQueueName = "event"
 
+// eventChannel is the AMQP surface used for delivery; the real channel and
+// test publishers share the same routing and resource-lifetime contract.
+type eventChannel interface {
+	QueueDeclare(string, bool, bool, bool, bool, amqp.Table) (amqp.Queue, error)
+	PublishWithContext(context.Context, string, string, bool, bool, amqp.Publishing) error
+	Close() error
+}
+
+type cloudEventSender interface {
+	SendEvent(tracer.Event) (bool, error)
+	Stop()
+}
+
 type Builder struct {
 	beelzebubServicesConfiguration []parser.BeelzebubServiceConfiguration
 	beelzebubCoreConfigurations    *parser.BeelzebubCoreConfigurations
 	traceStrategy                  tracer.Strategy
-	rabbitMQChannel                *amqp.Channel
+	rabbitMQChannel                eventChannel
 	rabbitMQConnection             *amqp.Connection
 	logsFile                       *os.File
 	startedServices                []plugin.ServicePlugin
 	servicesCancel                 context.CancelFunc
+	durableEvents                  *plugins.DurableEvents
+	cloudSender                    cloudEventSender
+	cloudPollingStop               func()
 	prometheusServer               *http.Server
 }
 
@@ -91,6 +107,15 @@ func (b *Builder) buildRabbitMQ(rabbitMQURI string) error {
 }
 
 func (b *Builder) Close() error {
+	if b.durableEvents != nil {
+		b.durableEvents.Close()
+	}
+	if b.cloudSender != nil {
+		b.cloudSender.Stop()
+	}
+	if b.cloudPollingStop != nil {
+		b.cloudPollingStop()
+	}
 	if b.prometheusServer != nil {
 		if err := b.prometheusServer.Close(); err != nil {
 			return err
@@ -125,14 +150,29 @@ func (b *Builder) Close() error {
 	return nil
 }
 
-func (b *Builder) Run() error {
+func (b *Builder) Run() (runErr error) {
+	if err := b.startDurableEvents(); err != nil {
+		return err
+	}
+
+	defer func() {
+		if runErr != nil && b.durableEvents != nil {
+			b.durableEvents.Close()
+		}
+		if runErr != nil && b.cloudPollingStop != nil {
+			b.cloudPollingStop()
+		}
+		if runErr != nil && b.prometheusServer != nil {
+			_ = b.prometheusServer.Close()
+		}
+	}()
 	fmt.Println(
 		`
-██████  ███████ ███████ ██      ███████ ███████ ██████  ██    ██ ██████  
-██   ██ ██      ██      ██         ███  ██      ██   ██ ██    ██ ██   ██ 
-██████  █████   █████   ██        ███   █████   ██████  ██    ██ ██████  
-██   ██ ██      ██      ██       ███    ██      ██   ██ ██    ██ ██   ██ 
-██████  ███████ ███████ ███████ ███████ ███████ ██████   ██████  ██████  
+██████  ███████ ███████ ██      ███████ ███████ ██████  ██    ██ ██████
+██   ██ ██      ██      ██         ███  ██      ██   ██ ██    ██ ██   ██
+██████  █████   █████   ██        ███   █████   ██████  ██    ██ ██████
+██   ██ ██      ██      ██       ███    ██      ██   ██ ██    ██ ██   ██
+██████  ███████ ███████ ███████ ███████ ███████ ██████   ██████  ██████
 Deception runtime framework, happy hacking!`)
 	if err := b.startPrometheus(); err != nil {
 		return err
@@ -159,11 +199,15 @@ Deception runtime framework, happy hacking!`)
 
 	// Init Tracer strategies, and set the trace strategy default HTTP
 	protocolManager := protocols.InitProtocolManager(b.traceStrategy, hypertextTransferProtocolStrategy)
+	if b.durableEvents != nil {
+		protocolManager.SetTracer(tracer.NewDurableTracer(b.durableEvents.Enqueue))
+	}
 
 	if b.beelzebubCoreConfigurations.Core.BeelzebubCloud.Enabled {
 		conf := b.beelzebubCoreConfigurations.Core.BeelzebubCloud
 
 		beelzebubCloud := plugins.InitBeelzebubCloud(conf.URI, conf.AuthToken, true)
+		b.cloudPollingStop = beelzebubCloud.Stop
 
 		if honeypotsConfiguration, _, err := beelzebubCloud.GetHoneypotsConfigurations(); err != nil {
 			return err
@@ -199,6 +243,23 @@ Deception runtime framework, happy hacking!`)
 	return nil
 }
 
+func (b *Builder) startDurableEvents() error {
+	conf := b.beelzebubCoreConfigurations.Core.BeelzebubCloud
+	if !conf.Enabled || conf.EventSpoolDir == "" {
+		return nil
+	}
+
+	delivery, err := plugins.NewDurableEvents(conf.URI, conf.AuthToken, conf.EventSpoolDir, conf.EventSpoolMaxBytes, conf.EventSpoolMaxRecords)
+
+	if err != nil {
+		return fmt.Errorf("opening durable event spool: %w", err)
+	}
+
+	b.durableEvents = delivery
+	delivery.Start()
+	return nil
+}
+
 func (b *Builder) startPrometheus() error {
 	config := b.beelzebubCoreConfigurations.Core.Prometheus
 	if !config.Enabled {
@@ -227,6 +288,7 @@ func (b *Builder) build() *Builder {
 		beelzebubServicesConfiguration: b.beelzebubServicesConfiguration,
 		traceStrategy:                  b.traceStrategy,
 		beelzebubCoreConfigurations:    b.beelzebubCoreConfigurations,
+		cloudSender:                    b.cloudSender,
 	}
 }
 

@@ -25,6 +25,12 @@ type SSHStrategy struct {
 }
 
 func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {
+	return sshStrategy.initServer(servConf, tr, func(server *ssh.Server) error {
+		return server.ListenAndServe()
+	})
+}
+
+func (sshStrategy *SSHStrategy) initServer(servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, serve func(*ssh.Server) error) error {
 	if sshStrategy.Sessions == nil {
 		sshStrategy.Sessions = historystore.NewHistoryStore()
 	}
@@ -36,6 +42,7 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 			IdleTimeout: time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second,
 			Version:     servConf.ServerVersion,
 			Handler: func(sess ssh.Session) {
+				tr := tracer.WithContext(sess.Context(), tr)
 				uuidSession := uuid.New()
 
 				host, port, _ := net.SplitHostPort(sess.RemoteAddr().String())
@@ -172,7 +179,7 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 					}
 				}
 
-				tr.TraceEvent(tracer.Event{
+				tracer.TraceFinalEvent(sess.Context(), tr, tracer.Event{
 					Msg:      "End SSH Session",
 					Status:   tracer.End.String(),
 					ID:       uuidSession.String(),
@@ -180,6 +187,15 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 				})
 			},
 			PasswordHandler: func(ctx ssh.Context, password string) bool {
+				// The SSH library enforces socket deadlines, but its authentication
+				// context has no deadline while this callback is blocked in capture.
+				captureCtx := context.Context(ctx)
+				if servConf.DeadlineTimeoutSeconds > 0 {
+					var cancel context.CancelFunc
+					captureCtx, cancel = context.WithTimeout(ctx, time.Duration(servConf.DeadlineTimeoutSeconds)*time.Second)
+					defer cancel()
+				}
+				tr := tracer.WithContext(captureCtx, tr)
 				host, port, _ := net.SplitHostPort(ctx.RemoteAddr().String())
 
 				tr.TraceEvent(tracer.Event{
@@ -203,7 +219,7 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 				return matched
 			},
 		}
-		err := server.ListenAndServe()
+		err := serve(server)
 		if err != nil {
 			log.Errorf("error during init SSH Protocol: %s", err.Error())
 		}

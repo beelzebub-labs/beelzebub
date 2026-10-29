@@ -178,6 +178,7 @@ func TestBuilderRun_PrometheusEnabled(t *testing.T) {
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), "go_goroutines")
+	assert.Contains(t, string(body), "beelzebub_capture_failures_total")
 
 	require.NoError(t, b.Close())
 	listener, err := net.Listen("tcp", b.prometheusServer.Addr)
