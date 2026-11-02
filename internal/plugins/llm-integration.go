@@ -240,7 +240,7 @@ func (llmHoneypot *LLMHoneypot) buildInputValidationPrompt(command string) ([]Me
 	return messages, nil
 }
 
-func (llmHoneypot *LLMHoneypot) buildOutputValidationPrompt(command string) ([]Message, error) {
+func (llmHoneypot *LLMHoneypot) buildOutputValidationPrompt(output string) ([]Message, error) {
 	var prompt string
 	var messages []Message
 
@@ -268,7 +268,7 @@ func (llmHoneypot *LLMHoneypot) buildOutputValidationPrompt(command string) ([]M
 	// Matches the pattern already used in buildInputValidationPrompt above.
 	messages = append(messages, Message{
 		Role:    USER.String(),
-		Content: command,
+		Content: output,
 	})
 
 	return messages, nil
