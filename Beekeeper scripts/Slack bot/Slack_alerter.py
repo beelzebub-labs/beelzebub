@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 from collections import defaultdict
@@ -106,11 +107,20 @@ def handle_line(line):
     except json.JSONDecodeError:
         return #not a JSON line, skip it
 
+    # JSON scalars/arrays are legal JSON but not Beelzebub log objects.
+    if not isinstance(entry, dict):
+        logging.warning("Skipping JSON log entry that is not an object")
+        return
+
     #only beelzebub's "New Event" lines are attacker activity, skip startup/info logs
     if entry.get("msg") != "New Event":
         return
 
     details = entry.get("event", {})
+    if not isinstance(details, dict):
+        logging.warning("Skipping New Event with non-object event payload")
+        return
+
     ip = details.get("SourceIp", "unknown")
     path = details.get("RequestURI", "")
 
@@ -144,7 +154,11 @@ def follow_log():
             if not line:
                 time.sleep(1) #nothing new yet
                 continue
-            handle_line(line)
+            try:
+                handle_line(line)
+            except Exception:
+                # One malformed event must not permanently stop log monitoring.
+                logging.exception("Failed to process honeypot log entry; continuing")
 
 
 if __name__ == "__main__":
