@@ -240,7 +240,7 @@ func (llmHoneypot *LLMHoneypot) buildInputValidationPrompt(command string) ([]Me
 	return messages, nil
 }
 
-func (llmHoneypot *LLMHoneypot) buildOutputValidationPrompt(command string) ([]Message, error) {
+func (llmHoneypot *LLMHoneypot) buildOutputValidationPrompt(output string) ([]Message, error) {
 	var prompt string
 	var messages []Message
 
@@ -261,9 +261,14 @@ func (llmHoneypot *LLMHoneypot) buildOutputValidationPrompt(command string) ([]M
 		Role:    SYSTEM.String(),
 		Content: prompt,
 	})
+	// Must be a USER message, not ASSISTANT: some OpenAI-compatible backends
+	// (e.g. vLLM) reject a request with no user-role message at all
+	// ("No user query found in messages"), which previously made every
+	// output-validation call fail and discard an otherwise-good response.
+	// Matches the pattern already used in buildInputValidationPrompt above.
 	messages = append(messages, Message{
-		Role:    ASSISTANT.String(),
-		Content: command,
+		Role:    USER.String(),
+		Content: output,
 	})
 
 	return messages, nil
