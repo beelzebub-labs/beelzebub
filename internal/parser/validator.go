@@ -382,7 +382,7 @@ func ValidateCore(config *BeelzebubCoreConfigurations, filename string) Validate
 		}
 	}
 
-	if config.Core.Prometheus != (Prometheus{}) {
+	if config.Core.Prometheus.Enabled {
 		if config.Core.Prometheus.Path == "" {
 			issues = append(issues, ValidationIssue{
 				Level:    LevelError,

@@ -11,10 +11,10 @@ commands:
     handler: "-ERR Client sent AUTH, but no password is set\r\n"
     name: "auth"
   - regex: "^INFO"
-    handler: "$180\r\n# Server\r\nredis_version:7.0.12\r\nos:Linux 5.15.0-76-generic x86_64\r\ntcp_port:6379\r\nuptime_in_seconds:834221\r\nuptime_in_days:9\r\nconnected_clients:3\r\n\r\n"
+    handler: "$126\r\n# Server\r\nredis_version:7.0.12\r\nos:Linux x86_64\r\ntcp_port:6379\r\nuptime_in_seconds:0\r\nuptime_in_days:0\r\nconnected_clients:1\r\n\r\n"
     name: "info"
   - regex: "^(.+)$"
     handler: "-ERR unknown command\r\n"
     name: "catch_all"
 deadlineTimeoutSeconds: 60
-serverName: "redis-prod-01"
+serverName: "redis"

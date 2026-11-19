@@ -3,4 +3,4 @@ title: Observability Pipeline
 description: Verify Prometheus counters and RabbitMQ event delivery in a lab deployment.
 ---
 
-Enable the core settings in `examples/core-observability.yaml`, start a service, request it once, and query `/metrics`. If RabbitMQ is enabled, consume the `event` queue with a least-privilege account and verify that downstream retention and redaction policies apply.
+Use the core settings in `examples/core-observability.yaml`, which explicitly set `core.prometheus.enabled: true`, start a service, request it once, and query `/metrics`. Metrics are disabled in the default runtime configuration; for Docker port publishing, follow the [observability setup](../../operations/observability). If RabbitMQ is enabled, consume the `event` queue with a least-privilege account and verify that downstream retention and redaction policies apply.

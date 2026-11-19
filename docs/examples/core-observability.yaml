@@ -9,5 +9,6 @@ core:
       enabled: false
       uri: ""
   prometheus:
+    enabled: true
     path: "/metrics"
     port: ":2112"

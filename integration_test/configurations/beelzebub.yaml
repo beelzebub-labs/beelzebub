@@ -9,5 +9,6 @@ core:
       enabled: true
       uri: "amqp://integration:integration@localhost:5672/"
   prometheus:
+    enabled: true
     path: "/metrics"
     port: ":2112"

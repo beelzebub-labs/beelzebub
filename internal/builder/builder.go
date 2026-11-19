@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -109,6 +110,8 @@ func (b *Builder) Close() error {
 		return nil
 	}
 
+	// Stop background service plugins first so their goroutines drain before
+	// other teardown.
 	if b.servicesCancel != nil {
 		b.servicesCancel()
 	}
@@ -166,23 +169,8 @@ func (b *Builder) Close() error {
 }
 
 func (b *Builder) Run() error {
-
-	// Init Prometheus openmetrics with explicit server and custom mux
-	if (b.beelzebubCoreConfigurations.Core.Prometheus != parser.Prometheus{}) {
-		if b.prometheusServer == nil {
-			promMux := http.NewServeMux()
-			promMux.Handle(b.beelzebubCoreConfigurations.Core.Prometheus.Path, promhttp.Handler())
-			promSrv := &http.Server{
-				Addr:    b.beelzebubCoreConfigurations.Core.Prometheus.Port,
-				Handler: promMux,
-			}
-			b.prometheusServer = promSrv
-			go func() {
-				if err := promSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					log.Errorf("Error init Prometheus: %s", err.Error())
-				}
-			}()
-		}
+	if err := b.startPrometheus(); err != nil {
+		return err
 	}
 
 	// Start registered background service plugins.
@@ -279,6 +267,29 @@ func (b *Builder) DeployService(cfg parser.BeelzebubServiceConfiguration) error 
 
 	b.beelzebubServicesConfiguration = append(b.beelzebubServicesConfiguration, cfg)
 	log.Infof("Deployed %s %s", strings.ToUpper(cfg.Protocol), cfg.Address)
+	return nil
+}
+
+func (b *Builder) startPrometheus() error {
+	config := b.beelzebubCoreConfigurations.Core.Prometheus
+	if !config.Enabled || b.prometheusServer != nil {
+		return nil
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(config.Path, promhttp.Handler())
+	listener, err := net.Listen("tcp", config.Port)
+	if err != nil {
+		return fmt.Errorf("error init Prometheus: %w", err)
+	}
+
+	server := &http.Server{Addr: listener.Addr().String(), Handler: mux}
+	b.prometheusServer = server
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Errorf("Error serving Prometheus: %s", err.Error())
+		}
+	}()
 	return nil
 }
 

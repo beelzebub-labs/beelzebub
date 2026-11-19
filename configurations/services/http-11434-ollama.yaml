@@ -1,0 +1,42 @@
+apiVersion: "v1"
+protocol: "http"
+address: ":11434"
+description: "Ollama HTTP API"
+# Based on the default Ollama container
+commands:
+  - regex: "^/(?:\\?.*)?$"
+    methods: [HEAD, GET]
+    handler: "Ollama is running"
+    headers:
+      - "Content-Type: text/plain; charset=utf-8"
+    statusCode: 200
+  - regex: "^/api/version(?:\\?.*)?$"
+    methods: [GET]
+    handler: '{"version":"0.24.0"}'
+    headers:
+      - "Content-Type: application/json; charset=utf-8"
+    statusCode: 200
+  - regex: "^/(?:\\?.*)?$"
+    methods: [POST]
+    handler: "405 method not allowed"
+    headers:
+      - "Allow: HEAD, GET"
+      - "Content-Type: text/plain"
+    statusCode: 405
+  - regex: "^/api/tags(?:\\?.*)?$"
+    methods: [GET]
+    handler: '{"models":[]}'
+    headers:
+      - "Content-Type: application/json; charset=utf-8"
+    statusCode: 200
+  - regex: "^/api/ps(?:\\?.*)?$"
+    methods: [GET]
+    handler: '{"models":[]}'
+    headers:
+      - "Content-Type: application/json; charset=utf-8"
+    statusCode: 200
+  - regex: ".*"
+    handler: "404 page not found"
+    headers:
+      - "Content-Type: text/plain"
+    statusCode: 404

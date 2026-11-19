@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestBuilderClose_LogFile(t *testing.T) {
@@ -180,8 +182,84 @@ func TestBuilderRun_Empty(t *testing.T) {
 		t.Errorf("expected no error running empty builder, got %v", err)
 	}
 
-	// Give a little time for the prometheus goroutine (which will just exit immediately since prometheus config is empty)
-	time.Sleep(10 * time.Millisecond)
+	require.NoError(t, b.Close())
+}
+
+func TestBuilderRun_PrometheusDisabled(t *testing.T) {
+	for _, enabled := range []string{"", "enabled: false"} {
+		t.Run(enabled, func(t *testing.T) {
+			// Reserve a free address, then release it so Run would be able to bind it.
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			address := listener.Addr().String()
+			require.NoError(t, listener.Close())
+
+			config := &parser.BeelzebubCoreConfigurations{}
+			require.NoError(t, yaml.Unmarshal([]byte("core:\n  prometheus:\n    "+
+				enabled+"\n    path: /disabled-metrics\n    port: "+address+"\n"), config))
+			b := NewBuilder()
+			b.beelzebubCoreConfigurations = config
+			b.traceStrategy = func(event tracer.Event) {}
+			t.Cleanup(func() { assert.NoError(t, b.Close()) })
+
+			require.NoError(t, b.Run())
+			assert.Nil(t, b.prometheusServer)
+			conn, err := net.DialTimeout("tcp", address, time.Second)
+			if conn != nil {
+				conn.Close()
+			}
+			require.Error(t, err, "disabled Prometheus must not accept TCP connections")
+			listener, err = net.Listen("tcp", address)
+			require.NoError(t, err, "disabled Prometheus must leave its configured port free")
+			require.NoError(t, listener.Close())
+
+			// Metrics must not leak through another server using the default mux.
+			response := httptest.NewRecorder()
+			http.DefaultServeMux.ServeHTTP(response, httptest.NewRequest("GET", "/disabled-metrics", nil))
+			assert.Equal(t, http.StatusNotFound, response.Code)
+		})
+	}
+}
+
+func TestBuilderRun_PrometheusEnabled(t *testing.T) {
+	b := NewBuilder()
+	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{}
+	b.beelzebubCoreConfigurations.Core.Prometheus = parser.Prometheus{
+		Enabled: true, Path: "/custom-metrics", Port: "127.0.0.1:0",
+	}
+	b.traceStrategy = func(event tracer.Event) {}
+	t.Cleanup(func() { assert.NoError(t, b.Close()) })
+	require.NoError(t, b.Run())
+	require.NotNil(t, b.prometheusServer)
+
+	address := b.prometheusServer.Addr
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Get("http://" + address + "/custom-metrics")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "go_goroutines")
+
+	require.NoError(t, b.Close())
+	require.Nil(t, b.prometheusServer)
+	listener, err := net.Listen("tcp", address)
+	require.NoError(t, err, "closing the builder must release the metrics port")
+	require.NoError(t, listener.Close())
+}
+
+func TestBuilderRun_PrometheusPortInUse(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	b := NewBuilder()
+	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{}
+	b.beelzebubCoreConfigurations.Core.Prometheus = parser.Prometheus{
+		Enabled: true, Path: "/metrics", Port: listener.Addr().String(),
+	}
+	require.ErrorContains(t, b.Run(), "error init Prometheus")
+	require.NoError(t, b.Close())
 }
 
 func TestBuilderRun_AllProtocols(t *testing.T) {
@@ -218,31 +296,6 @@ func TestBuildRabbitMQ_InvalidURI(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected error building RabbitMQ with invalid URI")
 	}
-}
-
-func TestBuilderRun_Prometheus(t *testing.T) {
-	b := NewBuilder()
-	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{
-		Core: struct {
-			Logging        parser.Logging        `yaml:"logging"`
-			Tracings       parser.Tracings       `yaml:"tracings"`
-			Prometheus     parser.Prometheus     `yaml:"prometheus"`
-			BeelzebubCloud parser.BeelzebubCloud `yaml:"beelzebub-cloud"`
-		}{
-			Prometheus: parser.Prometheus{
-				Path: "/metrics",
-				Port: "127.0.0.1:0",
-			},
-		},
-	}
-	b.beelzebubServicesConfiguration = []parser.BeelzebubServiceConfiguration{}
-	b.traceStrategy = func(event tracer.Event) {}
-
-	err := b.Run()
-	assert.NoError(t, err)
-	assert.NotNil(t, b.prometheusServer)
-
-	time.Sleep(50 * time.Millisecond)
 }
 
 func TestBuilderReload(t *testing.T) {
@@ -556,33 +609,6 @@ func TestBuilderClose_ServiceGroupStopAllError(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestBuilderClose_WithPrometheus(t *testing.T) {
-	b := NewBuilder()
-	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{
-		Core: struct {
-			Logging        parser.Logging        `yaml:"logging"`
-			Tracings       parser.Tracings       `yaml:"tracings"`
-			Prometheus     parser.Prometheus     `yaml:"prometheus"`
-			BeelzebubCloud parser.BeelzebubCloud `yaml:"beelzebub-cloud"`
-		}{
-			Prometheus: parser.Prometheus{
-				Path: "/metrics",
-				Port: "127.0.0.1:0",
-			},
-		},
-	}
-	b.beelzebubServicesConfiguration = []parser.BeelzebubServiceConfiguration{}
-	b.traceStrategy = func(event tracer.Event) {}
-
-	err := b.Run()
-	require.NoError(t, err)
-	require.NotNil(t, b.prometheusServer)
-
-	err = b.Close()
-	require.NoError(t, err)
-	require.Nil(t, b.prometheusServer)
-}
-
 func TestBuilderDeployService_Success(t *testing.T) {
 	b := NewBuilder()
 	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{}
@@ -744,32 +770,6 @@ func TestBuilderRun_PluginServiceSuccess_AndClose(t *testing.T) {
 	b.Close()
 
 	assert.True(t, svc.stopped, "service plugin should be stopped on Close")
-}
-
-func TestBuilderRun_Prometheus_ListenError(t *testing.T) {
-	b := NewBuilder()
-	b.beelzebubCoreConfigurations = &parser.BeelzebubCoreConfigurations{
-		Core: struct {
-			Logging        parser.Logging        `yaml:"logging"`
-			Tracings       parser.Tracings       `yaml:"tracings"`
-			Prometheus     parser.Prometheus     `yaml:"prometheus"`
-			BeelzebubCloud parser.BeelzebubCloud `yaml:"beelzebub-cloud"`
-		}{
-			Prometheus: parser.Prometheus{
-				Path: "/metrics",
-				Port: "127.0.0.1:1",
-			},
-		},
-	}
-	b.beelzebubServicesConfiguration = []parser.BeelzebubServiceConfiguration{}
-	b.traceStrategy = func(event tracer.Event) {}
-
-	// Should not panic — log.Errorf is used instead of log.Fatalf
-	err := b.Run()
-	assert.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
-
-	b.Close()
 }
 
 func TestBuilderRun_CloudHTTPError(t *testing.T) {

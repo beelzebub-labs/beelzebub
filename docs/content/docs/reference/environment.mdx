@@ -13,7 +13,8 @@ Non-empty runtime environment values override core YAML. Boolean values use Go's
 | `BEELZEBUB_LOGGING_LOGS_PATH` | string | Log directory |
 | `BEELZEBUB_RABBITMQ_ENABLED` | boolean | Enable RabbitMQ tracing |
 | `BEELZEBUB_RABBITMQ_URI` | string | AMQP connection URI |
-| `BEELZEBUB_PROMETHEUS_PATH` | string | Metrics HTTP path |
+| `BEELZEBUB_PROMETHEUS_ENABLED` | boolean | Enable the metrics listener (default `false`); overrides `core.prometheus.enabled` |
+| `BEELZEBUB_PROMETHEUS_PATH` | string | Metrics HTTP path; does not enable the listener |
 | `BEELZEBUB_PROMETHEUS_PORT` | string | Metrics listen address, such as `:2112` |
 | `BEELZEBUB_CLOUD_ENABLED` | boolean | Enable optional Cloud reporting |
 | `BEELZEBUB_CLOUD_URI` | string | Cloud endpoint |

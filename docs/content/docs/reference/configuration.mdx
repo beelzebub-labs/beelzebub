@@ -17,7 +17,8 @@ All core settings are nested below `core`.
 | `logging.logsPath` | string | `./logs` | Directory for log files |
 | `tracings.rabbit-mq.enabled` | boolean | `false` | Publish tracing events to RabbitMQ |
 | `tracings.rabbit-mq.uri` | string | empty | AMQP connection URI |
-| `prometheus.path` | string | `/metrics` | HTTP path for metrics |
+| `prometheus.enabled` | boolean | `false` | Start the metrics listener; when false or omitted, no metrics port is bound |
+| `prometheus.path` | string | `/metrics` | HTTP path for metrics when enabled |
 | `prometheus.port` | string | `:2112` | Metrics listen address |
 | `beelzebub-cloud.enabled` | boolean | `false` | Enable Beelzebub Cloud reporting |
 | `beelzebub-cloud.uri` | string | empty | Cloud endpoint |
