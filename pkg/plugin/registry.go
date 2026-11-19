@@ -96,6 +96,21 @@ func Services() []ServicePlugin {
 	return svcs
 }
 
+// Cleanup removes all registered plugins and returns a function that restores
+// the previous registry. Only for use in tests.
+func Cleanup() func() {
+	mu.Lock()
+	previous := registry
+	registry = make(map[string]Plugin)
+	mu.Unlock()
+
+	return func() {
+		mu.Lock()
+		registry = previous
+		mu.Unlock()
+	}
+}
+
 // List returns the metadata for all registered plugins, sorted by name.
 func List() []Metadata {
 	mu.RLock()

@@ -10,6 +10,7 @@ deadlineTimeoutSeconds: 120
 serverName: "pg-master"
 plugin:
   llmProvider: "openai"
-  llmModel: "gpt-4o"
-  openAISecretKey: "sk-proj-YOUR_KEY_HERE"
+  host: "https://openrouter.ai/api/v1/chat/completions"
+  llmModel: "openai/gpt-4o"
+  openAISecretKey: "${OPEN_AI_SECRET_KEY}"
   prompt: "You are simulating a PostgreSQL 15.3 server. Respond to incoming TCP data as a PostgreSQL server would, using the PostgreSQL wire protocol format where possible. Be concise and realistic."

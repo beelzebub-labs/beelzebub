@@ -307,3 +307,9 @@ fallbackCommand:
     - "X-Powered-By: PHP/8.3.31"
     - "Server: Apache/2.4.67 (Debian)"
   statusCode: 404
+
+plugin:
+  llmProvider: "openai"
+  host: "https://openrouter.ai/api/v1/chat/completions"
+  llmModel: "gpt-4o"
+  openAISecretKey: "${OPEN_AI_SECRET_KEY}"
