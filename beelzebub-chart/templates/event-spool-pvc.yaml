@@ -1,0 +1,19 @@
+{{- if and .Values.eventSpool.enabled (not .Values.eventSpool.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "beelzebub-chart.fullname" . }}-events
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "beelzebub-chart.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.eventSpool.persistence.accessModes | nindent 4 }}
+  {{- if ne .Values.eventSpool.persistence.storageClassName nil }}
+  storageClassName: {{ .Values.eventSpool.persistence.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.eventSpool.persistence.size | quote }}
+{{- end }}

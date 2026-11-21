@@ -1,14 +1,40 @@
 package protocols
 
 import (
+	"context"
 	"errors"
+	"testing"
+
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 	"github.com/stretchr/testify/assert"
-	"testing"
+	"github.com/stretchr/testify/require"
 )
 
 type mockServiceStrategyValid struct {
+}
+
+type capturingService struct{ event tracer.Event }
+
+func (s capturingService) Init(_ parser.BeelzebubServiceConfiguration, capture tracer.Tracer) error {
+	capture.TraceEvent(s.event)
+	return nil
+}
+
+func TestProtocolManagerUsesSelectedDurableCapture(t *testing.T) {
+	want := tracer.Event{ID: "synthetic-session", Protocol: "HTTP"}
+	var got tracer.Event
+	manager := InitProtocolManager(func(tracer.Event) { t.Error("selected capture entered legacy strategy") }, capturingService{event: want})
+	manager.SetTracer(tracer.NewDurableTracer(func(ctx context.Context, event tracer.Event) error {
+		require.NoError(t, ctx.Err())
+		got = event
+		return nil
+	}))
+
+	require.NoError(t, manager.InitService(parser.BeelzebubServiceConfiguration{}))
+	require.Equal(t, want.ID, got.ID)
+	require.Equal(t, want.Protocol, got.Protocol)
+	require.NotEmpty(t, got.EventKey)
 }
 
 func (mockServiceStrategy mockServiceStrategyValid) Init(beelzebubServiceConfiguration parser.BeelzebubServiceConfiguration, tr tracer.Tracer) error {

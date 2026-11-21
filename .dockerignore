@@ -1,0 +1,12 @@
+.git
+.local
+.agents
+.codex
+.aws
+.env
+beelzebub
+logs
+state
+docs/node_modules
+docs/dist
+docs/.astro

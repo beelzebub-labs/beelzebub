@@ -43,10 +43,14 @@ type Tracings struct {
 }
 
 type BeelzebubCloud struct {
-	Enabled   bool   `yaml:"enabled"`
-	URI       string `yaml:"uri"`
-	AuthToken string `yaml:"auth-token"`
+	Enabled              bool   `yaml:"enabled"`
+	URI                  string `yaml:"uri"`
+	AuthToken            string `yaml:"auth-token"`
+	EventSpoolDir        string `yaml:"event-spool-dir"`
+	EventSpoolMaxBytes   int64  `yaml:"event-spool-max-bytes"`
+	EventSpoolMaxRecords int64  `yaml:"event-spool-max-records"`
 }
+
 type RabbitMQ struct {
 	Enabled bool   `yaml:"enabled"`
 	URI     string `yaml:"uri"`
@@ -327,6 +331,25 @@ func applyEnvOverrides(cfg *BeelzebubCoreConfigurations) error {
 	if v := os.Getenv("BEELZEBUB_CLOUD_AUTH_TOKEN"); v != "" {
 		cfg.Core.BeelzebubCloud.AuthToken = v
 	}
+
+	if v := os.Getenv("BEELZEBUB_EVENT_SPOOL_DIR"); v != "" {
+		cfg.Core.BeelzebubCloud.EventSpoolDir = v
+	}
+
+	for name, target := range map[string]*int64{
+		"BEELZEBUB_EVENT_SPOOL_MAX_BYTES":   &cfg.Core.BeelzebubCloud.EventSpoolMaxBytes,
+		"BEELZEBUB_EVENT_SPOOL_MAX_RECORDS": &cfg.Core.BeelzebubCloud.EventSpoolMaxRecords,
+	} {
+		if v := os.Getenv(name); v != "" {
+			n, err := strconv.ParseInt(v, 10, 64)
+
+			if err != nil || n <= 0 {
+				return fmt.Errorf("%s must be a positive integer", name)
+			}
+			*target = n
+		}
+	}
+
 	return nil
 }
 

@@ -459,6 +459,13 @@ func handleTCPConnectionWithState(conn net.Conn, servConf parser.BeelzebubServic
 	// would pin the deadline to the current instant and break every read.
 	cutoff := deadlineCutoff(time.Duration(servConf.DeadlineTimeoutSeconds) * time.Second)
 	if !cutoff.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, cutoff)
+		defer cancel()
+	}
+
+	tr = tracer.WithContext(ctx, tr)
+	if !cutoff.IsZero() {
 		if err := conn.SetDeadline(cutoff); err != nil {
 			log.Debugf("set connection deadline failed: %v", err)
 		}
@@ -484,7 +491,7 @@ func handleTCPConnectionWithState(conn net.Conn, servConf parser.BeelzebubServic
 
 	// Backward compatibility: if no commands configured, use legacy behavior.
 	if len(servConf.Commands) == 0 {
-		serveStateless(conn, servConf, tr, host, port)
+		serveStatelessWithContext(ctx, conn, servConf, tr, host, port)
 		return
 	}
 
@@ -507,6 +514,10 @@ func handleTCPConnectionWithState(conn net.Conn, servConf parser.BeelzebubServic
 // serveStateless handles the legacy no-commands path: read one buffer, emit a
 // single stateless attempt event, and return.
 func serveStateless(conn net.Conn, servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, host, port string) {
+	serveStatelessWithContext(context.Background(), conn, servConf, tr, host, port)
+}
+
+func serveStatelessWithContext(ctx context.Context, conn net.Conn, servConf parser.BeelzebubServiceConfiguration, tr tracer.Tracer, host, port string) {
 	buffer := make([]byte, 1024)
 	command := ""
 	commandRaw := ""
@@ -516,7 +527,7 @@ func serveStateless(conn net.Conn, servConf parser.BeelzebubServiceConfiguration
 			commandRaw = hexEscapeNonPrintable(buffer[:n])
 		}
 	}
-	tr.TraceEvent(tracer.Event{
+	tracer.TraceFinalEvent(ctx, tr, tracer.Event{
 		Msg:         "New TCP attempt",
 		Protocol:    tracer.TCP.String(),
 		Command:     command,
@@ -556,7 +567,8 @@ func (s *tcpSession) serve(conn net.Conn) {
 		ID:          s.connID,
 		Description: s.servConf.Description,
 	})
-	defer s.tr.TraceEvent(tracer.Event{
+
+	defer tracer.TraceFinalEvent(s.ctx, s.tr, tracer.Event{
 		Msg:      "End TCP Session",
 		Status:   tracer.End.String(),
 		ID:       s.connID,
@@ -621,7 +633,7 @@ func (s *tcpSession) serve(conn net.Conn) {
 				}
 			}
 
-			s.tr.TraceEvent(ev)
+			s.traceInteraction(ev, terminalReadError)
 
 			if command.TLSUpgrade {
 				upgraded, ok := s.upgradeTLS(conn)
@@ -649,8 +661,9 @@ func (s *tcpSession) serve(conn net.Conn) {
 		}
 
 		if !matched {
-			s.traceNotFound(commandInput, commandRaw)
+			s.traceNotFound(commandInput, commandRaw, terminalReadError)
 		}
+
 		if terminalReadError {
 			return
 		}
@@ -846,8 +859,8 @@ func (s *tcpSession) upgradeTLS(conn net.Conn) (net.Conn, bool) {
 }
 
 // traceNotFound emits the interaction event for input that matched no command.
-func (s *tcpSession) traceNotFound(commandInput, commandRaw string) {
-	s.tr.TraceEvent(tracer.Event{
+func (s *tcpSession) traceNotFound(commandInput, commandRaw string, terminalReadError bool) {
+	s.traceInteraction(tracer.Event{
 		Msg:         "TCP Session Interaction",
 		RemoteAddr:  s.remoteAddr,
 		SourceIp:    s.host,
@@ -859,5 +872,14 @@ func (s *tcpSession) traceNotFound(commandInput, commandRaw string) {
 		Protocol:    tracer.TCP.String(),
 		Description: s.servConf.Description,
 		Handler:     "not_found",
-	})
+	}, terminalReadError)
+}
+
+func (s *tcpSession) traceInteraction(event tracer.Event, terminalReadError bool) {
+	if terminalReadError || s.ctx != nil && s.ctx.Err() != nil {
+		tracer.TraceFinalEvent(s.ctx, s.tr, event)
+		return
+	}
+
+	s.tr.TraceEvent(event)
 }
