@@ -75,3 +75,30 @@ func TestRateLimitingPerIP(t *testing.T) {
 		t.Error("Second request from IP2 should be rate limited")
 	}
 }
+
+func TestRateLimitingInvalidConfigAndEmptyIP(t *testing.T) {
+	globalRateLimiterMutex.Lock()
+	delete(globalRateLimiters, "unknown")
+	globalRateLimiterMutex.Unlock()
+
+	invalid := InitLLMHoneypot(LLMHoneypot{
+		RateLimitEnabled:       true,
+		RateLimitRequests:      0,
+		RateLimitWindowSeconds: 1,
+	})
+	if err := invalid.checkRateLimit("invalid-config"); err != nil {
+		t.Fatalf("invalid rate-limit config returned error: %v", err)
+	}
+
+	honeypot := InitLLMHoneypot(LLMHoneypot{
+		RateLimitEnabled:       true,
+		RateLimitRequests:      1,
+		RateLimitWindowSeconds: 60,
+	})
+	if err := honeypot.checkRateLimit(""); err != nil {
+		t.Fatalf("first unknown-IP request returned error: %v", err)
+	}
+	if err := honeypot.checkRateLimit(""); err == nil {
+		t.Fatal("second unknown-IP request should be rate limited")
+	}
+}

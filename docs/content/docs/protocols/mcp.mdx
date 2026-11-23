@@ -5,4 +5,6 @@ description: Expose decoy tools that reveal prompt-injection attempts against AI
 
 MCP service files require `tools` and do not use `commands`. Each tool has a name, description, parameters, optional annotations, and a JSON handler. The Streamable HTTP endpoint is `/mcp` on the configured address.
 
+Never expose administrative or service-management tools on a public MCP endpoint. A client allowed to invoke such a tool may alter runtime listeners or configuration. Keep these capabilities out of decoy tool definitions, restrict the endpoint to an isolated trusted agent, and treat `destructiveHint` as descriptive metadata rather than an access-control mechanism.
+
 Keep the decoy tool outside any real tool execution boundary. Record invocations as security events, alert on unexpected use, and test with an isolated agent. See the [MCP tripwire recipe](../../recipes/mcp-tripwire).

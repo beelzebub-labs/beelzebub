@@ -1,34 +1,51 @@
-// Package protocols is responsible for managing the different protocols
 package protocols
 
 import (
+	"errors"
+
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
 	"github.com/beelzebub-labs/beelzebub/v3/internal/tracer"
 )
 
-// ServiceStrategy is the common interface that each protocol honeypot implements
 type ServiceStrategy interface {
 	Init(beelzebubServiceConfiguration parser.BeelzebubServiceConfiguration, tracer tracer.Tracer) error
+	Stop(servConf parser.BeelzebubServiceConfiguration) error
+	StopAll() error
 }
 
 type ProtocolManager struct {
-	strategy ServiceStrategy
-	tracer   tracer.Tracer
+	strategies []ServiceStrategy
+	tracer     tracer.Tracer
 }
 
-// InitProtocolManager is the method that initializes the protocol manager, receving the concrete tracer and the concrete service
-func InitProtocolManager(tracerStrategy tracer.Strategy, serviceStrategy ServiceStrategy) *ProtocolManager {
+func InitProtocolManager(tracerStrategy tracer.Strategy, strategies ...ServiceStrategy) *ProtocolManager {
 	return &ProtocolManager{
-		tracer:   tracer.GetInstance(tracerStrategy),
-		strategy: serviceStrategy,
+		tracer:     tracer.GetInstance(tracerStrategy),
+		strategies: strategies,
 	}
 }
 
+// Deprecated: InitProtocolManager now accepts all strategies at construction.
+// SetProtocolStrategy is kept for test backward compatibility and has no
+// effect on InitService (which takes the strategy as a parameter directly).
 func (pm *ProtocolManager) SetProtocolStrategy(strategy ServiceStrategy) {
-	pm.strategy = strategy
+	pm.strategies = append(pm.strategies, strategy)
 }
 
-// InitService is the method that initializes the honeypot
-func (pm *ProtocolManager) InitService(beelzebubServiceConfiguration parser.BeelzebubServiceConfiguration) error {
-	return pm.strategy.Init(beelzebubServiceConfiguration, pm.tracer)
+func (pm *ProtocolManager) InitService(beelzebubServiceConfiguration parser.BeelzebubServiceConfiguration, strategy ServiceStrategy) error {
+	return strategy.Init(beelzebubServiceConfiguration, pm.tracer)
+}
+
+func (pm *ProtocolManager) StopAll() error {
+	var errs []error
+	for _, s := range pm.strategies {
+		if err := s.StopAll(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (pm *ProtocolManager) StopService(servConf parser.BeelzebubServiceConfiguration, strategy ServiceStrategy) error {
+	return strategy.Stop(servConf)
 }

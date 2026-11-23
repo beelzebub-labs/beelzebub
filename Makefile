@@ -40,11 +40,15 @@ beelzebub.stop:
 
 .PHONY: test.unit
 test.unit:
-	go test ./...
+	go test ./... -race
 
 .PHONY: test.unit.verbose
 test.unit.verbose:
-	go test ./... -v
+	go test ./... -v -race
+
+.PHONY: coverage
+coverage:
+	bash scripts/coverage.sh
 
 .PHONY: test.dependencies.start
 test.dependencies.start:
