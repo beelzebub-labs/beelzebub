@@ -13,3 +13,19 @@ docker compose down
 ```
 
 Use build arguments or the environment for private plugin access. Review port publishing, restart policy, volumes, and host networking before production use. The container entrypoint is `main run`.
+
+## Durable Cloud Events
+
+Cloud reporting can optionally retain pending events on disk. The base Compose deployment keeps its existing defaults. To opt in, create the external volume and include the event override on subsequent Compose operations:
+
+```bash
+docker volume create beelzebub-event-spool
+docker compose -f docker-compose.yml -f docker-compose.events.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.events.yml up -d --build
+```
+
+The override enables `BEELZEBUB_EVENT_SPOOL_DIR=/var/lib/beelzebub/events` and mounts the external `beelzebub-event-spool` volume. Set `BEELZEBUB_EVENT_SPOOL_VOLUME` consistently if using a different volume name, and create that volume first. Existing Cloud URI, token, and enabled settings are still required. Only enable this option with an image containing durable event support.
+
+`BEELZEBUB_EVENT_SPOOL_MAX_BYTES` and `BEELZEBUB_EVENT_SPOOL_MAX_RECORDS` default to 1 GiB and 100000 records. The spool includes pending, temporary, and quarantined records; provision additional filesystem headroom. If overriding the container user, ensure that user owns or can write the volume before starting capture.
+
+The external volume survives container replacement and Compose teardown, including `down --volumes`. Retain it when replacing the sensor and never use `docker volume rm` on a pending spool. Reuse this override and the same volume, endpoint, and token on recreation. Back up sensitive records according to your retention policy. See [durable event delivery](/operations/event-delivery) for acceptance, retries, backpressure, and duplicate-delivery limitations.

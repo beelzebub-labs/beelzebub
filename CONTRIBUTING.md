@@ -111,5 +111,5 @@ When you change a configuration field or a validator, keep everything in sync:
 
 1. Update the Go struct in `internal/parser/configurations_parser.go`.
 2. Update the JSON Schemas in `specs/`.
-3. Run `make validate-specs` and `make validate-all`.
+3. Run `make validate.specs` and `make validate.all`.
 4. Update the rule matrix in `docs/configuration-validation.md`.

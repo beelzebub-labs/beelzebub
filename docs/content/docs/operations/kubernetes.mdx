@@ -10,3 +10,27 @@ helm uninstall beelzebub --namespace deception
 ```
 
 Before installation, override the image tag, service port, core YAML, service YAML, resources, security context, and ingress values. The chart mounts a core ConfigMap and a service ConfigMap into the pod. Add probes, network policies, secret references, and durable event destinations according to your cluster standards.
+
+## Durable Cloud Events
+
+Persistence is disabled by default. Enable it only with a sensor image containing durable event support and an enabled Cloud integration. Supply Cloud configuration through your existing configuration and secret provisioning process; spool settings do not enable Cloud reporting themselves.
+
+```yaml
+eventSpool:
+  enabled: true
+  mountPath: /var/lib/beelzebub/events
+  maxBytes: "1073741824"
+  maxRecords: "100000"
+  persistence:
+    size: 2Gi
+    # existingClaim: sensor-events
+    # storageClassName: durable-storage
+```
+
+The chart mounts a PVC and sets the three `BEELZEBUB_EVENT_SPOOL_*` variables. Without `existingClaim`, it creates a claim named `<chart-fullname>-events`, annotated `helm.sh/resource-policy: keep` so uninstall retains it. An omitted storage class uses the cluster default; an empty string requests no storage class. When using `existingClaim`, the chart references that claim without creating or owning one. Ensure its lifecycle and backing PV reclaim policy retain storage.
+
+Use `replicaCount: 1` and disable autoscaling when a spool is enabled; chart rendering rejects a shared spool with multiple replicas or autoscaling. The Deployment uses `Recreate` to prevent rolling updates from opening the same spool concurrently. Deploy independent releases and separate claims for multiple sensors.
+
+Provision volume ownership for the image's runtime UID/GID, using `podSecurityContext.fsGroup` when supported by the storage driver. Keep enough filesystem space beyond the queue budget for overhead, and use stdout logging or a separate writable log destination. The existing image tag is unchanged; explicitly select your rebuilt release.
+
+Before uninstalling or replacing a release, record the PVC name and preserve its data. To reuse a retained claim with another installation, set `eventSpool.persistence.existingClaim` to that name. Reattach the same claim with the original endpoint and sensor token. Do not delete a claim holding pending events. See [durable event delivery](/operations/event-delivery) for recovery and delivery limitations.

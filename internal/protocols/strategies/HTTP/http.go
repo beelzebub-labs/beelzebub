@@ -202,7 +202,8 @@ func traceRequest(request *http.Request, tr tracer.Tracer, command parser.Comman
 		event.Msg = "HTTPS New Request"
 		event.TLSServerName = request.TLS.ServerName
 	}
-	tr.TraceEvent(event)
+
+	tracer.WithContext(request.Context(), tr).TraceEvent(event)
 }
 
 // realClientAddr returns the host and port of the real client.

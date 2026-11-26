@@ -95,22 +95,24 @@ func (m *mockCounter) Add(f float64) {
 
 func newTracerWithMockCounters(strategy Strategy) (*tracer, map[string]*mockCounter) {
 	counters := map[string]*mockCounter{
-		"total":  {},
-		"ssh":    {},
-		"tcp":    {},
-		"http":   {},
-		"mcp":    {},
-		"telnet": {},
+		"total":            {},
+		"capture_failures": {},
+		"ssh":              {},
+		"tcp":              {},
+		"http":             {},
+		"mcp":              {},
+		"telnet":           {},
 	}
 	tr := &tracer{
-		strategy:          strategy,
-		eventsChan:        make(chan Event, Workers),
-		eventsTotal:       counters["total"],
-		eventsSSHTotal:    counters["ssh"],
-		eventsTCPTotal:    counters["tcp"],
-		eventsHTTPTotal:   counters["http"],
-		eventsMCPTotal:    counters["mcp"],
-		eventsTelnetTotal: counters["telnet"],
+		strategy:             strategy,
+		eventsChan:           make(chan Event, Workers),
+		eventsTotal:          counters["total"],
+		captureFailuresTotal: counters["capture_failures"],
+		eventsSSHTotal:       counters["ssh"],
+		eventsTCPTotal:       counters["tcp"],
+		eventsHTTPTotal:      counters["http"],
+		eventsMCPTotal:       counters["mcp"],
+		eventsTelnetTotal:    counters["telnet"],
 	}
 	return tr, counters
 }

@@ -2,8 +2,10 @@ package plugins
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildSendEventFailValidation(t *testing.T) {
@@ -525,4 +528,40 @@ func TestMapToEventDTO(t *testing.T) {
 		TLSServerName:   "beelzebub-honeypot.com",
 		Metadata:        map[string]string{"credential": "captured"},
 	}, eventDTO)
+}
+
+func TestCloudStopCancelsActiveEventRequest(t *testing.T) {
+	entered, canceled := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		close(entered)
+		<-r.Context().Done()
+		close(canceled)
+	}))
+
+	defer server.Close()
+	cloud := InitBeelzebubCloud(server.URL, "synthetic-token", false)
+	defer cloud.Stop()
+	require.Equal(t, 10*time.Second, cloud.client.GetClient().Timeout)
+	done := make(chan error, 1)
+	go func() { _, err := cloud.SendEvent(tracer.Event{Protocol: "HTTP"}); done <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("event request did not start")
+	}
+
+	cloud.Stop()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not cancel event HTTP request")
+	}
+
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("server did not observe request cancellation")
+	}
 }

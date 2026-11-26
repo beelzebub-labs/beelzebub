@@ -1,3 +1,6 @@
+{{- if and .Values.eventSpool.enabled (or .Values.autoscaling.enabled (ne (int .Values.replicaCount) 1)) }}
+{{- fail "eventSpool requires replicaCount=1 and autoscaling.enabled=false; each sensor must own a separate spool" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,6 +8,11 @@ metadata:
   labels:
     {{- include "beelzebub-chart.labels" . | nindent 4 }}
 spec:
+  {{- if .Values.eventSpool.enabled }}
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  {{- end }}
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
@@ -32,6 +40,15 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          {{- if .Values.eventSpool.enabled }}
+          env:
+            - name: BEELZEBUB_EVENT_SPOOL_DIR
+              value: {{ .Values.eventSpool.mountPath | quote }}
+            - name: BEELZEBUB_EVENT_SPOOL_MAX_BYTES
+              value: {{ .Values.eventSpool.maxBytes | quote }}
+            - name: BEELZEBUB_EVENT_SPOOL_MAX_RECORDS
+              value: {{ .Values.eventSpool.maxRecords | quote }}
+          {{- end }}
           volumeMounts:
             - name: config-core-volume
               mountPath: /configurations/beelzebub.yaml
@@ -41,6 +58,10 @@ spec:
               mountPath: /configurations/services/service.yaml
               subPath: service.yaml
               readOnly: true
+            {{- if .Values.eventSpool.enabled }}
+            - name: event-spool
+              mountPath: {{ .Values.eventSpool.mountPath | quote }}
+            {{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -57,6 +78,11 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if .Values.eventSpool.enabled }}
+        - name: event-spool
+          persistentVolumeClaim:
+            claimName: {{ .Values.eventSpool.persistence.existingClaim | default (printf "%s-events" (include "beelzebub-chart.fullname" .)) | quote }}
+        {{- end }}
         - name: config-core-volume
           configMap:
             name: beelzebub-configuration
