@@ -23,12 +23,12 @@
     "@astrojs/mdx": "^8.0.0",
     "@astrojs/react": "^6.0.5",
     "@astrojs/sitemap": "^3.7.0",
-    "astro": "^7.2.10",
+    "astro": "^7.4.7",
     "fumadocs-core": "^16.15.4",
     "fumadocs-ui": "^16.15.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "takumi-js": "2.13.3"
   },
   "devDependencies": {
